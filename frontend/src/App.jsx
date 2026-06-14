@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Topbar from './components/Topbar.jsx';
 import Sidebar from './components/Sidebar.jsx';
 import Canvas from './components/Canvas.jsx';
@@ -21,6 +21,13 @@ const DEFAULT_AGENT = {
   skills: [],
   instructions: [],
 };
+
+// Single workspace per installation; no multi-user auth yet.
+const WORKSPACE_ID = 'default';
+const USER_ID = 'default';
+
+// Auto-save workspace state this many ms after the last canvas change.
+const AUTOSAVE_DEBOUNCE_MS = 1500;
 
 const PERSONA_LOOKUP = Object.fromEntries(
   PERSONA_CATEGORIES.flatMap((c) => c.personas.map((p) => [p.id, p]))
@@ -58,8 +65,7 @@ function generateMarkdown(agent, allSkills) {
 
   return `# ${agent.name || 'Untitled Agent'}
 
-${agent.persona ? `> ${agent.persona}\n` : ''}
-## System Prompt
+${agent.persona ? `> ${agent.persona}\n` : ''}## System Prompt
 
 ${agent.systemPrompt || '_No system prompt defined._'}
 ${skillLines ? `\n## Active Skills\n\n${skillLines}\n` : ''}${instructionLines ? `\n## Agent Instructions\n\n${instructionLines}\n` : ''}
@@ -78,6 +84,12 @@ export default function App() {
   const [saving, setSaving] = useState(false);
   const [view, setView] = useState('builder');
   const [customSkills, setCustomSkills] = useState([]);
+  const [loadingWorkspace, setLoadingWorkspace] = useState(true);
+
+  // Tracks whether the current agent state was loaded from a saved record
+  // (vs. a workspace-restored draft) to avoid overwriting user's unsaved work.
+  const isRestoredRef = useRef(false);
+  const autosaveTimerRef = useRef(null);
 
   const allSkills = useMemo(
     () => [
@@ -87,9 +99,42 @@ export default function App() {
     [customSkills]
   );
 
+  // On mount: load saved agents, custom skills, user preferences, and the last workspace state.
   useEffect(() => {
     refreshSavedAgents();
     refreshCustomSkills();
+
+    Promise.all([
+      api.getUserPreferences(USER_ID),
+      api.getWorkspaceData(WORKSPACE_ID),
+    ]).then(([prefs, wsData]) => {
+      // Restore last view from preferences
+      if (prefs.view && ['builder', 'agents', 'skills'].includes(prefs.view)) {
+        setView(prefs.view);
+      }
+      // Restore unsaved canvas state from workspace
+      if (wsData.agent && typeof wsData.agent === 'object') {
+        setAgent({ ...DEFAULT_AGENT, ...wsData.agent });
+        isRestoredRef.current = true;
+      }
+    }).finally(() => {
+      setLoadingWorkspace(false);
+    });
+  }, []);
+
+  // Debounced auto-save of workspace state whenever the canvas changes.
+  const scheduleWorkspaceAutosave = useCallback((agentState) => {
+    if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
+    autosaveTimerRef.current = setTimeout(() => {
+      api.saveWorkspaceData(WORKSPACE_ID, { agent: agentState });
+      api.saveDraftAgent(WORKSPACE_ID, agentState);
+    }, AUTOSAVE_DEBOUNCE_MS);
+  }, []);
+
+  // Persist view choice as a user preference.
+  const handleSetView = useCallback((nextView) => {
+    setView(nextView);
+    api.saveUserPreferences(USER_ID, { view: nextView });
   }, []);
 
   function refreshSavedAgents() {
@@ -101,13 +146,19 @@ export default function App() {
   }
 
   const onChangeAgentField = (field, value) => {
-    setAgent((prev) => ({ ...prev, [field]: value }));
+    setAgent((prev) => {
+      const next = { ...prev, [field]: value };
+      scheduleWorkspaceAutosave(next);
+      return next;
+    });
   };
 
   const onMoveTool = (nodeId, updater) => {
     setAgent((prev) => {
       const current = prev.positions[nodeId] || (nodeId === 'agent' ? { x: 36, y: 36 } : defaultToolPosition(prev.tools.indexOf(nodeId)));
-      return { ...prev, positions: { ...prev.positions, [nodeId]: updater(current) } };
+      const next = { ...prev, positions: { ...prev.positions, [nodeId]: updater(current) } };
+      scheduleWorkspaceAutosave(next);
+      return next;
     });
   };
 
@@ -115,14 +166,18 @@ export default function App() {
     setAgent((prev) => {
       if (prev.tools.includes(toolId)) {
         if (!pos) return prev;
-        return { ...prev, positions: { ...prev.positions, [toolId]: pos } };
+        const next = { ...prev, positions: { ...prev.positions, [toolId]: pos } };
+        scheduleWorkspaceAutosave(next);
+        return next;
       }
       const position = pos || defaultToolPosition(prev.tools.length);
-      return {
+      const next = {
         ...prev,
         tools: [...prev.tools, toolId],
         positions: { ...prev.positions, [toolId]: position },
       };
+      scheduleWorkspaceAutosave(next);
+      return next;
     });
   };
 
@@ -130,7 +185,9 @@ export default function App() {
     setAgent((prev) => {
       const positions = { ...prev.positions };
       delete positions[toolId];
-      return { ...prev, tools: prev.tools.filter((t) => t !== toolId), positions };
+      const next = { ...prev, tools: prev.tools.filter((t) => t !== toolId), positions };
+      scheduleWorkspaceAutosave(next);
+      return next;
     });
   };
 
@@ -139,7 +196,9 @@ export default function App() {
       const skills = prev.skills.includes(skillId)
         ? prev.skills.filter((s) => s !== skillId)
         : [...prev.skills, skillId];
-      return { ...prev, skills };
+      const next = { ...prev, skills };
+      scheduleWorkspaceAutosave(next);
+      return next;
     });
   };
 
@@ -148,13 +207,16 @@ export default function App() {
       const instructions = prev.instructions.includes(persona.id)
         ? prev.instructions.filter((id) => id !== persona.id)
         : [...prev.instructions, persona.id];
-      return { ...prev, instructions };
+      const next = { ...prev, instructions };
+      scheduleWorkspaceAutosave(next);
+      return next;
     });
   };
 
   const onNew = () => {
     setAgent(DEFAULT_AGENT);
     setView('builder');
+    api.saveWorkspaceData(WORKSPACE_ID, { agent: DEFAULT_AGENT });
   };
 
   const downloadMd = (agentData) => {
@@ -183,6 +245,8 @@ export default function App() {
       const result = agent.id ? await api.updateAgent(agent.id, payload) : await api.createAgent(payload);
       setAgent((prev) => ({ ...prev, id: result.id }));
       refreshSavedAgents();
+      // Clear workspace draft after a successful save
+      api.saveWorkspaceData(WORKSPACE_ID, { agent: { ...payload, id: result.id } });
       downloadMd({ ...payload, name: payload.name });
     } catch (err) {
       console.error('Could not save:', err.message);
@@ -194,8 +258,10 @@ export default function App() {
   const onLoad = async (id) => {
     try {
       const result = await api.getAgent(id);
-      setAgent({ ...DEFAULT_AGENT, ...result });
+      const loaded = { ...DEFAULT_AGENT, ...result };
+      setAgent(loaded);
       setView('builder');
+      api.saveWorkspaceData(WORKSPACE_ID, { agent: loaded });
     } catch (err) {
       console.error('Could not load agent:', err.message);
     }
@@ -261,7 +327,7 @@ export default function App() {
         onDelete={onDelete}
         onDownload={onDownload}
         view={view}
-        onSetView={setView}
+        onSetView={handleSetView}
         customSkillsCount={customSkills.length}
       />
 
@@ -283,23 +349,27 @@ export default function App() {
       ) : (
         <>
           <SkillsBar skills={allSkills} activeSkills={agent.skills} onToggleSkill={onToggleSkill} />
-          <div className="workbench">
-            <Sidebar addedTools={agent.tools} onAddTool={onAddTool} />
-            <Canvas
-              agent={agent}
-              onChangeAgentField={onChangeAgentField}
-              onMoveTool={onMoveTool}
-              onAddTool={onAddTool}
-              onRemoveTool={onRemoveTool}
-              onToggleSkill={onToggleSkill}
-              onToggleInstruction={onToggleInstruction}
-              allSkills={allSkills}
-            />
-            <PersonaPanel
-              activeInstructions={agent.instructions}
-              onToggleInstruction={onToggleInstruction}
-            />
-          </div>
+          {loadingWorkspace ? (
+            <div className="workspace-loading">Loading workspace…</div>
+          ) : (
+            <div className="workbench">
+              <Sidebar addedTools={agent.tools} onAddTool={onAddTool} />
+              <Canvas
+                agent={agent}
+                onChangeAgentField={onChangeAgentField}
+                onMoveTool={onMoveTool}
+                onAddTool={onAddTool}
+                onRemoveTool={onRemoveTool}
+                onToggleSkill={onToggleSkill}
+                onToggleInstruction={onToggleInstruction}
+                allSkills={allSkills}
+              />
+              <PersonaPanel
+                activeInstructions={agent.instructions}
+                onToggleInstruction={onToggleInstruction}
+              />
+            </div>
+          )}
         </>
       )}
     </div>
