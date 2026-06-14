@@ -3,6 +3,8 @@ import express from 'express';
 import cors from 'cors';
 import crypto from 'node:crypto';
 import db from './db.js';
+import mongo, { connect as mongoConnect } from './mongo.js';
+import { setup as mongoSetup } from './mongo-init.js';
 import { TOOL_CATALOG, TOOL_IDS } from './tools/toolDefinitions.js';
 
 const app = express();
@@ -174,12 +176,21 @@ app.delete('/api/skills/:id', async (req, res) => {
   }
 });
 
-// --- Health check --------------------------------------------------------
+// --- Health checks --------------------------------------------------------
 
 app.get('/api/health', async (req, res) => {
   try {
     await db.query('SELECT 1');
     res.json({ ok: true });
+  } catch (err) {
+    res.status(503).json({ ok: false, error: err.message });
+  }
+});
+
+app.get('/api/health/mongo', async (req, res) => {
+  try {
+    const result = await mongo.healthCheck();
+    res.json(result);
   } catch (err) {
     res.status(503).json({ ok: false, error: err.message });
   }
@@ -237,6 +248,21 @@ function validateSkillInput(body) {
 }
 
 const PORT = process.env.PORT || 4000;
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`AgentForge backend running at http://localhost:${PORT}`);
+  try {
+    await db.healthCheck();
+    console.log('[db] PostgreSQL connection established');
+  } catch (err) {
+    console.error('[db] WARNING: Cannot reach PostgreSQL —', err.message);
+    console.error('[db] Run `docker-compose up -d` from the project root to start the database.');
+  }
+  try {
+    await mongoConnect();
+    await mongoSetup();
+    console.log('[mongo] MongoDB connection established and collections ready');
+  } catch (err) {
+    console.error('[mongo] WARNING: Cannot reach MongoDB —', err.message);
+    console.error('[mongo] Run `docker-compose up -d` from the project root to start the database.');
+  }
 });
