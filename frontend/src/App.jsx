@@ -1,9 +1,15 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import Topbar from './components/Topbar.jsx';
 import Sidebar from './components/Sidebar.jsx';
 import Canvas from './components/Canvas.jsx';
+import PersonaPanel from './components/PersonaPanel.jsx';
+import SkillsBar from './components/SkillsBar.jsx';
+import AgentsPage from './components/AgentsPage.jsx';
+import SkillsPage from './components/SkillsPage.jsx';
 import { api } from './api.js';
 import { TOOL_META } from './toolMeta.jsx';
+import { SKILLS } from './data/skills.js';
+import { PERSONA_CATEGORIES } from './data/personas.js';
 
 const DEFAULT_AGENT = {
   id: null,
@@ -12,19 +18,41 @@ const DEFAULT_AGENT = {
   systemPrompt: '',
   tools: [],
   positions: {},
+  skills: [],
+  instructions: [],
 };
+
+const PERSONA_LOOKUP = Object.fromEntries(
+  PERSONA_CATEGORIES.flatMap((c) => c.personas.map((p) => [p.id, p]))
+);
 
 function defaultToolPosition(index) {
   return { x: 460, y: 30 + index * 150 };
 }
 
-function generateMarkdown(agent) {
+function generateMarkdown(agent, allSkills) {
   const toolLines = agent.tools.length
     ? agent.tools.map((id) => {
         const meta = TOOL_META[id];
         return `- **${meta ? meta.label : id}** — ${meta ? meta.blurb : ''}`;
       }).join('\n')
     : '_No tools added._';
+
+  const activeSkills = (agent.skills || [])
+    .map((id) => allSkills.find((s) => s.id === id))
+    .filter(Boolean);
+
+  const skillLines = activeSkills.length
+    ? activeSkills.map((s) => `- **${s.label}** — ${s.description}\n  > ${s.instruction}`).join('\n')
+    : '';
+
+  const activeInstructions = (agent.instructions || [])
+    .map((id) => PERSONA_LOOKUP[id])
+    .filter(Boolean);
+
+  const instructionLines = activeInstructions.length
+    ? activeInstructions.map((p) => `### ${p.name}\n\n${p.systemPrompt}`).join('\n\n---\n\n')
+    : '';
 
   const date = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
 
@@ -34,7 +62,7 @@ ${agent.persona ? `> ${agent.persona}\n` : ''}
 ## System Prompt
 
 ${agent.systemPrompt || '_No system prompt defined._'}
-
+${skillLines ? `\n## Active Skills\n\n${skillLines}\n` : ''}${instructionLines ? `\n## Agent Instructions\n\n${instructionLines}\n` : ''}
 ## Capabilities
 
 ${toolLines}
@@ -48,13 +76,28 @@ export default function App() {
   const [agent, setAgent] = useState(DEFAULT_AGENT);
   const [savedAgents, setSavedAgents] = useState([]);
   const [saving, setSaving] = useState(false);
+  const [view, setView] = useState('builder');
+  const [customSkills, setCustomSkills] = useState([]);
+
+  const allSkills = useMemo(
+    () => [
+      ...SKILLS.map((s) => ({ ...s, builtin: true })),
+      ...customSkills.map((s) => ({ ...s, builtin: false })),
+    ],
+    [customSkills]
+  );
 
   useEffect(() => {
     refreshSavedAgents();
+    refreshCustomSkills();
   }, []);
 
   function refreshSavedAgents() {
     api.listAgents().then(setSavedAgents).catch(() => {});
+  }
+
+  function refreshCustomSkills() {
+    api.listSkills().then(setCustomSkills).catch(() => {});
   }
 
   const onChangeAgentField = (field, value) => {
@@ -91,12 +134,31 @@ export default function App() {
     });
   };
 
+  const onToggleSkill = (skillId) => {
+    setAgent((prev) => {
+      const skills = prev.skills.includes(skillId)
+        ? prev.skills.filter((s) => s !== skillId)
+        : [...prev.skills, skillId];
+      return { ...prev, skills };
+    });
+  };
+
+  const onToggleInstruction = (persona) => {
+    setAgent((prev) => {
+      const instructions = prev.instructions.includes(persona.id)
+        ? prev.instructions.filter((id) => id !== persona.id)
+        : [...prev.instructions, persona.id];
+      return { ...prev, instructions };
+    });
+  };
+
   const onNew = () => {
     setAgent(DEFAULT_AGENT);
+    setView('builder');
   };
 
   const downloadMd = (agentData) => {
-    const md = generateMarkdown(agentData);
+    const md = generateMarkdown(agentData, allSkills);
     const blob = new Blob([md], { type: 'text/markdown' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -115,6 +177,8 @@ export default function App() {
         systemPrompt: agent.systemPrompt,
         tools: agent.tools,
         positions: agent.positions,
+        skills: agent.skills,
+        instructions: agent.instructions,
       };
       const result = agent.id ? await api.updateAgent(agent.id, payload) : await api.createAgent(payload);
       setAgent((prev) => ({ ...prev, id: result.id }));
@@ -130,7 +194,8 @@ export default function App() {
   const onLoad = async (id) => {
     try {
       const result = await api.getAgent(id);
-      setAgent(result);
+      setAgent({ ...DEFAULT_AGENT, ...result });
+      setView('builder');
     } catch (err) {
       console.error('Could not load agent:', err.message);
     }
@@ -150,6 +215,39 @@ export default function App() {
     downloadMd(agentData || agent);
   };
 
+  const onCreateSkill = async (data) => {
+    try {
+      const created = await api.createSkill(data);
+      setCustomSkills((prev) => [...prev, created]);
+    } catch (err) {
+      console.error('Could not create skill:', err.message);
+      throw err;
+    }
+  };
+
+  const onUpdateSkill = async (id, data) => {
+    try {
+      const updated = await api.updateSkill(id, data);
+      setCustomSkills((prev) => prev.map((s) => (s.id === id ? updated : s)));
+    } catch (err) {
+      console.error('Could not update skill:', err.message);
+      throw err;
+    }
+  };
+
+  const onDeleteSkill = async (id) => {
+    try {
+      await api.deleteSkill(id);
+      setCustomSkills((prev) => prev.filter((s) => s.id !== id));
+      setAgent((prev) => ({
+        ...prev,
+        skills: prev.skills.filter((sid) => sid !== id),
+      }));
+    } catch (err) {
+      console.error('Could not delete skill:', err.message);
+    }
+  };
+
   return (
     <div className="app">
       <Topbar
@@ -162,17 +260,48 @@ export default function App() {
         onLoad={onLoad}
         onDelete={onDelete}
         onDownload={onDownload}
+        view={view}
+        onSetView={setView}
+        customSkillsCount={customSkills.length}
       />
-      <div className="workbench">
-        <Sidebar addedTools={agent.tools} onAddTool={onAddTool} />
-        <Canvas
-          agent={agent}
-          onChangeAgentField={onChangeAgentField}
-          onMoveTool={onMoveTool}
-          onAddTool={onAddTool}
-          onRemoveTool={onRemoveTool}
+
+      {view === 'agents' ? (
+        <AgentsPage
+          savedAgents={savedAgents}
+          onOpen={onLoad}
+          onDownload={onDownload}
+          onDelete={onDelete}
+          onNew={onNew}
         />
-      </div>
+      ) : view === 'skills' ? (
+        <SkillsPage
+          allSkills={allSkills}
+          onCreateSkill={onCreateSkill}
+          onUpdateSkill={onUpdateSkill}
+          onDeleteSkill={onDeleteSkill}
+        />
+      ) : (
+        <>
+          <SkillsBar skills={allSkills} activeSkills={agent.skills} onToggleSkill={onToggleSkill} />
+          <div className="workbench">
+            <Sidebar addedTools={agent.tools} onAddTool={onAddTool} />
+            <Canvas
+              agent={agent}
+              onChangeAgentField={onChangeAgentField}
+              onMoveTool={onMoveTool}
+              onAddTool={onAddTool}
+              onRemoveTool={onRemoveTool}
+              onToggleSkill={onToggleSkill}
+              onToggleInstruction={onToggleInstruction}
+              allSkills={allSkills}
+            />
+            <PersonaPanel
+              activeInstructions={agent.instructions}
+              onToggleInstruction={onToggleInstruction}
+            />
+          </div>
+        </>
+      )}
     </div>
   );
 }

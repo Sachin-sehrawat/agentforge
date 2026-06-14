@@ -12,6 +12,9 @@ export default function Canvas({
   onMoveTool,
   onAddTool,
   onRemoveTool,
+  onToggleSkill,
+  onToggleInstruction,
+  allSkills,
 }) {
   const canvasRef = useRef(null);
   const agentRef = useRef(null);
@@ -97,6 +100,9 @@ export default function Canvas({
           agent={agent}
           onChange={onChangeAgentField}
           onHeaderPointerDown={handleAgentDrag}
+          onToggleSkill={onToggleSkill}
+          onToggleInstruction={onToggleInstruction}
+          allSkills={allSkills}
         />
 
         {agent.tools.map((toolId) => {

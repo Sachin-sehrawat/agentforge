@@ -11,6 +11,9 @@ export default function Topbar({
   onLoad,
   onDelete,
   onDownload,
+  view,
+  onSetView,
+  customSkillsCount,
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef(null);
@@ -35,81 +38,114 @@ export default function Topbar({
 
       <div className="topbar-divider" />
 
-      <input
-        className="agent-name-input"
-        value={agent.name}
-        onChange={(e) => onChangeName(e.target.value)}
-        placeholder="Untitled agent"
-      />
-
-      <div className="agent-menu" ref={menuRef}>
-        <button className="btn subtle" onClick={() => setMenuOpen((v) => !v)}>
-          Saved agents {savedAgents.length > 0 ? `(${savedAgents.length})` : ''}
+      <nav className="topbar-nav">
+        <button
+          className={`topbar-nav-item${view === 'builder' ? ' active' : ''}`}
+          onClick={() => onSetView('builder')}
+        >
+          Builder
         </button>
-        {menuOpen && (
-          <div className="agent-menu-list">
-            {savedAgents.length === 0 && (
-              <div className="agent-menu-empty">No saved agents yet. Build one and hit Save agent.</div>
-            )}
-            {savedAgents.map((a) => (
-              <div
-                className="agent-menu-item"
-                key={a.id}
-                onClick={() => {
-                  onLoad(a.id);
-                  setMenuOpen(false);
-                }}
-              >
-                <div>
-                  <div>{a.name}</div>
-                  <div className="meta">{a.tools.length} tool{a.tools.length === 1 ? '' : 's'}</div>
-                </div>
-                <div className="item-actions">
-                  <button
-                    className="download-item"
-                    title="Download as Markdown"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onDownload(a);
+        <button
+          className={`topbar-nav-item${view === 'agents' ? ' active' : ''}`}
+          onClick={() => onSetView('agents')}
+        >
+          Agents
+          {savedAgents.length > 0 && (
+            <span className="topbar-nav-badge">{savedAgents.length}</span>
+          )}
+        </button>
+        <button
+          className={`topbar-nav-item${view === 'skills' ? ' active' : ''}`}
+          onClick={() => onSetView('skills')}
+        >
+          Skills
+          {customSkillsCount > 0 && (
+            <span className="topbar-nav-badge">{customSkillsCount}</span>
+          )}
+        </button>
+      </nav>
+
+      {view === 'builder' && (
+        <>
+          <div className="topbar-divider" />
+
+          <input
+            className="agent-name-input"
+            value={agent.name}
+            onChange={(e) => onChangeName(e.target.value)}
+            placeholder="Untitled agent"
+          />
+
+          <div className="agent-menu" ref={menuRef}>
+            <button className="btn subtle" onClick={() => setMenuOpen((v) => !v)}>
+              Saved agents {savedAgents.length > 0 ? `(${savedAgents.length})` : ''}
+            </button>
+            {menuOpen && (
+              <div className="agent-menu-list">
+                {savedAgents.length === 0 && (
+                  <div className="agent-menu-empty">No saved agents yet. Build one and hit Save agent.</div>
+                )}
+                {savedAgents.map((a) => (
+                  <div
+                    className="agent-menu-item"
+                    key={a.id}
+                    onClick={() => {
+                      onLoad(a.id);
+                      setMenuOpen(false);
                     }}
                   >
-                    ↓
-                  </button>
-                  <button
-                    className="remove"
-                    title="Delete"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onDelete(a.id);
-                    }}
-                  >
-                    ✕
-                  </button>
-                </div>
+                    <div>
+                      <div>{a.name}</div>
+                      <div className="meta">{a.tools.length} tool{a.tools.length === 1 ? '' : 's'}</div>
+                    </div>
+                    <div className="item-actions">
+                      <button
+                        className="download-item"
+                        title="Download as Markdown"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onDownload(a);
+                        }}
+                      >
+                        ↓
+                      </button>
+                      <button
+                        className="remove"
+                        title="Delete"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onDelete(a.id);
+                        }}
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  </div>
+                ))}
               </div>
-            ))}
+            )}
           </div>
-        )}
-      </div>
 
-      <div className="topbar-spacer" />
+          <div className="topbar-spacer" />
 
-      <div className="topbar-actions">
-        {agent.id && (
-          <button className="btn download" onClick={() => onDownload(agent)} title="Download agent as Markdown">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-              <polyline points="7 10 12 15 17 10"/>
-              <line x1="12" y1="15" x2="12" y2="3"/>
-            </svg>
-            Export MD
-          </button>
-        )}
-        <button className="btn" onClick={onNew}>New</button>
-        <button className="btn primary" onClick={onSave} disabled={saving}>
-          {saving ? 'Saving…' : 'Save agent'}
-        </button>
-      </div>
+          <div className="topbar-actions">
+            {agent.id && (
+              <button className="btn download" onClick={() => onDownload(agent)} title="Download agent as Markdown">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="7 10 12 15 17 10" />
+                  <line x1="12" y1="15" x2="12" y2="3" />
+                </svg>
+                Export MD
+              </button>
+            )}
+            <button className="btn" onClick={onNew}>New</button>
+            <button className="btn primary" onClick={onSave} disabled={saving}>
+              {saving ? 'Saving…' : 'Save agent'}
+            </button>
+          </div>
+        </>
+      )}
     </header>
   );
 }

@@ -21,4 +21,30 @@ db.exec(`
   );
 `);
 
+// Migrate: add skills column if it doesn't exist yet
+try {
+  db.exec(`ALTER TABLE agents ADD COLUMN skills TEXT NOT NULL DEFAULT '[]'`);
+} catch {
+  // column already exists — safe to ignore
+}
+
+// Migrate: add instructions column if it doesn't exist yet
+try {
+  db.exec(`ALTER TABLE agents ADD COLUMN instructions TEXT NOT NULL DEFAULT '[]'`);
+} catch {
+  // column already exists — safe to ignore
+}
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS custom_skills (
+    id TEXT PRIMARY KEY,
+    label TEXT NOT NULL,
+    color TEXT NOT NULL DEFAULT '#6366f1',
+    description TEXT NOT NULL DEFAULT '',
+    instruction TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+`);
+
 export default db;

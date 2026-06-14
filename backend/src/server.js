@@ -40,9 +40,9 @@ app.post('/api/agents', (req, res) => {
 
   const id = crypto.randomUUID();
   db.prepare(
-    `INSERT INTO agents (id, name, persona, system_prompt, model, tools, positions)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`
-  ).run(id, agent.name, agent.persona, agent.systemPrompt, agent.model, JSON.stringify(agent.tools), JSON.stringify(agent.positions));
+    `INSERT INTO agents (id, name, persona, system_prompt, model, tools, positions, skills, instructions)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(id, agent.name, agent.persona, agent.systemPrompt, agent.model, JSON.stringify(agent.tools), JSON.stringify(agent.positions), JSON.stringify(agent.skills), JSON.stringify(agent.instructions));
 
   const row = db.prepare('SELECT * FROM agents WHERE id = ?').get(id);
   res.status(201).json(serializeAgent(row));
@@ -56,9 +56,9 @@ app.put('/api/agents/:id', (req, res) => {
   if (agent.error) return res.status(400).json({ error: agent.error });
 
   db.prepare(
-    `UPDATE agents SET name = ?, persona = ?, system_prompt = ?, model = ?, tools = ?, positions = ?, updated_at = datetime('now')
+    `UPDATE agents SET name = ?, persona = ?, system_prompt = ?, model = ?, tools = ?, positions = ?, skills = ?, instructions = ?, updated_at = datetime('now')
      WHERE id = ?`
-  ).run(agent.name, agent.persona, agent.systemPrompt, agent.model, JSON.stringify(agent.tools), JSON.stringify(agent.positions), req.params.id);
+  ).run(agent.name, agent.persona, agent.systemPrompt, agent.model, JSON.stringify(agent.tools), JSON.stringify(agent.positions), JSON.stringify(agent.skills), JSON.stringify(agent.instructions), req.params.id);
 
   const row = db.prepare('SELECT * FROM agents WHERE id = ?').get(req.params.id);
   res.json(serializeAgent(row));
@@ -69,6 +69,59 @@ app.delete('/api/agents/:id', (req, res) => {
   if (result.changes === 0) return res.status(404).json({ error: 'Agent not found' });
   res.status(204).end();
 });
+
+// --- Custom Skills CRUD ---------------------------------------------------
+
+app.get('/api/skills', (req, res) => {
+  const rows = db.prepare('SELECT * FROM custom_skills ORDER BY created_at ASC').all();
+  res.json(rows);
+});
+
+app.post('/api/skills', (req, res) => {
+  const skill = validateSkillInput(req.body);
+  if (skill.error) return res.status(400).json({ error: skill.error });
+
+  const id = crypto.randomUUID();
+  db.prepare(
+    `INSERT INTO custom_skills (id, label, color, description, instruction) VALUES (?, ?, ?, ?, ?)`
+  ).run(id, skill.label, skill.color, skill.description, skill.instruction);
+
+  res.status(201).json(db.prepare('SELECT * FROM custom_skills WHERE id = ?').get(id));
+});
+
+app.put('/api/skills/:id', (req, res) => {
+  const existing = db.prepare('SELECT * FROM custom_skills WHERE id = ?').get(req.params.id);
+  if (!existing) return res.status(404).json({ error: 'Skill not found' });
+
+  const skill = validateSkillInput(req.body);
+  if (skill.error) return res.status(400).json({ error: skill.error });
+
+  db.prepare(
+    `UPDATE custom_skills SET label = ?, color = ?, description = ?, instruction = ?, updated_at = datetime('now') WHERE id = ?`
+  ).run(skill.label, skill.color, skill.description, skill.instruction, req.params.id);
+
+  res.json(db.prepare('SELECT * FROM custom_skills WHERE id = ?').get(req.params.id));
+});
+
+app.delete('/api/skills/:id', (req, res) => {
+  const result = db.prepare('DELETE FROM custom_skills WHERE id = ?').run(req.params.id);
+  if (result.changes === 0) return res.status(404).json({ error: 'Skill not found' });
+  res.status(204).end();
+});
+
+function validateSkillInput(body) {
+  if (!body || typeof body !== 'object') return { error: 'Invalid request body' };
+  const label = typeof body.label === 'string' ? body.label.trim() : '';
+  if (!label) return { error: 'Skill label is required' };
+  const instruction = typeof body.instruction === 'string' ? body.instruction.trim() : '';
+  if (!instruction) return { error: 'Skill instruction is required' };
+  return {
+    label,
+    color: typeof body.color === 'string' && body.color ? body.color : '#6366f1',
+    description: typeof body.description === 'string' ? body.description.trim() : '',
+    instruction,
+  };
+}
 
 // --- Health check --------------------------------------------------------
 
@@ -85,6 +138,8 @@ function serializeAgent(row) {
     model: row.model,
     tools: JSON.parse(row.tools || '[]'),
     positions: JSON.parse(row.positions || '{}'),
+    skills: JSON.parse(row.skills || '[]'),
+    instructions: JSON.parse(row.instructions || '[]'),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -104,6 +159,8 @@ function validateAgentInput(body) {
     model: typeof body.model === 'string' && body.model ? body.model : '',
     tools,
     positions: typeof body.positions === 'object' && body.positions ? body.positions : {},
+    skills: Array.isArray(body.skills) ? body.skills.filter((s) => typeof s === 'string') : [],
+    instructions: Array.isArray(body.instructions) ? body.instructions.filter((s) => typeof s === 'string') : [],
   };
 }
 

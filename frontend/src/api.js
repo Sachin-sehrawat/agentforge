@@ -30,4 +30,8 @@ export const api = {
   deleteAgent: (id) => request(`/agents/${id}`, { method: 'DELETE' }),
   runAgent: (agent, messages) => request('/run', { method: 'POST', body: JSON.stringify({ agent, messages }) }),
   health: () => request('/health'),
+  listSkills: () => request('/skills'),
+  createSkill: (skill) => request('/skills', { method: 'POST', body: JSON.stringify(skill) }),
+  updateSkill: (id, skill) => request(`/skills/${id}`, { method: 'PUT', body: JSON.stringify(skill) }),
+  deleteSkill: (id) => request(`/skills/${id}`, { method: 'DELETE' }),
 };
