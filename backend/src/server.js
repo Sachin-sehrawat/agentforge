@@ -74,8 +74,8 @@ app.post('/api/agents', async (req, res) => {
 
 app.put('/api/agents/:id', async (req, res) => {
   try {
-    const existing = await db.query('SELECT id FROM agents WHERE id = $1', [req.params.id]);
-    if (!existing.rows[0]) return res.status(404).json({ error: 'Agent not found' });
+    const check = await db.query('SELECT id FROM agents WHERE id = $1', [req.params.id]);
+    if (!check.rows[0]) return res.status(404).json({ error: 'Agent not found' });
 
     const agent = validateAgentInput(req.body);
     if (agent.error) return res.status(400).json({ error: agent.error });
@@ -146,8 +146,8 @@ app.post('/api/skills', async (req, res) => {
 
 app.put('/api/skills/:id', async (req, res) => {
   try {
-    const existing = await db.query('SELECT id FROM custom_skills WHERE id = $1', [req.params.id]);
-    if (!existing.rows[0]) return res.status(404).json({ error: 'Skill not found' });
+    const check = await db.query('SELECT id FROM custom_skills WHERE id = $1', [req.params.id]);
+    if (!check.rows[0]) return res.status(404).json({ error: 'Skill not found' });
 
     const skill = validateSkillInput(req.body);
     if (skill.error) return res.status(400).json({ error: skill.error });

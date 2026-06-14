@@ -1,68 +1,132 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
-import db from '../src/db.js';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-describe('Database Module', () => {
-  describe('Initialization', () => {
-    it('should initialize database connection', () => {
-      expect(db).toBeDefined();
-    });
+// --- pg mock ---------------------------------------------------------------
 
-    it('should have database methods', () => {
-      expect(typeof db.prepare).toBe('function');
-    });
+const mockRelease = vi.fn();
+const mockClientQuery = vi.fn();
+const mockPoolQuery = vi.fn();
+const mockConnect = vi.fn(() => Promise.resolve({ query: mockClientQuery, release: mockRelease }));
+const mockOn = vi.fn();
+
+vi.mock('pg', () => ({
+  default: {
+    Pool: vi.fn().mockImplementation(function () {
+      this.query = mockPoolQuery;
+      this.connect = mockConnect;
+      this.on = mockOn;
+    }),
+  },
+}));
+
+// Import after mock is registered
+const { query, healthCheck, withRetry } = await import('../src/db.js');
+
+// ---------------------------------------------------------------------------
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
+
+describe('query()', () => {
+  it('returns the pool result on success', async () => {
+    const fakeResult = { rows: [{ id: '1' }], rowCount: 1 };
+    mockPoolQuery.mockResolvedValueOnce(fakeResult);
+
+    const result = await query('SELECT * FROM agents WHERE id = $1', ['1']);
+
+    expect(mockPoolQuery).toHaveBeenCalledWith('SELECT * FROM agents WHERE id = $1', ['1']);
+    expect(result).toBe(fakeResult);
   });
 
-  describe('Tables', () => {
-    it('should have agents table', () => {
-      const result = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='agents'").get();
-      expect(result).toBeDefined();
-      expect(result.name).toBe('agents');
-    });
+  it('re-throws and logs on query error', async () => {
+    const err = new Error('connection refused');
+    mockPoolQuery.mockRejectedValueOnce(err);
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-    it('should have custom_skills table', () => {
-      const result = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='custom_skills'").get();
-      expect(result).toBeDefined();
-      expect(result.name).toBe('custom_skills');
-    });
+    await expect(query('SELECT 1')).rejects.toThrow('connection refused');
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Query failed'));
+
+    consoleSpy.mockRestore();
   });
 
-  describe('Agents Table Schema', () => {
-    it('should have required columns in agents table', () => {
-      const columns = db.prepare("PRAGMA table_info(agents)").all();
-      const columnNames = columns.map(c => c.name);
+  it('logs a warning for slow queries', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    mockPoolQuery.mockImplementationOnce(
+      () => new Promise((r) => setTimeout(() => r({ rows: [] }), 1100))
+    );
 
-      expect(columnNames).toContain('id');
-      expect(columnNames).toContain('name');
-      expect(columnNames).toContain('persona');
-      expect(columnNames).toContain('system_prompt');
-      expect(columnNames).toContain('model');
-      expect(columnNames).toContain('tools');
-      expect(columnNames).toContain('positions');
-      expect(columnNames).toContain('created_at');
-      expect(columnNames).toContain('updated_at');
+    // Override threshold to 0 so any query counts as slow
+    const origEnv = process.env.SLOW_QUERY_THRESHOLD_MS;
+    process.env.SLOW_QUERY_THRESHOLD_MS = '0';
+
+    await query('SELECT 1');
+
+    process.env.SLOW_QUERY_THRESHOLD_MS = origEnv;
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringMatching(/Slow query/));
+    warnSpy.mockRestore();
+  }, 3000);
+});
+
+describe('healthCheck()', () => {
+  it('returns ok:true with version and timestamp on success', async () => {
+    const now = new Date();
+    mockClientQuery.mockResolvedValueOnce({
+      rows: [{ version: 'PostgreSQL 14.0', timestamp: now }],
     });
 
-    it('should have skills and instructions columns', () => {
-      const columns = db.prepare("PRAGMA table_info(agents)").all();
-      const columnNames = columns.map(c => c.name);
+    const result = await healthCheck();
 
-      expect(columnNames).toContain('skills');
-      expect(columnNames).toContain('instructions');
-    });
+    expect(mockConnect).toHaveBeenCalledOnce();
+    expect(mockClientQuery).toHaveBeenCalledWith('SELECT version() AS version, NOW() AS timestamp');
+    expect(mockRelease).toHaveBeenCalledOnce();
+    expect(result).toEqual({ ok: true, version: 'PostgreSQL 14.0', timestamp: now });
   });
 
-  describe('Custom Skills Table Schema', () => {
-    it('should have required columns in custom_skills table', () => {
-      const columns = db.prepare("PRAGMA table_info(custom_skills)").all();
-      const columnNames = columns.map(c => c.name);
+  it('releases the client even when the query throws', async () => {
+    mockClientQuery.mockRejectedValueOnce(new Error('db down'));
 
-      expect(columnNames).toContain('id');
-      expect(columnNames).toContain('label');
-      expect(columnNames).toContain('color');
-      expect(columnNames).toContain('description');
-      expect(columnNames).toContain('instruction');
-      expect(columnNames).toContain('created_at');
-      expect(columnNames).toContain('updated_at');
-    });
+    await expect(healthCheck()).rejects.toThrow('db down');
+    expect(mockRelease).toHaveBeenCalledOnce();
+  });
+});
+
+describe('withRetry()', () => {
+  it('returns the result immediately on first success', async () => {
+    const fn = vi.fn().mockResolvedValueOnce('ok');
+    const result = await withRetry(fn);
+    expect(result).toBe('ok');
+    expect(fn).toHaveBeenCalledOnce();
+  });
+
+  it('retries on transient ECONNREFUSED and succeeds', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const transientErr = Object.assign(new Error('refused'), { code: 'ECONNREFUSED' });
+    const fn = vi.fn()
+      .mockRejectedValueOnce(transientErr)
+      .mockResolvedValueOnce('recovered');
+
+    const result = await withRetry(fn, 3);
+
+    expect(fn).toHaveBeenCalledTimes(2);
+    expect(result).toBe('recovered');
+    warnSpy.mockRestore();
+  });
+
+  it('throws immediately on non-transient errors without retrying', async () => {
+    const fatalErr = Object.assign(new Error('syntax error'), { code: '42601' });
+    const fn = vi.fn().mockRejectedValue(fatalErr);
+
+    await expect(withRetry(fn, 3)).rejects.toThrow('syntax error');
+    expect(fn).toHaveBeenCalledOnce();
+  });
+
+  it('throws after exhausting all retries', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const transientErr = Object.assign(new Error('refused'), { code: 'ECONNREFUSED' });
+    const fn = vi.fn().mockRejectedValue(transientErr);
+
+    await expect(withRetry(fn, 3)).rejects.toThrow('refused');
+    expect(fn).toHaveBeenCalledTimes(3);
+    warnSpy.mockRestore();
   });
 });

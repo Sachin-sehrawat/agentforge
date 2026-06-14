@@ -1,18 +1,13 @@
 # Dependencies
 node_modules/
-.package-lock.json
-# Environment files
-.env
-.env.local
-.env.*.local
+
+
 
 # Build output
 dist/
 build/
 
-# Database
-*.db
-*.db-journal
+
 
 # OS files
 .DS_Store
