@@ -176,8 +176,13 @@ app.delete('/api/skills/:id', async (req, res) => {
 
 // --- Health checks --------------------------------------------------------
 
-app.get('/api/health', (req, res) => {
-  res.json({ ok: true });
+app.get('/api/health', async (req, res) => {
+  try {
+    await db.query('SELECT 1');
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(503).json({ ok: false, error: err.message });
+  }
 });
 
 app.get('/api/health/db', async (req, res) => {
