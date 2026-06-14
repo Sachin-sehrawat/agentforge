@@ -1,3 +1,13 @@
+
+
+
+
+
+
+
+
+
+
 # Database Schema
 
 AgentForge uses **PostgreSQL 14+** as its primary data store. The schema is initialized automatically when starting the Docker Compose stack via the init script at `backend/db/init/01_schema.sql`.

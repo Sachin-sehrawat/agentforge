@@ -2,14 +2,67 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import crypto from 'node:crypto';
+import { ObjectId } from 'mongodb';
 import db from './db.js';
 import { connect as mongoConnect, getDb, healthCheck as mongoHealth } from './mongo.js';
 import { setup as mongoSetup } from './mongo-init.js';
 import { TOOL_CATALOG, TOOL_IDS } from './tools/toolDefinitions.js';
+import { validatePreferences, validateWorkspaceData, validateDraftInput } from './validation.js';
 
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '1mb' }));
+
+// --- Request/response logging -----------------------------------------------
+
+app.use((req, res, next) => {
+  const start = Date.now();
+  res.on('finish', () => {
+    const ms = Date.now() - start;
+    console.log(`[${new Date().toISOString()}] ${req.method} ${req.path} ${res.statusCode} ${ms}ms`);
+  });
+  next();
+});
+
+// --- In-memory rate limiter --------------------------------------------------
+// 100 requests per IP per minute on MongoDB-backed routes.
+
+const rateLimitMap = new Map();
+const RATE_LIMIT_WINDOW_MS = 60_000;
+const RATE_LIMIT_MAX = 100;
+
+// Evict stale entries every 5 minutes so the map doesn't grow unbounded.
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of rateLimitMap) {
+    if (now > entry.resetAt) rateLimitMap.delete(key);
+  }
+}, 5 * 60_000).unref();
+
+function rateLimit(req, res, next) {
+  const key = req.ip || 'unknown';
+  const now = Date.now();
+  let entry = rateLimitMap.get(key);
+  if (!entry || now > entry.resetAt) {
+    entry = { count: 0, resetAt: now + RATE_LIMIT_WINDOW_MS };
+  }
+  entry.count += 1;
+  rateLimitMap.set(key, entry);
+
+  res.set('X-RateLimit-Limit', String(RATE_LIMIT_MAX));
+  res.set('X-RateLimit-Remaining', String(Math.max(0, RATE_LIMIT_MAX - entry.count)));
+  res.set('X-RateLimit-Reset', new Date(entry.resetAt).toISOString());
+
+  if (entry.count > RATE_LIMIT_MAX) {
+    return res.status(429).json({ error: 'Too many requests. Please try again later.' });
+  }
+  next();
+}
+
+// Apply rate limiting to all MongoDB-backed routes.
+app.use('/api/preferences', rateLimit);
+app.use('/api/workspace', rateLimit);
+app.use('/api/drafts', rateLimit);
 
 // --- Tool catalog ---------------------------------------------------------
 
@@ -196,7 +249,9 @@ app.get('/api/health/mongo', async (req, res) => {
 
 app.get('/api/preferences/:userId', async (req, res) => {
   try {
-    const doc = await getDb().collection('user_preferences').findOne({ userId: req.params.userId });
+    const doc = await getDb()
+      .collection('user_preferences')
+      .findOne({ userId: req.params.userId });
     res.json(doc?.preferences ?? {});
   } catch (err) {
     res.status(503).json({ error: 'Preferences service unavailable', detail: err.message });
@@ -204,17 +259,29 @@ app.get('/api/preferences/:userId', async (req, res) => {
 });
 
 app.post('/api/preferences/:userId', async (req, res) => {
-  if (!req.body || typeof req.body !== 'object') return res.status(400).json({ error: 'Invalid body' });
+  const validation = validatePreferences(req.body);
+  if (validation.error) return res.status(400).json({ error: validation.error });
+
+  const { userId } = req.params;
+  const now = new Date();
   try {
-    await getDb().collection('user_preferences').updateOne(
-      { userId: req.params.userId },
-      {
-        $set: { preferences: req.body, updatedAt: new Date() },
-        $setOnInsert: { userId: req.params.userId, createdAt: new Date() },
-      },
-      { upsert: true }
-    );
-    res.json({ ok: true });
+    await getDb()
+      .collection('user_preferences')
+      .updateOne(
+        { userId },
+        {
+          $set: { preferences: validation.data, updatedAt: now },
+          $setOnInsert: { userId, createdAt: now },
+        },
+        { upsert: true }
+      );
+    const doc = await getDb().collection('user_preferences').findOne({ userId });
+    res.json({
+      userId: doc.userId,
+      preferences: doc.preferences,
+      createdAt: doc.createdAt,
+      updatedAt: doc.updatedAt,
+    });
   } catch (err) {
     res.status(503).json({ error: 'Preferences service unavailable', detail: err.message });
   }
@@ -224,7 +291,9 @@ app.post('/api/preferences/:userId', async (req, res) => {
 
 app.get('/api/workspace/:workspaceId', async (req, res) => {
   try {
-    const doc = await getDb().collection('workspace_state').findOne({ workspaceId: req.params.workspaceId });
+    const doc = await getDb()
+      .collection('workspace_state')
+      .findOne({ workspaceId: req.params.workspaceId });
     res.json(doc?.data ?? {});
   } catch (err) {
     res.status(503).json({ error: 'Workspace service unavailable', detail: err.message });
@@ -232,17 +301,29 @@ app.get('/api/workspace/:workspaceId', async (req, res) => {
 });
 
 app.post('/api/workspace/:workspaceId', async (req, res) => {
-  if (!req.body || typeof req.body !== 'object') return res.status(400).json({ error: 'Invalid body' });
+  const validation = validateWorkspaceData(req.body);
+  if (validation.error) return res.status(400).json({ error: validation.error });
+
+  const { workspaceId } = req.params;
+  const now = new Date();
   try {
-    await getDb().collection('workspace_state').updateOne(
-      { workspaceId: req.params.workspaceId },
-      {
-        $set: { data: req.body, updatedAt: new Date() },
-        $setOnInsert: { workspaceId: req.params.workspaceId, createdAt: new Date() },
-      },
-      { upsert: true }
-    );
-    res.json({ ok: true });
+    await getDb()
+      .collection('workspace_state')
+      .updateOne(
+        { workspaceId },
+        {
+          $set: { data: validation.data, updatedAt: now },
+          $setOnInsert: { workspaceId, createdAt: now },
+        },
+        { upsert: true }
+      );
+    const doc = await getDb().collection('workspace_state').findOne({ workspaceId });
+    res.json({
+      workspaceId: doc.workspaceId,
+      data: doc.data,
+      createdAt: doc.createdAt,
+      updatedAt: doc.updatedAt,
+    });
   } catch (err) {
     res.status(503).json({ error: 'Workspace service unavailable', detail: err.message });
   }
@@ -250,18 +331,52 @@ app.post('/api/workspace/:workspaceId', async (req, res) => {
 
 // --- Draft Agents (MongoDB) -----------------------------------------------
 
-app.post('/api/drafts', async (req, res) => {
-  const { workspaceId, agentData } = req.body || {};
-  if (!workspaceId || !agentData) {
-    return res.status(400).json({ error: 'workspaceId and agentData are required' });
+app.get('/api/drafts/:workspaceId', async (req, res) => {
+  try {
+    const drafts = await getDb()
+      .collection('draft_agents')
+      .find({ workspaceId: req.params.workspaceId })
+      .sort({ createdAt: -1 })
+      .toArray();
+    res.json(drafts.map(serializeDraft));
+  } catch (err) {
+    res.status(503).json({ error: 'Draft service unavailable', detail: err.message });
+  }
+});
+
+app.post('/api/drafts/:workspaceId', async (req, res) => {
+  const validation = validateDraftInput(req.body);
+  if (validation.error) return res.status(400).json({ error: validation.error });
+
+  const { workspaceId } = req.params;
+  const now = new Date();
+  try {
+    const result = await getDb().collection('draft_agents').insertOne({
+      workspaceId,
+      agentData: validation.data.agentData,
+      createdAt: now,
+      updatedAt: now,
+    });
+    const doc = await getDb().collection('draft_agents').findOne({ _id: result.insertedId });
+    res.status(201).json(serializeDraft(doc));
+  } catch (err) {
+    res.status(503).json({ error: 'Draft service unavailable', detail: err.message });
+  }
+});
+
+app.delete('/api/drafts/:draftId', async (req, res) => {
+  let objectId;
+  try {
+    objectId = new ObjectId(req.params.draftId);
+  } catch {
+    return res.status(400).json({ error: 'Invalid draft ID format' });
   }
   try {
-    await getDb().collection('draft_agents').insertOne({
-      workspaceId,
-      agentData,
-      createdAt: new Date(),
-    });
-    res.status(201).json({ ok: true });
+    const { deletedCount } = await getDb()
+      .collection('draft_agents')
+      .deleteOne({ _id: objectId });
+    if (deletedCount === 0) return res.status(404).json({ error: 'Draft not found' });
+    res.status(204).end();
   } catch (err) {
     res.status(503).json({ error: 'Draft service unavailable', detail: err.message });
   }
@@ -282,6 +397,16 @@ function serializeAgent(row) {
     instructions: row.instructions ?? [],
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  };
+}
+
+function serializeDraft(doc) {
+  return {
+    id: doc._id.toString(),
+    workspaceId: doc.workspaceId,
+    agentData: doc.agentData,
+    createdAt: doc.createdAt,
+    updatedAt: doc.updatedAt,
   };
 }
 
