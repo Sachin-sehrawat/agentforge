@@ -1,17 +1,35 @@
-import { getDb } from './mongo.js';
+import { db } from './mongo.js';
 
-const DRAFT_TTL_SECONDS = 7 * 24 * 60 * 60; // 7 days
+// Collections used by the frontend for transient/preference data.
+// Authoritative agent records live in PostgreSQL; MongoDB stores canvas
+// state, drafts, and per-user preferences that don't need relational integrity.
+const COLLECTIONS = [
+  {
+    name: 'workspace_state',
+    indexes: [{ key: { userId: 1 }, options: { unique: true } }],
+  },
+  {
+    name: 'draft_agents',
+    indexes: [{ key: { userId: 1, updatedAt: -1 }, options: {} }],
+  },
+  {
+    name: 'user_preferences',
+    indexes: [{ key: { userId: 1 }, options: { unique: true } }],
+  },
+];
 
 export async function setup() {
-  const db = getDb();
+  const database = db();
+  const existing = await database.listCollections().toArray();
+  const existingNames = new Set(existing.map((c) => c.name));
 
-  const prefs = db.collection('user_preferences');
-  await prefs.createIndex({ userId: 1 }, { unique: true });
-
-  const ws = db.collection('workspace_state');
-  await ws.createIndex({ workspaceId: 1 }, { unique: true });
-
-  const drafts = db.collection('draft_agents');
-  await drafts.createIndex({ workspaceId: 1 });
-  await drafts.createIndex({ createdAt: 1 }, { expireAfterSeconds: DRAFT_TTL_SECONDS });
+  for (const { name, indexes } of COLLECTIONS) {
+    if (!existingNames.has(name)) {
+      await database.createCollection(name);
+    }
+    const col = database.collection(name);
+    for (const { key, options } of indexes) {
+      await col.createIndex(key, options);
+    }
+  }
 }
