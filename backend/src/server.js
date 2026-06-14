@@ -72,8 +72,8 @@ app.post('/api/agents', async (req, res) => {
 
 app.put('/api/agents/:id', async (req, res) => {
   try {
-    const existing = await db.query('SELECT id FROM agents WHERE id = $1', [req.params.id]);
-    if (!existing.rows[0]) return res.status(404).json({ error: 'Agent not found' });
+    const check = await db.query('SELECT id FROM agents WHERE id = $1', [req.params.id]);
+    if (!check.rows[0]) return res.status(404).json({ error: 'Agent not found' });
 
     const agent = validateAgentInput(req.body);
     if (agent.error) return res.status(400).json({ error: agent.error });
@@ -144,8 +144,8 @@ app.post('/api/skills', async (req, res) => {
 
 app.put('/api/skills/:id', async (req, res) => {
   try {
-    const existing = await db.query('SELECT id FROM custom_skills WHERE id = $1', [req.params.id]);
-    if (!existing.rows[0]) return res.status(404).json({ error: 'Skill not found' });
+    const check = await db.query('SELECT id FROM custom_skills WHERE id = $1', [req.params.id]);
+    if (!check.rows[0]) return res.status(404).json({ error: 'Skill not found' });
 
     const skill = validateSkillInput(req.body);
     if (skill.error) return res.status(400).json({ error: skill.error });
@@ -174,12 +174,21 @@ app.delete('/api/skills/:id', async (req, res) => {
   }
 });
 
-// --- Health check --------------------------------------------------------
+// --- Health checks --------------------------------------------------------
 
 app.get('/api/health', async (req, res) => {
   try {
     await db.query('SELECT 1');
     res.json({ ok: true });
+  } catch (err) {
+    res.status(503).json({ ok: false, error: err.message });
+  }
+});
+
+app.get('/api/health/db', async (req, res) => {
+  try {
+    const result = await db.healthCheck();
+    res.json(result);
   } catch (err) {
     res.status(503).json({ ok: false, error: err.message });
   }
@@ -237,6 +246,13 @@ function validateSkillInput(body) {
 }
 
 const PORT = process.env.PORT || 4000;
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`AgentForge backend running at http://localhost:${PORT}`);
+  try {
+    await db.healthCheck();
+    console.log('[db] PostgreSQL connection established');
+  } catch (err) {
+    console.error('[db] WARNING: Cannot reach PostgreSQL —', err.message);
+    console.error('[db] Run `docker-compose up -d` from the project root to start the database.');
+  }
 });
