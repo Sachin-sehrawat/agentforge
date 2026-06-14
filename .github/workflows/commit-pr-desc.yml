@@ -83,7 +83,7 @@ jobs:
             ${message}
             \`\`\`
             
-            ✅ Commit message follows best practices`;
+             Commit message follows best practices`;
             
             github.rest.issues.createComment({
               issue_number: context.issue.number,
@@ -98,16 +98,16 @@ jobs:
           
           # Check if message starts with conventional commit type
           if [[ $MSG =~ ^(feat|fix|docs|style|refactor|perf|test|chore)(\(.+\))?:.*$ ]]; then
-            echo "✅ Valid conventional commit format"
+            echo " Valid conventional commit format"
           else
-            echo "⚠️ Consider using conventional commit format: type(scope): description"
+            echo " Consider using conventional commit format: type(scope): description"
           fi
 
       - name: Check for issues/PRs in message
         run: |
           MSG="${{ steps.commit.outputs.message }}"
           if [[ $MSG =~ (#[0-9]+|closes|fixes|resolves) ]]; then
-            echo "✅ References GitHub issues/PRs"
+            echo " References GitHub issues/PRs"
           else
-            echo "💡 Consider linking to related issues/PRs (e.g., 'Closes #123')"
+            echo " Consider linking to related issues/PRs (e.g., 'Closes #123')"
           fi
