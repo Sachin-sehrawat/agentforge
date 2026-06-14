@@ -1,4 +1,4 @@
-import { db } from './mongo.js';
+import { getDb } from './mongo.js';
 
 // Collections used by the frontend for transient/preference data.
 // Authoritative agent records live in PostgreSQL; MongoDB stores canvas
@@ -6,7 +6,9 @@ import { db } from './mongo.js';
 const COLLECTIONS = [
   {
     name: 'workspace_state',
-    indexes: [{ key: { userId: 1 }, options: { unique: true } }],
+    // sparse: true — documents without userId are excluded from the index,
+    // preventing duplicate-null errors from stale dev/test documents.
+    indexes: [{ key: { userId: 1 }, options: { unique: true, sparse: true } }],
   },
   {
     name: 'draft_agents',
@@ -14,12 +16,12 @@ const COLLECTIONS = [
   },
   {
     name: 'user_preferences',
-    indexes: [{ key: { userId: 1 }, options: { unique: true } }],
+    indexes: [{ key: { userId: 1 }, options: { unique: true, sparse: true } }],
   },
 ];
 
 export async function setup() {
-  const database = db();
+  const database = getDb();
   const existing = await database.listCollections().toArray();
   const existingNames = new Set(existing.map((c) => c.name));
 
@@ -29,7 +31,18 @@ export async function setup() {
     }
     const col = database.collection(name);
     for (const { key, options } of indexes) {
-      await col.createIndex(key, options);
+      try {
+        await col.createIndex(key, options);
+      } catch (err) {
+        // IndexOptionsConflict: a previous run created the index without sparse.
+        // Drop it so we can recreate with the correct options.
+        if (err.code === 85) {
+          await col.dropIndex(key);
+          await col.createIndex(key, options);
+        } else {
+          throw err;
+        }
+      }
     }
   }
 }
