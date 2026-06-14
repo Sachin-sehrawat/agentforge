@@ -18,29 +18,37 @@ how to run it. The Markdown output can be handed off to any LLM runtime you choo
 ## Requirements
 
 - [Node.js](https://nodejs.org/) 18+
-- [Docker](https://www.docker.com/) (for PostgreSQL via Docker Compose)
+- [Docker](https://www.docker.com/) (for PostgreSQL and MongoDB via Docker Compose)
 
 ## Setup
 
-### 1. Start PostgreSQL
+### 1. Start databases
 
 ```bash
 docker-compose up -d
 ```
 
-The init script in `backend/db/init/` runs automatically on first start and
-creates the `agents` and `custom_skills` tables. See [docs/database-schema.md](docs/database-schema.md) for the full schema.
+This starts both **PostgreSQL 14** and **MongoDB 7.0**.
+
+- The PostgreSQL init script in `backend/db/init/` runs automatically on first start and creates the `agents` and `custom_skills` tables. See [docs/database-schema.md](docs/database-schema.md) for the full schema.
+- MongoDB collections (`user_preferences`, `workspace_data`, `draft_agents`) are created automatically when the backend starts. See [docs/mongodb-schema.md](docs/mongodb-schema.md) for the full schema.
 
 ### 2. Backend
 
 ```bash
 cd backend
 npm install
-cp .env.example .env   # edit if your Postgres credentials differ from the defaults
+cp .env.example .env   # edit if your credentials differ from the defaults
 npm start
 ```
 
-The API server starts on `http://localhost:4000`.
+The API server starts on `http://localhost:4000`. On startup it connects to both databases and ensures all MongoDB collections and indexes exist.
+
+To load sample fixture data into MongoDB:
+
+```bash
+node backend/db/mongo-seed.js
+```
 
 ### 3. Frontend
 
@@ -66,16 +74,20 @@ Open `http://localhost:5173` in your browser (API calls are proxied to the backe
 
 ```
 agent-builder/
-├── docker-compose.yml          # PostgreSQL 14 service
+├── docker-compose.yml          # PostgreSQL 14 + MongoDB 7.0 services
 ├── docs/
-│   └── database-schema.md      # Table definitions and design notes
+│   ├── database-schema.md      # PostgreSQL table definitions
+│   └── mongodb-schema.md       # MongoDB collection definitions
 ├── backend/
 │   ├── db/
-│   │   └── init/
-│   │       └── 01_schema.sql   # Initial schema (run by Docker on first start)
+│   │   ├── init/
+│   │   │   └── 01_schema.sql   # PostgreSQL schema (run by Docker on first start)
+│   │   └── mongo-seed.js       # MongoDB fixture data seed script
 │   ├── src/
 │   │   ├── server.js           # Express app & REST API
-│   │   ├── db.js               # pg Pool connection
+│   │   ├── db.js               # PostgreSQL pool connection
+│   │   ├── mongo.js            # MongoDB client connection
+│   │   ├── mongo-init.js       # MongoDB collection & index setup
 │   │   └── tools/
 │   │       ├── calculator.js
 │   │       ├── codeRunner.js

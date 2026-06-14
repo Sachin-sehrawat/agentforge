@@ -3,6 +3,8 @@ import express from 'express';
 import cors from 'cors';
 import crypto from 'node:crypto';
 import db from './db.js';
+import mongo, { connect as mongoConnect } from './mongo.js';
+import { setup as mongoSetup } from './mongo-init.js';
 import { TOOL_CATALOG, TOOL_IDS } from './tools/toolDefinitions.js';
 
 const app = express();
@@ -185,9 +187,9 @@ app.get('/api/health', async (req, res) => {
   }
 });
 
-app.get('/api/health/db', async (req, res) => {
+app.get('/api/health/mongo', async (req, res) => {
   try {
-    const result = await db.healthCheck();
+    const result = await mongo.healthCheck();
     res.json(result);
   } catch (err) {
     res.status(503).json({ ok: false, error: err.message });
@@ -254,5 +256,13 @@ app.listen(PORT, async () => {
   } catch (err) {
     console.error('[db] WARNING: Cannot reach PostgreSQL —', err.message);
     console.error('[db] Run `docker-compose up -d` from the project root to start the database.');
+  }
+  try {
+    await mongoConnect();
+    await mongoSetup();
+    console.log('[mongo] MongoDB connection established and collections ready');
+  } catch (err) {
+    console.error('[mongo] WARNING: Cannot reach MongoDB —', err.message);
+    console.error('[mongo] Run `docker-compose up -d` from the project root to start the database.');
   }
 });
