@@ -23,111 +23,173 @@ app.get('/api/tools', (req, res) => {
 
 // --- Agent CRUD ------------------------------------------------------------
 
-app.get('/api/agents', (req, res) => {
-  const rows = db.prepare('SELECT * FROM agents ORDER BY updated_at DESC').all();
-  res.json(rows.map(serializeAgent));
+app.get('/api/agents', async (req, res) => {
+  try {
+    const { rows } = await db.query('SELECT * FROM agents ORDER BY updated_at DESC');
+    res.json(rows.map(serializeAgent));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-app.get('/api/agents/:id', (req, res) => {
-  const row = db.prepare('SELECT * FROM agents WHERE id = ?').get(req.params.id);
-  if (!row) return res.status(404).json({ error: 'Agent not found' });
-  res.json(serializeAgent(row));
+app.get('/api/agents/:id', async (req, res) => {
+  try {
+    const { rows } = await db.query('SELECT * FROM agents WHERE id = $1', [req.params.id]);
+    if (!rows[0]) return res.status(404).json({ error: 'Agent not found' });
+    res.json(serializeAgent(rows[0]));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-app.post('/api/agents', (req, res) => {
+app.post('/api/agents', async (req, res) => {
   const agent = validateAgentInput(req.body);
   if (agent.error) return res.status(400).json({ error: agent.error });
 
   const id = crypto.randomUUID();
-  db.prepare(
-    `INSERT INTO agents (id, name, persona, system_prompt, model, tools, positions, skills, instructions)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(id, agent.name, agent.persona, agent.systemPrompt, agent.model, JSON.stringify(agent.tools), JSON.stringify(agent.positions), JSON.stringify(agent.skills), JSON.stringify(agent.instructions));
-
-  const row = db.prepare('SELECT * FROM agents WHERE id = ?').get(id);
-  res.status(201).json(serializeAgent(row));
+  try {
+    await db.query(
+      `INSERT INTO agents (id, name, persona, system_prompt, model, tools, positions, skills, instructions)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [
+        id,
+        agent.name,
+        agent.persona,
+        agent.systemPrompt,
+        agent.model,
+        JSON.stringify(agent.tools),
+        JSON.stringify(agent.positions),
+        JSON.stringify(agent.skills),
+        JSON.stringify(agent.instructions),
+      ]
+    );
+    const { rows } = await db.query('SELECT * FROM agents WHERE id = $1', [id]);
+    res.status(201).json(serializeAgent(rows[0]));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-app.put('/api/agents/:id', (req, res) => {
-  const existing = db.prepare('SELECT * FROM agents WHERE id = ?').get(req.params.id);
-  if (!existing) return res.status(404).json({ error: 'Agent not found' });
+app.put('/api/agents/:id', async (req, res) => {
+  try {
+    const check = await db.query('SELECT id FROM agents WHERE id = $1', [req.params.id]);
+    if (!check.rows[0]) return res.status(404).json({ error: 'Agent not found' });
 
-  const agent = validateAgentInput(req.body);
-  if (agent.error) return res.status(400).json({ error: agent.error });
+    const agent = validateAgentInput(req.body);
+    if (agent.error) return res.status(400).json({ error: agent.error });
 
-  db.prepare(
-    `UPDATE agents SET name = ?, persona = ?, system_prompt = ?, model = ?, tools = ?, positions = ?, skills = ?, instructions = ?, updated_at = datetime('now')
-     WHERE id = ?`
-  ).run(agent.name, agent.persona, agent.systemPrompt, agent.model, JSON.stringify(agent.tools), JSON.stringify(agent.positions), JSON.stringify(agent.skills), JSON.stringify(agent.instructions), req.params.id);
+    await db.query(
+      `UPDATE agents
+       SET name = $1, persona = $2, system_prompt = $3, model = $4,
+           tools = $5, positions = $6, skills = $7, instructions = $8,
+           updated_at = NOW()
+       WHERE id = $9`,
+      [
+        agent.name,
+        agent.persona,
+        agent.systemPrompt,
+        agent.model,
+        JSON.stringify(agent.tools),
+        JSON.stringify(agent.positions),
+        JSON.stringify(agent.skills),
+        JSON.stringify(agent.instructions),
+        req.params.id,
+      ]
+    );
 
-  const row = db.prepare('SELECT * FROM agents WHERE id = ?').get(req.params.id);
-  res.json(serializeAgent(row));
+    const { rows } = await db.query('SELECT * FROM agents WHERE id = $1', [req.params.id]);
+    res.json(serializeAgent(rows[0]));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-app.delete('/api/agents/:id', (req, res) => {
-  const result = db.prepare('DELETE FROM agents WHERE id = ?').run(req.params.id);
-  if (result.changes === 0) return res.status(404).json({ error: 'Agent not found' });
-  res.status(204).end();
+app.delete('/api/agents/:id', async (req, res) => {
+  try {
+    const { rowCount } = await db.query('DELETE FROM agents WHERE id = $1', [req.params.id]);
+    if (rowCount === 0) return res.status(404).json({ error: 'Agent not found' });
+    res.status(204).end();
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // --- Custom Skills CRUD ---------------------------------------------------
 
-app.get('/api/skills', (req, res) => {
-  const rows = db.prepare('SELECT * FROM custom_skills ORDER BY created_at ASC').all();
-  res.json(rows);
+app.get('/api/skills', async (req, res) => {
+  try {
+    const { rows } = await db.query('SELECT * FROM custom_skills ORDER BY created_at ASC');
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-app.post('/api/skills', (req, res) => {
+app.post('/api/skills', async (req, res) => {
   const skill = validateSkillInput(req.body);
   if (skill.error) return res.status(400).json({ error: skill.error });
 
   const id = crypto.randomUUID();
-  db.prepare(
-    `INSERT INTO custom_skills (id, label, color, description, instruction) VALUES (?, ?, ?, ?, ?)`
-  ).run(id, skill.label, skill.color, skill.description, skill.instruction);
-
-  res.status(201).json(db.prepare('SELECT * FROM custom_skills WHERE id = ?').get(id));
+  try {
+    await db.query(
+      'INSERT INTO custom_skills (id, label, color, description, instruction) VALUES ($1, $2, $3, $4, $5)',
+      [id, skill.label, skill.color, skill.description, skill.instruction]
+    );
+    const { rows } = await db.query('SELECT * FROM custom_skills WHERE id = $1', [id]);
+    res.status(201).json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-app.put('/api/skills/:id', (req, res) => {
-  const existing = db.prepare('SELECT * FROM custom_skills WHERE id = ?').get(req.params.id);
-  if (!existing) return res.status(404).json({ error: 'Skill not found' });
+app.put('/api/skills/:id', async (req, res) => {
+  try {
+    const check = await db.query('SELECT id FROM custom_skills WHERE id = $1', [req.params.id]);
+    if (!check.rows[0]) return res.status(404).json({ error: 'Skill not found' });
 
-  const skill = validateSkillInput(req.body);
-  if (skill.error) return res.status(400).json({ error: skill.error });
+    const skill = validateSkillInput(req.body);
+    if (skill.error) return res.status(400).json({ error: skill.error });
 
-  db.prepare(
-    `UPDATE custom_skills SET label = ?, color = ?, description = ?, instruction = ?, updated_at = datetime('now') WHERE id = ?`
-  ).run(skill.label, skill.color, skill.description, skill.instruction, req.params.id);
+    await db.query(
+      `UPDATE custom_skills
+       SET label = $1, color = $2, description = $3, instruction = $4, updated_at = NOW()
+       WHERE id = $5`,
+      [skill.label, skill.color, skill.description, skill.instruction, req.params.id]
+    );
 
-  res.json(db.prepare('SELECT * FROM custom_skills WHERE id = ?').get(req.params.id));
+    const { rows } = await db.query('SELECT * FROM custom_skills WHERE id = $1', [req.params.id]);
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-app.delete('/api/skills/:id', (req, res) => {
-  const result = db.prepare('DELETE FROM custom_skills WHERE id = ?').run(req.params.id);
-  if (result.changes === 0) return res.status(404).json({ error: 'Skill not found' });
-  res.status(204).end();
+app.delete('/api/skills/:id', async (req, res) => {
+  try {
+    const { rowCount } = await db.query('DELETE FROM custom_skills WHERE id = $1', [req.params.id]);
+    if (rowCount === 0) return res.status(404).json({ error: 'Skill not found' });
+    res.status(204).end();
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-function validateSkillInput(body) {
-  if (!body || typeof body !== 'object') return { error: 'Invalid request body' };
-  const label = typeof body.label === 'string' ? body.label.trim() : '';
-  if (!label) return { error: 'Skill label is required' };
-  const instruction = typeof body.instruction === 'string' ? body.instruction.trim() : '';
-  if (!instruction) return { error: 'Skill instruction is required' };
-  return {
-    label,
-    color: typeof body.color === 'string' && body.color ? body.color : '#6366f1',
-    description: typeof body.description === 'string' ? body.description.trim() : '',
-    instruction,
-  };
-}
-
-// --- Health check --------------------------------------------------------
+// --- Health checks --------------------------------------------------------
 
 app.get('/api/health', (req, res) => {
   res.json({ ok: true });
 });
+
+app.get('/api/health/db', async (req, res) => {
+  try {
+    const result = await db.healthCheck();
+    res.json(result);
+  } catch (err) {
+    res.status(503).json({ ok: false, error: err.message });
+  }
+});
+
+// --- Helpers -------------------------------------------------------------
 
 function serializeAgent(row) {
   return {
@@ -136,10 +198,10 @@ function serializeAgent(row) {
     persona: row.persona,
     systemPrompt: row.system_prompt,
     model: row.model,
-    tools: JSON.parse(row.tools || '[]'),
-    positions: JSON.parse(row.positions || '{}'),
-    skills: JSON.parse(row.skills || '[]'),
-    instructions: JSON.parse(row.instructions || '[]'),
+    tools: row.tools ?? [],
+    positions: row.positions ?? {},
+    skills: row.skills ?? [],
+    instructions: row.instructions ?? [],
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -164,7 +226,28 @@ function validateAgentInput(body) {
   };
 }
 
+function validateSkillInput(body) {
+  if (!body || typeof body !== 'object') return { error: 'Invalid request body' };
+  const label = typeof body.label === 'string' ? body.label.trim() : '';
+  if (!label) return { error: 'Skill label is required' };
+  const instruction = typeof body.instruction === 'string' ? body.instruction.trim() : '';
+  if (!instruction) return { error: 'Skill instruction is required' };
+  return {
+    label,
+    color: typeof body.color === 'string' && body.color ? body.color : '#6366f1',
+    description: typeof body.description === 'string' ? body.description.trim() : '',
+    instruction,
+  };
+}
+
 const PORT = process.env.PORT || 4000;
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`AgentForge backend running at http://localhost:${PORT}`);
+  try {
+    await db.healthCheck();
+    console.log('[db] PostgreSQL connection established');
+  } catch (err) {
+    console.error('[db] WARNING: Cannot reach PostgreSQL —', err.message);
+    console.error('[db] Run `docker-compose up -d` from the project root to start the database.');
+  }
 });
