@@ -3,7 +3,7 @@ import express from 'express';
 import cors from 'cors';
 import crypto from 'node:crypto';
 import db from './db.js';
-import mongo, { connect as mongoConnect } from './mongo.js';
+import { connect as mongoConnect, getDb, healthCheck as mongoHealth } from './mongo.js';
 import { setup as mongoSetup } from './mongo-init.js';
 import { TOOL_CATALOG, TOOL_IDS } from './tools/toolDefinitions.js';
 
@@ -188,11 +188,82 @@ app.get('/api/health', async (req, res) => {
 });
 
 app.get('/api/health/mongo', async (req, res) => {
+  const result = await mongoHealth();
+  res.status(result.ok ? 200 : 503).json(result);
+});
+
+// --- User Preferences (MongoDB) -------------------------------------------
+
+app.get('/api/preferences/:userId', async (req, res) => {
   try {
-    const result = await mongo.healthCheck();
-    res.json(result);
+    const doc = await getDb().collection('user_preferences').findOne({ userId: req.params.userId });
+    res.json(doc?.preferences ?? {});
   } catch (err) {
-    res.status(503).json({ ok: false, error: err.message });
+    res.status(503).json({ error: 'Preferences service unavailable', detail: err.message });
+  }
+});
+
+app.post('/api/preferences/:userId', async (req, res) => {
+  if (!req.body || typeof req.body !== 'object') return res.status(400).json({ error: 'Invalid body' });
+  try {
+    await getDb().collection('user_preferences').updateOne(
+      { userId: req.params.userId },
+      {
+        $set: { preferences: req.body, updatedAt: new Date() },
+        $setOnInsert: { userId: req.params.userId, createdAt: new Date() },
+      },
+      { upsert: true }
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(503).json({ error: 'Preferences service unavailable', detail: err.message });
+  }
+});
+
+// --- Workspace State (MongoDB) --------------------------------------------
+
+app.get('/api/workspace/:workspaceId', async (req, res) => {
+  try {
+    const doc = await getDb().collection('workspace_state').findOne({ workspaceId: req.params.workspaceId });
+    res.json(doc?.data ?? {});
+  } catch (err) {
+    res.status(503).json({ error: 'Workspace service unavailable', detail: err.message });
+  }
+});
+
+app.post('/api/workspace/:workspaceId', async (req, res) => {
+  if (!req.body || typeof req.body !== 'object') return res.status(400).json({ error: 'Invalid body' });
+  try {
+    await getDb().collection('workspace_state').updateOne(
+      { workspaceId: req.params.workspaceId },
+      {
+        $set: { data: req.body, updatedAt: new Date() },
+        $setOnInsert: { workspaceId: req.params.workspaceId, createdAt: new Date() },
+      },
+      { upsert: true }
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(503).json({ error: 'Workspace service unavailable', detail: err.message });
+  }
+});
+
+// --- Draft Agents (MongoDB) -----------------------------------------------
+
+app.post('/api/drafts', async (req, res) => {
+  const { workspaceId, agentData } = req.body || {};
+  if (!workspaceId || !agentData) {
+    return res.status(400).json({ error: 'workspaceId and agentData are required' });
+  }
+  try {
+    await getDb().collection('draft_agents').insertOne({
+      workspaceId,
+      agentData,
+      createdAt: new Date(),
+    });
+    res.status(201).json({ ok: true });
+  } catch (err) {
+    res.status(503).json({ error: 'Draft service unavailable', detail: err.message });
   }
 });
 
@@ -263,6 +334,6 @@ app.listen(PORT, async () => {
     console.log('[mongo] MongoDB connection established and collections ready');
   } catch (err) {
     console.error('[mongo] WARNING: Cannot reach MongoDB —', err.message);
-    console.error('[mongo] Run `docker-compose up -d` from the project root to start the database.');
+    console.error('[mongo] Preferences, workspace, and draft endpoints will return 503 until MongoDB is available.');
   }
 });

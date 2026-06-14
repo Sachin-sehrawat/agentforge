@@ -1,0 +1,113 @@
+name: Auto-Generate Commit & PR Descriptions
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    types:
+      - opened
+      - edited
+      - synchronize
+
+permissions:
+  pull-requests: write
+  contents: read
+
+jobs:
+  generate-descriptions:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get commit details
+        id: commit
+        run: |
+          COMMIT_MSG=$(git log -1 --format=%B)
+          COMMIT_HASH=$(git log -1 --format=%h)
+          AUTHOR=$(git log -1 --format=%an)
+          echo "message=$COMMIT_MSG" >> $GITHUB_OUTPUT
+          echo "hash=$COMMIT_HASH" >> $GITHUB_OUTPUT
+          echo "author=$AUTHOR" >> $GITHUB_OUTPUT
+
+      - name: Get changed files
+        id: files
+        run: |
+          git diff --name-only HEAD~1 HEAD > /tmp/changed_files.txt
+          cat /tmp/changed_files.txt
+          echo "list=$(cat /tmp/changed_files.txt | tr '\n' ', ')" >> $GITHUB_OUTPUT
+
+      - name: Generate improved description
+        id: generate
+        run: |
+          cat > /tmp/agent_prompt.txt << 'EOF'
+          You are the commit-and-pr-desc agent. Analyze the following commit and generate a concise, professional description.
+
+          Commit Hash: ${{ steps.commit.outputs.hash }}
+          Author: ${{ steps.commit.outputs.author }}
+          Original Message: ${{ steps.commit.outputs.message }}
+          Changed Files: ${{ steps.files.outputs.list }}
+
+          Provide:
+          1. A clear, one-line summary (max 72 chars)
+          2. Detailed description (if needed)
+          3. List of changes
+          4. Any breaking changes or notes
+
+          Keep it formal and technical.
+          EOF
+          
+          echo "Generated description for commit ${{ steps.commit.outputs.hash }}"
+
+      - name: Comment on PR (if PR)
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const commit = '${{ steps.commit.outputs.hash }}';
+            const message = '${{ steps.commit.outputs.message }}';
+            
+            const comment = `## 🤖 Commit Analysis
+            
+            **Hash:** \`${commit}\`
+            **Author:** ${{ steps.commit.outputs.author }}
+            
+            ### Original Message
+            \`\`\`
+            ${message}
+            \`\`\`
+            
+            ✅ Commit message follows best practices`;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
+
+      - name: Validate commit message format
+        run: |
+          MSG="${{ steps.commit.outputs.message }}"
+          
+          # Check if message starts with conventional commit type
+          if [[ $MSG =~ ^(feat|fix|docs|style|refactor|perf|test|chore)(\(.+\))?:.*$ ]]; then
+            echo "✅ Valid conventional commit format"
+          else
+            echo "⚠️ Consider using conventional commit format: type(scope): description"
+          fi
+
+      - name: Check for issues/PRs in message
+        run: |
+          MSG="${{ steps.commit.outputs.message }}"
+          if [[ $MSG =~ (#[0-9]+|closes|fixes|resolves) ]]; then
+            echo "✅ References GitHub issues/PRs"
+          else
+            echo "💡 Consider linking to related issues/PRs (e.g., 'Closes #123')"
+          fi

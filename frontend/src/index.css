@@ -604,6 +604,16 @@ button {
 
 /* ---------- Workbench layout ---------- */
 
+.workspace-loading {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #94a3b8;
+  font-size: 0.9rem;
+  letter-spacing: 0.02em;
+}
+
 .workbench {
   flex: 1;
   display: flex;
