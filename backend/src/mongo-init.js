@@ -5,18 +5,18 @@ import { getDb } from './mongo.js';
 // state, drafts, and per-user preferences that don't need relational integrity.
 const COLLECTIONS = [
   {
-    name: 'workspace_state',
-    // sparse: true — documents without userId are excluded from the index,
-    // preventing duplicate-null errors from stale dev/test documents.
+    name: 'user_preferences',
     indexes: [{ key: { userId: 1 }, options: { unique: true, sparse: true } }],
+  },
+  {
+    name: 'workspace_state',
+    // Keyed by workspaceId, not userId — a workspace is a canvas session.
+    // sparse: true prevents duplicate-null errors from stale dev/test documents.
+    indexes: [{ key: { workspaceId: 1 }, options: { unique: true, sparse: true } }],
   },
   {
     name: 'draft_agents',
-    indexes: [{ key: { userId: 1, updatedAt: -1 }, options: {} }],
-  },
-  {
-    name: 'user_preferences',
-    indexes: [{ key: { userId: 1 }, options: { unique: true, sparse: true } }],
+    indexes: [{ key: { workspaceId: 1, createdAt: -1 }, options: {} }],
   },
 ];
 
@@ -34,8 +34,8 @@ export async function setup() {
       try {
         await col.createIndex(key, options);
       } catch (err) {
-        // IndexOptionsConflict: a previous run created the index without sparse.
-        // Drop it so we can recreate with the correct options.
+        // IndexOptionsConflict: a previous run created the index without the right options.
+        // Drop by key so we can recreate with the correct definition.
         if (err.code === 85) {
           await col.dropIndex(key);
           await col.createIndex(key, options);
