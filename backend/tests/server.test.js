@@ -1,493 +1,1014 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+/**
+ * HTTP endpoint tests for the Express app.
+ *
+ * pg and mongodb are fully mocked so these run without any live database.
+ * A real HTTP server is started on a random port (listen(0)) so every test
+ * exercises the full Express middleware stack (CORS, body-parser, rate-limiter,
+ * validators, serialisers, error handlers).
+ */
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import http from 'node:http';
 
-describe('Server API Endpoints', () => {
-  describe('GET /api/tools', () => {
-    it('should return array of tools', () => {
-      const tools = [
-        {
-          id: 'calculator',
-          label: 'Calculator',
-          kind: 'client',
-          description: 'Evaluate math expressions',
-        },
-      ];
+// ---------------------------------------------------------------------------
+// pg mock — must be declared before app.js is imported
+// ---------------------------------------------------------------------------
 
-      expect(Array.isArray(tools)).toBe(true);
-      expect(tools.length).toBeGreaterThan(0);
-    });
+const mockPoolQuery = vi.fn();
+const mockClientQuery = vi.fn();
+const mockClientRelease = vi.fn();
+const mockPoolConnect = vi.fn(() =>
+  Promise.resolve({ query: mockClientQuery, release: mockClientRelease })
+);
 
-    it('should include required tool properties', () => {
-      const tool = {
-        id: 'calculator',
-        label: 'Calculator',
-        kind: 'client',
-        description: 'Evaluate math expressions',
-      };
+vi.mock('pg', () => ({
+  default: {
+    Pool: vi.fn().mockImplementation(function () {
+      this.query = mockPoolQuery;
+      this.connect = mockPoolConnect;
+      this.on = vi.fn();
+    }),
+  },
+}));
 
-      expect(tool.id).toBeDefined();
-      expect(tool.label).toBeDefined();
-      expect(tool.kind).toBeDefined();
-      expect(['server', 'client']).toContain(tool.kind);
-    });
+// ---------------------------------------------------------------------------
+// MongoDB mock — must be declared before app.js is imported
+// ---------------------------------------------------------------------------
+
+const mockFindOne = vi.fn();
+const mockUpdateOne = vi.fn();
+const mockInsertOne = vi.fn();
+const mockDeleteOne = vi.fn();
+const mockFind = vi.fn();
+
+const mockCollection = vi.fn(() => ({
+  findOne: mockFindOne,
+  updateOne: mockUpdateOne,
+  insertOne: mockInsertOne,
+  deleteOne: mockDeleteOne,
+  find: mockFind,
+}));
+
+vi.mock('../src/mongo.js', () => ({
+  connect: vi.fn(),
+  getDb: vi.fn(() => ({ collection: mockCollection })),
+  healthCheck: vi.fn(async () => ({ ok: true })),
+}));
+
+// ---------------------------------------------------------------------------
+// Import app AFTER mocks are registered
+// ---------------------------------------------------------------------------
+
+const { app } = await import('../src/app.js');
+
+// ---------------------------------------------------------------------------
+// HTTP test server lifecycle
+// ---------------------------------------------------------------------------
+
+let server;
+let baseUrl;
+
+beforeAll(
+  () =>
+    new Promise((resolve) => {
+      server = http.createServer(app);
+      server.listen(0, '127.0.0.1', () => {
+        baseUrl = `http://127.0.0.1:${server.address().port}`;
+        resolve();
+      });
+    })
+);
+
+afterAll(() => new Promise((resolve) => server.close(resolve)));
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  // Default find mock returns empty array
+  mockFind.mockReturnValue({
+    sort: vi.fn().mockReturnValue({ toArray: vi.fn().mockResolvedValue([]) }),
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+async function req(method, path, body) {
+  const opts = {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+  };
+  if (body !== undefined) opts.body = JSON.stringify(body);
+  return fetch(`${baseUrl}${path}`, opts);
+}
+
+// Minimal DB rows for agents / skills
+function agentRow(overrides = {}) {
+  return {
+    id: 'aaaaaaaa-0000-0000-0000-000000000001',
+    name: 'Test Agent',
+    persona: '',
+    system_prompt: '',
+    model: 'claude-sonnet-4-6',
+    tools: [],
+    positions: {},
+    skills: [],
+    instructions: [],
+    created_at: new Date('2024-01-01T00:00:00Z'),
+    updated_at: new Date('2024-01-01T00:00:00Z'),
+    ...overrides,
+  };
+}
+
+function skillRow(overrides = {}) {
+  return {
+    id: 'bbbbbbbb-0000-0000-0000-000000000001',
+    label: 'My Skill',
+    color: '#6366f1',
+    description: 'Does something useful',
+    instruction: 'Be helpful always',
+    created_at: new Date('2024-01-01T00:00:00Z'),
+    updated_at: new Date('2024-01-01T00:00:00Z'),
+    ...overrides,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/tools
+// ---------------------------------------------------------------------------
+
+describe('GET /api/tools', () => {
+  it('returns 200 with an array of tool objects', async () => {
+    const res = await req('GET', '/api/tools');
+    expect(res.status).toBe(200);
+    const tools = await res.json();
+    expect(Array.isArray(tools)).toBe(true);
+    expect(tools.length).toBeGreaterThan(0);
   });
 
-  describe('Agent CRUD Operations', () => {
-    describe('GET /api/agents', () => {
-      it('should return list of agents', () => {
-        const agents = [];
-        expect(Array.isArray(agents)).toBe(true);
-      });
-
-      it('should include agent properties', () => {
-        const agent = {
-          id: '123',
-          name: 'My Agent',
-          persona: '',
-          systemPrompt: '',
-          model: 'claude-sonnet-4-6',
-          tools: [],
-          positions: {},
-          created_at: '2024-01-01T00:00:00Z',
-          updated_at: '2024-01-01T00:00:00Z',
-        };
-
-        expect(agent.id).toBeDefined();
-        expect(agent.name).toBeDefined();
-        expect(agent.model).toBeDefined();
-      });
-    });
-
-    describe('GET /api/agents/:id', () => {
-      it('should return single agent by ID', () => {
-        const agent = {
-          id: '123',
-          name: 'My Agent',
-          tools: [],
-        };
-
-        expect(agent.id).toBe('123');
-      });
-
-      it('should return 404 if agent not found', () => {
-        const statusCode = 404;
-        expect(statusCode).toBe(404);
-      });
-    });
-
-    describe('POST /api/agents', () => {
-      it('should create new agent', () => {
-        const newAgent = {
-          name: 'Test Agent',
-          persona: '',
-          systemPrompt: 'Be helpful',
-          model: 'claude-sonnet-4-6',
-          tools: ['calculator'],
-        };
-
-        expect(newAgent.name).toBeDefined();
-        expect(newAgent.model).toBeDefined();
-      });
-
-      it('should require name field', () => {
-        const agent = {
-          persona: '',
-          systemPrompt: '',
-        };
-
-        const isValid = agent.name !== undefined;
-        expect(isValid).toBe(false);
-      });
-
-      it('should generate UUID for new agent', () => {
-        const uuid = 'f47ac10b-58cc-4372-a567-0e02b2c3d479';
-        const isValidUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(uuid);
-
-        expect(isValidUUID).toBe(true);
-      });
-
-      it('should return 201 on success', () => {
-        const statusCode = 201;
-        expect(statusCode).toBe(201);
-      });
-
-      it('should return 400 on validation error', () => {
-        const statusCode = 400;
-        expect(statusCode).toBe(400);
-      });
-    });
-
-    describe('PUT /api/agents/:id', () => {
-      it('should update agent properties', () => {
-        const updates = {
-          name: 'Updated Name',
-          systemPrompt: 'New prompt',
-        };
-
-        expect(updates.name).toBe('Updated Name');
-      });
-
-      it('should preserve unmodified fields', () => {
-        const original = {
-          id: '123',
-          name: 'Test',
-          model: 'claude-sonnet-4-6',
-        };
-
-        const updated = { ...original, name: 'Updated' };
-        expect(updated.model).toBe(original.model);
-      });
-    });
-
-    describe('DELETE /api/agents/:id', () => {
-      it('should delete agent', () => {
-        const statusCode = 204;
-        expect(statusCode).toBe(204);
-      });
-
-      it('should return 404 if agent not found', () => {
-        const statusCode = 404;
-        expect(statusCode).toBe(404);
-      });
-    });
-
-    describe('POST /api/agents/:id/run', () => {
-      it('should execute agent', () => {
-        const response = {
-          reply: 'Hello!',
-          trace: [],
-          messages: [],
-        };
-
-        expect(response.reply).toBeDefined();
-        expect(response.trace).toBeDefined();
-      });
-
-      it('should require messages in request body', () => {
-        const request = {
-          messages: [{ role: 'user', content: 'Hello' }],
-        };
-
-        const isValid = request.messages !== undefined;
-        expect(isValid).toBe(true);
-      });
-    });
+  it('each tool has id, label, kind, description', async () => {
+    const res = await req('GET', '/api/tools');
+    const tools = await res.json();
+    for (const t of tools) {
+      expect(typeof t.id).toBe('string');
+      expect(typeof t.label).toBe('string');
+      expect(['server', 'client']).toContain(t.kind);
+      expect(typeof t.description).toBe('string');
+    }
   });
 
-  describe('Skills API', () => {
-    describe('GET /api/skills', () => {
-      it('should return list of custom skills', () => {
-        const skills = [];
-        expect(Array.isArray(skills)).toBe(true);
-      });
-    });
+  it('includes calculator and code_runner', async () => {
+    const res = await req('GET', '/api/tools');
+    const tools = await res.json();
+    const ids = tools.map((t) => t.id);
+    expect(ids).toContain('calculator');
+    expect(ids).toContain('code_runner');
+  });
+});
 
-    describe('POST /api/skills', () => {
-      it('should create custom skill', () => {
-        const skill = {
-          id: 'skill-123',
-          label: 'My Skill',
-          description: 'Does something',
-          instruction: 'Be helpful',
-          color: '#6366f1',
-        };
+// ---------------------------------------------------------------------------
+// GET /api/agents
+// ---------------------------------------------------------------------------
 
-        expect(skill.label).toBeDefined();
-        expect(skill.instruction).toBeDefined();
-      });
-
-      it('should generate UUID for new skill', () => {
-        const uuid = 'f47ac10b-58cc-4372-a567-0e02b2c3d479';
-        const isValid = /^[0-9a-f-]{36}$/i.test(uuid);
-
-        expect(isValid).toBe(true);
-      });
-    });
-
-    describe('PUT /api/skills/:id', () => {
-      it('should update custom skill', () => {
-        const updates = {
-          label: 'Updated Skill',
-          description: 'Updated description',
-        };
-
-        expect(updates.label).toBeDefined();
-      });
-    });
-
-    describe('DELETE /api/skills/:id', () => {
-      it('should delete custom skill', () => {
-        const statusCode = 204;
-        expect(statusCode).toBe(204);
-      });
-    });
+describe('GET /api/agents', () => {
+  it('returns 200 with empty array when no agents', async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [] });
+    const res = await req('GET', '/api/agents');
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual([]);
   });
 
-  describe('Input Validation', () => {
-    it('should validate agent name is string', () => {
-      const agent = { name: 123 };
-      const isValid = typeof agent.name === 'string';
-
-      expect(isValid).toBe(false);
-    });
-
-    it('should validate model is supported', () => {
-      const supportedModels = ['claude-opus-4-1', 'claude-sonnet-4-6'];
-      const agentModel = 'claude-sonnet-4-6';
-
-      expect(supportedModels).toContain(agentModel);
-    });
-
-    it('should validate tools array contains valid tool IDs', () => {
-      const validTools = ['calculator', 'code_runner', 'http_request', 'web_search'];
-      const agentTools = ['calculator', 'invalid_tool'];
-
-      const allValid = agentTools.every((t) => validTools.includes(t));
-      expect(allValid).toBe(false);
-    });
-
-    it('should validate positions object', () => {
-      const positions = {
-        calculator: { x: 100, y: 200 },
-        code_runner: { x: 300, y: 400 },
-      };
-
-      expect(typeof positions).toBe('object');
-      expect(positions.calculator.x).toBeDefined();
-    });
+  it('serializes agent rows to camelCase', async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [agentRow()] });
+    const res = await req('GET', '/api/agents');
+    const agents = await res.json();
+    expect(agents).toHaveLength(1);
+    const a = agents[0];
+    expect(a.id).toBe('aaaaaaaa-0000-0000-0000-000000000001');
+    expect(a.systemPrompt).toBe('');
+    expect(a.createdAt).toBeDefined();
+    expect(a.updatedAt).toBeDefined();
+    expect(a.tools).toEqual([]);
+    expect(a.positions).toEqual({});
   });
 
-  describe('Error Responses', () => {
-    it('should return error message on failure', () => {
-      const errorResponse = {
-        error: 'Agent not found',
-      };
-
-      expect(errorResponse.error).toBeDefined();
-    });
-
-    it('should include status code with errors', () => {
-      const response = {
-        statusCode: 404,
-        error: 'Not found',
-      };
-
-      expect(response.statusCode).toBe(404);
-    });
-
-    it('should handle database errors gracefully', () => {
-      const errorResponse = {
-        error: 'Database error',
-      };
-
-      expect(errorResponse.error).toBeDefined();
-    });
+  it('returns 500 when db throws', async () => {
+    mockPoolQuery.mockRejectedValueOnce(new Error('connection lost'));
+    const res = await req('GET', '/api/agents');
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body.error).toBe('connection lost');
   });
 
-  describe('CORS Configuration', () => {
-    it('should allow cross-origin requests', () => {
-      const corsEnabled = true;
-      expect(corsEnabled).toBe(true);
-    });
+  it('returns JSON Content-Type header', async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [] });
+    const res = await req('GET', '/api/agents');
+    expect(res.headers.get('content-type')).toMatch(/application\/json/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/agents/:id
+// ---------------------------------------------------------------------------
+
+describe('GET /api/agents/:id', () => {
+  it('returns 200 with agent when found', async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [agentRow()] });
+    const res = await req('GET', '/api/agents/aaaaaaaa-0000-0000-0000-000000000001');
+    expect(res.status).toBe(200);
+    const a = await res.json();
+    expect(a.name).toBe('Test Agent');
   });
 
-  describe('JSON Payload Limits', () => {
-    it('should limit JSON payload to 1mb', () => {
-      const limit = '1mb';
-      expect(limit).toBe('1mb');
-    });
+  it('returns 404 when agent not found', async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [] });
+    const res = await req('GET', '/api/agents/nonexistent-id');
+    expect(res.status).toBe(404);
+    const body = await res.json();
+    expect(body.error).toBe('Agent not found');
   });
 
-  describe('Request Logging', () => {
-    it('logs method, path, status, and duration', () => {
-      const logLine = '[2024-01-01T00:00:00.000Z] GET /api/agents 200 12ms';
-      expect(logLine).toMatch(/\[.+\] (GET|POST|PUT|DELETE|PATCH) .+ \d+ \d+ms/);
+  it('returns 500 on db error', async () => {
+    mockPoolQuery.mockRejectedValueOnce(new Error('db error'));
+    const res = await req('GET', '/api/agents/some-id');
+    expect(res.status).toBe(500);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/agents
+// ---------------------------------------------------------------------------
+
+describe('POST /api/agents', () => {
+  it('returns 201 with created agent', async () => {
+    const created = agentRow({ name: 'New Bot', system_prompt: 'Be helpful' });
+    mockPoolQuery
+      .mockResolvedValueOnce({ rows: [] }) // INSERT
+      .mockResolvedValueOnce({ rows: [created] }); // SELECT after insert
+
+    const res = await req('POST', '/api/agents', {
+      name: 'New Bot',
+      systemPrompt: 'Be helpful',
+      model: 'claude-sonnet-4-6',
+      tools: [],
     });
+
+    expect(res.status).toBe(201);
+    const a = await res.json();
+    expect(a.name).toBe('New Bot');
+    expect(a.id).toBeDefined();
   });
 
-  describe('Rate Limiting', () => {
-    it('returns 429 when limit exceeded', () => {
-      const statusCode = 429;
-      expect(statusCode).toBe(429);
-    });
-
-    it('includes rate limit headers', () => {
-      const headers = {
-        'X-RateLimit-Limit': '100',
-        'X-RateLimit-Remaining': '99',
-        'X-RateLimit-Reset': new Date().toISOString(),
-      };
-      expect(headers['X-RateLimit-Limit']).toBe('100');
-      expect(Number(headers['X-RateLimit-Remaining'])).toBeLessThanOrEqual(100);
-      expect(() => new Date(headers['X-RateLimit-Reset'])).not.toThrow();
-    });
+  it('returns 400 when name is missing', async () => {
+    const res = await req('POST', '/api/agents', { systemPrompt: 'test' });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toMatch(/name/i);
   });
 
-  describe('Preferences API (MongoDB)', () => {
-    describe('GET /api/preferences/:userId', () => {
-      it('should return empty object when no preferences stored', () => {
-        const result = null;
-        expect(result?.preferences ?? {}).toEqual({});
-      });
-    });
-
-    describe('POST /api/preferences/:userId', () => {
-      it('should accept theme preference', () => {
-        const body = { theme: 'dark' };
-        expect(['light', 'dark', 'system']).toContain(body.theme);
-      });
-
-      it('should accept canvas_zoom preference', () => {
-        const body = { canvas_zoom: 1.5 };
-        expect(typeof body.canvas_zoom).toBe('number');
-        expect(body.canvas_zoom).toBeGreaterThanOrEqual(0.1);
-        expect(body.canvas_zoom).toBeLessThanOrEqual(5);
-      });
-
-      it('should accept canvas_pan preference', () => {
-        const body = { canvas_pan: { x: 10, y: -20 } };
-        expect(typeof body.canvas_pan.x).toBe('number');
-        expect(typeof body.canvas_pan.y).toBe('number');
-      });
-
-      it('should accept sidebar_width preference', () => {
-        const body = { sidebar_width: 280 };
-        expect(body.sidebar_width).toBeGreaterThanOrEqual(0);
-        expect(body.sidebar_width).toBeLessThanOrEqual(2000);
-      });
-
-      it('should return updated preference with timestamps', () => {
-        const response = {
-          userId: 'user-1',
-          preferences: { theme: 'dark' },
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        };
-        expect(response.userId).toBeDefined();
-        expect(response.preferences).toBeDefined();
-        expect(response.createdAt).toBeInstanceOf(Date);
-        expect(response.updatedAt).toBeInstanceOf(Date);
-      });
-
-      it('should return 400 for invalid theme', () => {
-        const statusCode = 400;
-        expect(statusCode).toBe(400);
-      });
-    });
+  it('returns 400 when name is empty string', async () => {
+    const res = await req('POST', '/api/agents', { name: '   ' });
+    expect(res.status).toBe(400);
   });
 
-  describe('Workspace API (MongoDB)', () => {
-    describe('GET /api/workspace/:workspaceId', () => {
-      it('should return empty object when no state stored', () => {
-        const doc = null;
-        expect(doc?.data ?? {}).toEqual({});
-      });
-
-      it('should return workspace fields', () => {
-        const data = { selected_agent: 'agent-1', agent_positions: {}, active_tab: 'canvas' };
-        expect(data.selected_agent).toBeDefined();
-        expect(typeof data.agent_positions).toBe('object');
-        expect(typeof data.active_tab).toBe('string');
-      });
+  it('returns 400 when body is not JSON object', async () => {
+    const res = await fetch(`${baseUrl}/api/agents`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '"just a string"',
     });
-
-    describe('POST /api/workspace/:workspaceId', () => {
-      it('should accept selected_agent', () => {
-        const body = { selected_agent: 'agent-abc' };
-        expect(typeof body.selected_agent).toBe('string');
-      });
-
-      it('should accept agent_positions', () => {
-        const body = { agent_positions: { 'agent-1': { x: 100, y: 200 } } };
-        expect(typeof body.agent_positions).toBe('object');
-      });
-
-      it('should accept active_tab', () => {
-        const body = { active_tab: 'canvas' };
-        expect(typeof body.active_tab).toBe('string');
-      });
-
-      it('should return 400 for empty body', () => {
-        const statusCode = 400;
-        expect(statusCode).toBe(400);
-      });
-
-      it('should return workspace document with timestamps', () => {
-        const response = {
-          workspaceId: 'ws-1',
-          data: { active_tab: 'canvas' },
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        };
-        expect(response.workspaceId).toBeDefined();
-        expect(response.data).toBeDefined();
-        expect(response.createdAt).toBeInstanceOf(Date);
-        expect(response.updatedAt).toBeInstanceOf(Date);
-      });
-    });
+    expect(res.status).toBe(400);
   });
 
-  describe('Drafts API (MongoDB)', () => {
-    describe('GET /api/drafts/:workspaceId', () => {
-      it('should return array of drafts', () => {
-        const drafts = [];
-        expect(Array.isArray(drafts)).toBe(true);
-      });
+  it('filters invalid tool IDs from tools array', async () => {
+    const created = agentRow({ tools: ['calculator'] });
+    mockPoolQuery
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [created] });
 
-      it('should include draft properties', () => {
-        const draft = {
-          id: 'draft-id',
-          workspaceId: 'ws-1',
-          agentData: { name: 'My Draft' },
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        };
-        expect(draft.id).toBeDefined();
-        expect(draft.workspaceId).toBeDefined();
-        expect(draft.agentData).toBeDefined();
-        expect(draft.createdAt).toBeInstanceOf(Date);
-      });
+    const res = await req('POST', '/api/agents', {
+      name: 'Bot',
+      tools: ['calculator', 'invalid_tool_xyz'],
     });
 
-    describe('POST /api/drafts/:workspaceId', () => {
-      it('should require agentData in body', () => {
-        const body = {};
-        const isValid = 'agentData' in body;
-        expect(isValid).toBe(false);
-      });
+    expect(res.status).toBe(201);
+    // The INSERT call should only pass valid tools
+    const insertCall = mockPoolQuery.mock.calls[0];
+    const toolsArg = JSON.parse(insertCall[1][5]);
+    expect(toolsArg).toContain('calculator');
+    expect(toolsArg).not.toContain('invalid_tool_xyz');
+  });
 
-      it('should return 201 on success', () => {
-        const statusCode = 201;
-        expect(statusCode).toBe(201);
-      });
+  it('generates a UUID for the new agent', async () => {
+    const created = agentRow();
+    mockPoolQuery
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [created] });
 
-      it('should return created draft with id and timestamps', () => {
-        const response = {
-          id: 'draft-mongo-id',
-          workspaceId: 'ws-1',
-          agentData: { name: 'New Draft' },
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        };
-        expect(response.id).toBeDefined();
-        expect(response.createdAt).toBeInstanceOf(Date);
-      });
+    await req('POST', '/api/agents', { name: 'Bot' });
+
+    const insertCall = mockPoolQuery.mock.calls[0];
+    const uuid = insertCall[1][0];
+    expect(uuid).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+  });
+
+  it('returns 500 on db error', async () => {
+    mockPoolQuery.mockRejectedValueOnce(new Error('insert failed'));
+    const res = await req('POST', '/api/agents', { name: 'Bot' });
+    expect(res.status).toBe(500);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PUT /api/agents/:id
+// ---------------------------------------------------------------------------
+
+describe('PUT /api/agents/:id', () => {
+  it('returns 200 with updated agent', async () => {
+    const updated = agentRow({ name: 'Updated Bot' });
+    mockPoolQuery
+      .mockResolvedValueOnce({ rows: [{ id: updated.id }] }) // existence check
+      .mockResolvedValueOnce({ rows: [] }) // UPDATE
+      .mockResolvedValueOnce({ rows: [updated] }); // SELECT after update
+
+    const res = await req('PUT', `/api/agents/${updated.id}`, {
+      name: 'Updated Bot',
+      model: 'claude-sonnet-4-6',
     });
 
-    describe('DELETE /api/drafts/:draftId', () => {
-      it('should return 204 on success', () => {
-        const statusCode = 204;
-        expect(statusCode).toBe(204);
-      });
+    expect(res.status).toBe(200);
+    const a = await res.json();
+    expect(a.name).toBe('Updated Bot');
+  });
 
-      it('should return 404 when draft not found', () => {
-        const statusCode = 404;
-        expect(statusCode).toBe(404);
-      });
+  it('returns 404 when agent does not exist', async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [] });
+    const res = await req('PUT', '/api/agents/nonexistent', { name: 'Bot' });
+    expect(res.status).toBe(404);
+    expect((await res.json()).error).toBe('Agent not found');
+  });
 
-      it('should return 400 for invalid ObjectId format', () => {
-        const statusCode = 400;
-        expect(statusCode).toBe(400);
-      });
+  it('returns 400 on validation error', async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [{ id: 'some-id' }] });
+    const res = await req('PUT', '/api/agents/some-id', { persona: 'no name' });
+    expect(res.status).toBe(400);
+  });
+
+  it('returns 500 on db error during update', async () => {
+    mockPoolQuery
+      .mockResolvedValueOnce({ rows: [{ id: 'some-id' }] })
+      .mockRejectedValueOnce(new Error('update failed'));
+
+    const res = await req('PUT', '/api/agents/some-id', { name: 'Bot' });
+    expect(res.status).toBe(500);
+  });
+
+  it('preserves existing fields when partial update is sent', async () => {
+    const existing = agentRow({ name: 'Original', system_prompt: 'Old prompt' });
+    const afterUpdate = agentRow({ name: 'New Name', system_prompt: 'Old prompt' });
+
+    mockPoolQuery
+      .mockResolvedValueOnce({ rows: [{ id: existing.id }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [afterUpdate] });
+
+    const res = await req('PUT', `/api/agents/${existing.id}`, {
+      name: 'New Name',
+      systemPrompt: 'Old prompt',
     });
+
+    expect(res.status).toBe(200);
+    const a = await res.json();
+    expect(a.systemPrompt).toBe('Old prompt');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DELETE /api/agents/:id
+// ---------------------------------------------------------------------------
+
+describe('DELETE /api/agents/:id', () => {
+  it('returns 204 on successful delete', async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rowCount: 1 });
+    const res = await req('DELETE', '/api/agents/aaaaaaaa-0000-0000-0000-000000000001');
+    expect(res.status).toBe(204);
+    expect(await res.text()).toBe('');
+  });
+
+  it('returns 404 when agent not found', async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rowCount: 0 });
+    const res = await req('DELETE', '/api/agents/nonexistent-id');
+    expect(res.status).toBe(404);
+    expect((await res.json()).error).toBe('Agent not found');
+  });
+
+  it('returns 500 on db error', async () => {
+    mockPoolQuery.mockRejectedValueOnce(new Error('delete failed'));
+    const res = await req('DELETE', '/api/agents/some-id');
+    expect(res.status).toBe(500);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/skills
+// ---------------------------------------------------------------------------
+
+describe('GET /api/skills', () => {
+  it('returns 200 with empty array when no skills', async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [] });
+    const res = await req('GET', '/api/skills');
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual([]);
+  });
+
+  it('returns list of skills', async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [skillRow()] });
+    const res = await req('GET', '/api/skills');
+    const skills = await res.json();
+    expect(skills).toHaveLength(1);
+    expect(skills[0].label).toBe('My Skill');
+    expect(skills[0].instruction).toBe('Be helpful always');
+  });
+
+  it('returns 500 on db error', async () => {
+    mockPoolQuery.mockRejectedValueOnce(new Error('db down'));
+    const res = await req('GET', '/api/skills');
+    expect(res.status).toBe(500);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/skills
+// ---------------------------------------------------------------------------
+
+describe('POST /api/skills', () => {
+  it('returns 201 with created skill', async () => {
+    const created = skillRow({ label: 'New Skill', instruction: 'Do this' });
+    mockPoolQuery
+      .mockResolvedValueOnce({ rows: [] }) // INSERT
+      .mockResolvedValueOnce({ rows: [created] }); // SELECT
+
+    const res = await req('POST', '/api/skills', {
+      label: 'New Skill',
+      instruction: 'Do this',
+    });
+
+    expect(res.status).toBe(201);
+    const s = await res.json();
+    expect(s.label).toBe('New Skill');
+    expect(s.id).toBeDefined();
+  });
+
+  it('returns 400 when label is missing', async () => {
+    const res = await req('POST', '/api/skills', { instruction: 'Do this' });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/label/i);
+  });
+
+  it('returns 400 when instruction is missing', async () => {
+    const res = await req('POST', '/api/skills', { label: 'My Skill' });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/instruction/i);
+  });
+
+  it('uses default color when not provided', async () => {
+    const created = skillRow();
+    mockPoolQuery
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [created] });
+
+    await req('POST', '/api/skills', {
+      label: 'My Skill',
+      instruction: 'Be helpful',
+    });
+
+    const insertArgs = mockPoolQuery.mock.calls[0][1];
+    expect(insertArgs[2]).toBe('#6366f1'); // default color
+  });
+
+  it('generates a UUID for the skill', async () => {
+    const created = skillRow();
+    mockPoolQuery
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [created] });
+
+    await req('POST', '/api/skills', { label: 'Skill', instruction: 'Do it' });
+
+    const insertArgs = mockPoolQuery.mock.calls[0][1];
+    expect(insertArgs[0]).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+    );
+  });
+
+  it('returns 500 on db error', async () => {
+    mockPoolQuery.mockRejectedValueOnce(new Error('insert failed'));
+    const res = await req('POST', '/api/skills', {
+      label: 'Skill',
+      instruction: 'Do it',
+    });
+    expect(res.status).toBe(500);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PUT /api/skills/:id
+// ---------------------------------------------------------------------------
+
+describe('PUT /api/skills/:id', () => {
+  it('returns 200 with updated skill', async () => {
+    const updated = skillRow({ label: 'Updated Skill' });
+    mockPoolQuery
+      .mockResolvedValueOnce({ rows: [{ id: updated.id }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [updated] });
+
+    const res = await req('PUT', `/api/skills/${updated.id}`, {
+      label: 'Updated Skill',
+      instruction: 'Be helpful always',
+    });
+
+    expect(res.status).toBe(200);
+    expect((await res.json()).label).toBe('Updated Skill');
+  });
+
+  it('returns 404 when skill does not exist', async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [] });
+    const res = await req('PUT', '/api/skills/nonexistent', {
+      label: 'Skill',
+      instruction: 'Do it',
+    });
+    expect(res.status).toBe(404);
+    expect((await res.json()).error).toBe('Skill not found');
+  });
+
+  it('returns 400 on validation error', async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [{ id: 'some-id' }] });
+    const res = await req('PUT', '/api/skills/some-id', { label: 'Only label' });
+    expect(res.status).toBe(400);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DELETE /api/skills/:id
+// ---------------------------------------------------------------------------
+
+describe('DELETE /api/skills/:id', () => {
+  it('returns 204 on successful delete', async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rowCount: 1 });
+    const res = await req('DELETE', '/api/skills/some-id');
+    expect(res.status).toBe(204);
+  });
+
+  it('returns 404 when skill not found', async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rowCount: 0 });
+    const res = await req('DELETE', '/api/skills/nonexistent');
+    expect(res.status).toBe(404);
+    expect((await res.json()).error).toBe('Skill not found');
+  });
+
+  it('returns 500 on db error', async () => {
+    mockPoolQuery.mockRejectedValueOnce(new Error('delete failed'));
+    const res = await req('DELETE', '/api/skills/some-id');
+    expect(res.status).toBe(500);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Health checks
+// ---------------------------------------------------------------------------
+
+describe('GET /api/health', () => {
+  it('returns 200 ok:true when db is healthy', async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [] });
+    const res = await req('GET', '/api/health');
+    expect(res.status).toBe(200);
+    expect((await res.json()).ok).toBe(true);
+  });
+
+  it('returns 503 when db is unreachable', async () => {
+    mockPoolQuery.mockRejectedValueOnce(new Error('Connection refused'));
+    const res = await req('GET', '/api/health');
+    expect(res.status).toBe(503);
+    const body = await res.json();
+    expect(body.ok).toBe(false);
+    expect(body.error).toBe('Connection refused');
+  });
+});
+
+describe('GET /api/health/mongo', () => {
+  it('returns 200 ok:true when mongo is healthy', async () => {
+    const { healthCheck } = await import('../src/mongo.js');
+    healthCheck.mockResolvedValueOnce({ ok: true, latencyMs: 2 });
+
+    const res = await req('GET', '/api/health/mongo');
+    expect(res.status).toBe(200);
+    expect((await res.json()).ok).toBe(true);
+  });
+
+  it('returns 503 when mongo is unhealthy', async () => {
+    const { healthCheck } = await import('../src/mongo.js');
+    healthCheck.mockResolvedValueOnce({ ok: false, error: 'timeout' });
+
+    const res = await req('GET', '/api/health/mongo');
+    expect(res.status).toBe(503);
+    expect((await res.json()).ok).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// User Preferences (MongoDB) — GET /api/preferences/:userId
+// ---------------------------------------------------------------------------
+
+describe('GET /api/preferences/:userId', () => {
+  it('returns empty object when no document exists', async () => {
+    mockFindOne.mockResolvedValueOnce(null);
+    const res = await req('GET', '/api/preferences/user-1');
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({});
+  });
+
+  it('returns stored preferences', async () => {
+    mockFindOne.mockResolvedValueOnce({
+      userId: 'user-1',
+      preferences: { theme: 'dark', sidebar_width: 300 },
+    });
+    const res = await req('GET', '/api/preferences/user-1');
+    expect(res.status).toBe(200);
+    const prefs = await res.json();
+    expect(prefs.theme).toBe('dark');
+    expect(prefs.sidebar_width).toBe(300);
+  });
+
+  it('returns 503 when MongoDB throws', async () => {
+    mockFindOne.mockRejectedValueOnce(new Error('mongo down'));
+    const res = await req('GET', '/api/preferences/user-1');
+    expect(res.status).toBe(503);
+    expect((await res.json()).error).toMatch(/unavailable/i);
+  });
+
+  it('includes X-RateLimit headers', async () => {
+    mockFindOne.mockResolvedValueOnce(null);
+    const res = await req('GET', '/api/preferences/user-1');
+    expect(res.headers.get('x-ratelimit-limit')).toBe('100');
+    expect(Number(res.headers.get('x-ratelimit-remaining'))).toBeGreaterThanOrEqual(0);
+    expect(() => new Date(res.headers.get('x-ratelimit-reset'))).not.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// User Preferences (MongoDB) — POST /api/preferences/:userId
+// ---------------------------------------------------------------------------
+
+describe('POST /api/preferences/:userId', () => {
+  it('returns 200 with updated preferences document', async () => {
+    const now = new Date();
+    mockUpdateOne.mockResolvedValueOnce({ upsertedCount: 1 });
+    mockFindOne.mockResolvedValueOnce({
+      userId: 'user-1',
+      preferences: { theme: 'dark' },
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const res = await req('POST', '/api/preferences/user-1', { theme: 'dark' });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.userId).toBe('user-1');
+    expect(body.preferences.theme).toBe('dark');
+    expect(body.createdAt).toBeDefined();
+    expect(body.updatedAt).toBeDefined();
+  });
+
+  it('returns 400 on invalid theme value', async () => {
+    const res = await req('POST', '/api/preferences/user-1', { theme: 'rainbow' });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/theme/);
+  });
+
+  it('returns 400 on canvas_zoom out of range', async () => {
+    const res = await req('POST', '/api/preferences/user-1', { canvas_zoom: 99 });
+    expect(res.status).toBe(400);
+  });
+
+  it('returns 400 on canvas_pan missing y', async () => {
+    const res = await req('POST', '/api/preferences/user-1', { canvas_pan: { x: 10 } });
+    expect(res.status).toBe(400);
+  });
+
+  it('returns 400 on sidebar_width out of range', async () => {
+    const res = await req('POST', '/api/preferences/user-1', { sidebar_width: -5 });
+    expect(res.status).toBe(400);
+  });
+
+  it('returns 400 on empty body', async () => {
+    const res = await req('POST', '/api/preferences/user-1', {});
+    expect(res.status).toBe(400);
+  });
+
+  it('accepts all valid preference fields together', async () => {
+    const now = new Date();
+    mockUpdateOne.mockResolvedValueOnce({ upsertedCount: 1 });
+    mockFindOne.mockResolvedValueOnce({
+      userId: 'u1',
+      preferences: { theme: 'light', canvas_zoom: 1.5, canvas_pan: { x: 0, y: 0 }, sidebar_width: 300 },
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const res = await req('POST', '/api/preferences/u1', {
+      theme: 'light',
+      canvas_zoom: 1.5,
+      canvas_pan: { x: 0, y: 0 },
+      sidebar_width: 300,
+    });
+
+    expect(res.status).toBe(200);
+  });
+
+  it('returns 503 when MongoDB throws during upsert', async () => {
+    mockUpdateOne.mockRejectedValueOnce(new Error('mongo down'));
+    const res = await req('POST', '/api/preferences/user-1', { theme: 'dark' });
+    expect(res.status).toBe(503);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Workspace State (MongoDB) — GET /api/workspace/:workspaceId
+// ---------------------------------------------------------------------------
+
+describe('GET /api/workspace/:workspaceId', () => {
+  it('returns empty object when no document exists', async () => {
+    mockFindOne.mockResolvedValueOnce(null);
+    const res = await req('GET', '/api/workspace/ws-1');
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({});
+  });
+
+  it('returns stored workspace data', async () => {
+    const data = { selected_agent: 'agent-1', active_tab: 'canvas', agent_positions: {} };
+    mockFindOne.mockResolvedValueOnce({ workspaceId: 'ws-1', data });
+    const res = await req('GET', '/api/workspace/ws-1');
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.selected_agent).toBe('agent-1');
+    expect(body.active_tab).toBe('canvas');
+  });
+
+  it('returns 503 on MongoDB error', async () => {
+    mockFindOne.mockRejectedValueOnce(new Error('timeout'));
+    const res = await req('GET', '/api/workspace/ws-1');
+    expect(res.status).toBe(503);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Workspace State (MongoDB) — POST /api/workspace/:workspaceId
+// ---------------------------------------------------------------------------
+
+describe('POST /api/workspace/:workspaceId', () => {
+  it('returns 200 with upserted workspace document', async () => {
+    const now = new Date();
+    mockUpdateOne.mockResolvedValueOnce({ upsertedCount: 1 });
+    mockFindOne.mockResolvedValueOnce({
+      workspaceId: 'ws-1',
+      data: { selected_agent: 'agent-1', active_tab: 'canvas', agent_positions: {} },
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const res = await req('POST', '/api/workspace/ws-1', {
+      selected_agent: 'agent-1',
+      active_tab: 'canvas',
+      agent_positions: {},
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.workspaceId).toBe('ws-1');
+    expect(body.data.active_tab).toBe('canvas');
+    expect(body.createdAt).toBeDefined();
+    expect(body.updatedAt).toBeDefined();
+  });
+
+  it('returns 400 on empty body', async () => {
+    const res = await req('POST', '/api/workspace/ws-1', {});
+    expect(res.status).toBe(400);
+  });
+
+  it('returns 400 when selected_agent is a number', async () => {
+    const res = await req('POST', '/api/workspace/ws-1', { selected_agent: 42 });
+    expect(res.status).toBe(400);
+  });
+
+  it('returns 400 when agent_positions is an array', async () => {
+    const res = await req('POST', '/api/workspace/ws-1', { agent_positions: [] });
+    expect(res.status).toBe(400);
+  });
+
+  it('returns 503 on MongoDB error', async () => {
+    mockUpdateOne.mockRejectedValueOnce(new Error('mongo down'));
+    const res = await req('POST', '/api/workspace/ws-1', { active_tab: 'canvas' });
+    expect(res.status).toBe(503);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Draft Agents (MongoDB) — GET /api/drafts/:workspaceId
+// ---------------------------------------------------------------------------
+
+describe('GET /api/drafts/:workspaceId', () => {
+  it('returns empty array when no drafts', async () => {
+    mockFind.mockReturnValueOnce({
+      sort: vi.fn().mockReturnValue({ toArray: vi.fn().mockResolvedValue([]) }),
+    });
+    const res = await req('GET', '/api/drafts/ws-1');
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual([]);
+  });
+
+  it('returns serialized drafts newest-first', async () => {
+    const now = new Date();
+    const drafts = [
+      { _id: { toString: () => 'id-2' }, workspaceId: 'ws-1', agentData: { name: 'B' }, createdAt: now, updatedAt: now },
+      { _id: { toString: () => 'id-1' }, workspaceId: 'ws-1', agentData: { name: 'A' }, createdAt: now, updatedAt: now },
+    ];
+    mockFind.mockReturnValueOnce({
+      sort: vi.fn().mockReturnValue({ toArray: vi.fn().mockResolvedValue(drafts) }),
+    });
+
+    const res = await req('GET', '/api/drafts/ws-1');
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toHaveLength(2);
+    expect(body[0].id).toBe('id-2');
+    expect(body[0].agentData.name).toBe('B');
+  });
+
+  it('returns 503 on MongoDB error', async () => {
+    mockFind.mockReturnValueOnce({
+      sort: vi.fn().mockReturnValue({
+        toArray: vi.fn().mockRejectedValue(new Error('mongo down')),
+      }),
+    });
+    const res = await req('GET', '/api/drafts/ws-1');
+    expect(res.status).toBe(503);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Draft Agents (MongoDB) — POST /api/drafts/:workspaceId
+// ---------------------------------------------------------------------------
+
+describe('POST /api/drafts/:workspaceId', () => {
+  it('returns 201 with created draft', async () => {
+    const now = new Date();
+    const insertedId = { toString: () => 'new-draft-id' };
+    mockInsertOne.mockResolvedValueOnce({ insertedId });
+    mockFindOne.mockResolvedValueOnce({
+      _id: insertedId,
+      workspaceId: 'ws-1',
+      agentData: { name: 'Draft Bot' },
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const res = await req('POST', '/api/drafts/ws-1', {
+      agentData: { name: 'Draft Bot', tools: ['calculator'] },
+    });
+
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(body.id).toBe('new-draft-id');
+    expect(body.workspaceId).toBe('ws-1');
+    expect(body.agentData.name).toBe('Draft Bot');
+    expect(body.createdAt).toBeDefined();
+  });
+
+  it('returns 400 when agentData is missing', async () => {
+    const res = await req('POST', '/api/drafts/ws-1', {});
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/agentData/i);
+  });
+
+  it('returns 400 when agentData is not an object', async () => {
+    const res = await req('POST', '/api/drafts/ws-1', { agentData: 'not-an-object' });
+    expect(res.status).toBe(400);
+  });
+
+  it('strips extra keys from the draft input', async () => {
+    const now = new Date();
+    const insertedId = { toString: () => 'id' };
+    mockInsertOne.mockResolvedValueOnce({ insertedId });
+    mockFindOne.mockResolvedValueOnce({
+      _id: insertedId,
+      workspaceId: 'ws-1',
+      agentData: { name: 'Bot' },
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    // extra field should be ignored
+    await req('POST', '/api/drafts/ws-1', {
+      agentData: { name: 'Bot' },
+      extraField: 'should be stripped',
+    });
+
+    const insertCall = mockInsertOne.mock.calls[0][0];
+    expect(insertCall).not.toHaveProperty('extraField');
+  });
+
+  it('returns 503 on MongoDB error', async () => {
+    mockInsertOne.mockRejectedValueOnce(new Error('mongo down'));
+    const res = await req('POST', '/api/drafts/ws-1', { agentData: { name: 'Bot' } });
+    expect(res.status).toBe(503);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Draft Agents (MongoDB) — DELETE /api/drafts/:draftId
+// ---------------------------------------------------------------------------
+
+describe('DELETE /api/drafts/:draftId', () => {
+  it('returns 204 on successful delete', async () => {
+    mockDeleteOne.mockResolvedValueOnce({ deletedCount: 1 });
+    // Use a valid 24-char hex ObjectId
+    const res = await req('DELETE', '/api/drafts/6670a1b2c3d4e5f6a7b8c9d0');
+    expect(res.status).toBe(204);
+  });
+
+  it('returns 404 when draft does not exist', async () => {
+    mockDeleteOne.mockResolvedValueOnce({ deletedCount: 0 });
+    const res = await req('DELETE', '/api/drafts/6670a1b2c3d4e5f6a7b8c9d0');
+    expect(res.status).toBe(404);
+    expect((await res.json()).error).toBe('Draft not found');
+  });
+
+  it('returns 400 for invalid ObjectId format', async () => {
+    const res = await req('DELETE', '/api/drafts/not-a-valid-objectid');
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toBe('Invalid draft ID format');
+  });
+
+  it('returns 503 on MongoDB error', async () => {
+    mockDeleteOne.mockRejectedValueOnce(new Error('mongo down'));
+    const res = await req('DELETE', '/api/drafts/6670a1b2c3d4e5f6a7b8c9d0');
+    expect(res.status).toBe(503);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Rate limiting
+// ---------------------------------------------------------------------------
+
+describe('Rate limiting on MongoDB routes', () => {
+  it('returns X-RateLimit-Limit: 100', async () => {
+    mockFindOne.mockResolvedValue(null);
+    const res = await req('GET', '/api/preferences/user-1');
+    expect(res.headers.get('x-ratelimit-limit')).toBe('100');
+  });
+
+  it('X-RateLimit-Remaining decrements with each request', async () => {
+    mockFindOne.mockResolvedValue(null);
+    const r1 = await req('GET', '/api/preferences/rate-test-unique-user-a');
+    const r2 = await req('GET', '/api/preferences/rate-test-unique-user-a');
+    const rem1 = Number(r1.headers.get('x-ratelimit-remaining'));
+    const rem2 = Number(r2.headers.get('x-ratelimit-remaining'));
+    expect(rem2).toBeLessThan(rem1);
+  });
+
+  it('X-RateLimit-Reset is a valid future ISO date', async () => {
+    mockFindOne.mockResolvedValue(null);
+    const res = await req('GET', '/api/preferences/user-ratelimit');
+    const reset = res.headers.get('x-ratelimit-reset');
+    expect(() => new Date(reset)).not.toThrow();
+    expect(new Date(reset).getTime()).toBeGreaterThan(Date.now() - 1000);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CORS
+// ---------------------------------------------------------------------------
+
+describe('CORS', () => {
+  it('sets Access-Control-Allow-Origin on responses', async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [] });
+    const res = await req('GET', '/api/agents');
+    expect(res.headers.get('access-control-allow-origin')).toBe('*');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Request body limits and content-type
+// ---------------------------------------------------------------------------
+
+describe('Request validation', () => {
+  it('returns 400 on completely missing body for POST /api/agents', async () => {
+    const res = await fetch(`${baseUrl}/api/agents`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '',
+    });
+    // Express with empty body may return 400 (body-parser) or continue with undefined
+    // In our case validateAgentInput(undefined) returns error
+    expect([400, 500].includes(res.status)).toBe(true);
   });
 });
