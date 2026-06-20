@@ -82,6 +82,7 @@ jobs:
         run: |
           psql -h localhost -U agentforge -d agentforge_test -f db/init/01_schema.sql
           psql -h localhost -U agentforge -d agentforge_test -f db/init/02_performance_indexes.sql
+          psql -h localhost -U agentforge -d agentforge_test -f db/init/03_users.sql
 
       - name: Run tests with coverage
         working-directory: backend
