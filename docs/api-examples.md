@@ -74,6 +74,57 @@ curl http://localhost:4000/api/tools
 
 ---
 
+### Agents — listing
+
+```bash
+# List public agents (anonymous — no flags)
+curl http://localhost:4000/api/agents/public
+
+# List public agents with isSubscribed flag (authenticated)
+curl http://localhost:4000/api/agents/public \
+  -H "Authorization: Bearer <token>"
+
+# My agents — owned + subscribed, with isOwned / isSubscribed flags (requires auth)
+curl http://localhost:4000/api/agents/mine \
+  -H "Authorization: Bearer <token>"
+
+# Legacy: public agents only, no flags (kept for back-compat — use /public instead)
+curl http://localhost:4000/api/agents
+```
+
+**`GET /api/agents/public` response (authenticated):**
+```json
+[
+  {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "name": "Research Agent",
+    "visibility": "public",
+    "ownerId": "cccccccc-0000-0000-0000-000000000001",
+    "isSubscribed": false,
+    "createdAt": "2024-01-01T00:00:00.000Z",
+    "updatedAt": "2024-01-01T00:00:00.000Z"
+  }
+]
+```
+
+**`GET /api/agents/mine` response:**
+```json
+[
+  {
+    "id": "aaaaaaaa-0000-0000-0000-000000000001",
+    "name": "My Private Agent",
+    "visibility": "private",
+    "ownerId": "cccccccc-0000-0000-0000-000000000001",
+    "isOwned": true,
+    "isSubscribed": false,
+    "createdAt": "2024-01-01T00:00:00.000Z",
+    "updatedAt": "2024-01-01T00:00:00.000Z"
+  }
+]
+```
+
+---
+
 ### Agents — CRUD
 
 ```bash
@@ -257,7 +308,23 @@ console.log(me.email); // 'alice@example.com'
 ```js
 const BASE = 'http://localhost:4000';
 
-// List agents
+// List public agents (anonymous — no subscription flags)
+const publicAgents = await fetch(`${BASE}/api/agents/public`).then(r => r.json());
+
+// List public agents with isSubscribed flag (authenticated)
+const publicWithFlags = await fetch(`${BASE}/api/agents/public`, {
+  headers: { Authorization: `Bearer ${token}` },
+}).then(r => r.json());
+console.log(publicWithFlags[0].isSubscribed); // true | false
+
+// My agents — owned + subscribed, with isOwned / isSubscribed (requires auth)
+const myAgents = await fetch(`${BASE}/api/agents/mine`, {
+  headers: { Authorization: `Bearer ${token}` },
+}).then(r => r.json());
+const owned = myAgents.filter(a => a.isOwned);
+const subscribed = myAgents.filter(a => a.isSubscribed && !a.isOwned);
+
+// Legacy: public agents only, no flags
 const agents = await fetch(`${BASE}/api/agents`).then(r => r.json());
 
 // Create an agent

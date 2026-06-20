@@ -97,10 +97,63 @@ app.get('/api/tools', (req, res) => {
 
 // --- Agent CRUD ------------------------------------------------------------
 
+// Legacy endpoint kept for back-compat; now scoped to public agents only (private agents
+// were never meant to be world-readable — the original "SELECT *" was a security oversight).
+// Clients that need subscription flags should migrate to /api/agents/public or /api/agents/mine.
 app.get('/api/agents', async (req, res) => {
   try {
-    const { rows } = await db.query('SELECT * FROM agents ORDER BY updated_at DESC');
+    const { rows } = await db.query(
+      "SELECT * FROM agents WHERE visibility = 'public' ORDER BY updated_at DESC"
+    );
     res.json(rows.map(serializeAgent));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Public agents only; when authenticated each item carries isSubscribed.
+app.get('/api/agents/public', optionalAuth, async (req, res) => {
+  try {
+    if (req.user) {
+      const { rows } = await db.query(
+        `SELECT a.*, (s.agent_id IS NOT NULL) AS is_subscribed
+         FROM agents a
+         LEFT JOIN subscriptions s ON s.agent_id = a.id AND s.user_id = $1
+         WHERE a.visibility = 'public'
+         ORDER BY a.updated_at DESC`,
+        [req.user.userId]
+      );
+      return res.json(rows.map((r) => ({ ...serializeAgent(r), isSubscribed: Boolean(r.is_subscribed) })));
+    }
+    const { rows } = await db.query(
+      "SELECT * FROM agents WHERE visibility = 'public' ORDER BY updated_at DESC"
+    );
+    res.json(rows.map(serializeAgent));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Owned agents + subscribed public agents for the authenticated user.
+app.get('/api/agents/mine', requireAuth, async (req, res) => {
+  const userId = req.user.userId;
+  try {
+    const { rows } = await db.query(
+      `SELECT a.*,
+              (a.owner_id = $1) AS is_owned,
+              (s.agent_id IS NOT NULL) AS is_subscribed
+       FROM agents a
+       LEFT JOIN subscriptions s ON s.agent_id = a.id AND s.user_id = $1
+       WHERE a.owner_id = $1
+          OR (a.visibility = 'public' AND s.agent_id IS NOT NULL)
+       ORDER BY a.updated_at DESC`,
+      [userId]
+    );
+    res.json(rows.map((r) => ({
+      ...serializeAgent(r),
+      isOwned: Boolean(r.is_owned),
+      isSubscribed: Boolean(r.is_subscribed),
+    })));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

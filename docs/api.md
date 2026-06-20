@@ -157,11 +157,97 @@ Returns the catalog of built-in tools available to agents.
 
 Agent objects include `ownerId` (the user ID that created it) and `visibility` (`"public"` or `"private"`).
 
-### `GET /api/agents`
+### `GET /api/agents` _(legacy)_
 
-Returns all agents ordered by most recently updated. Public endpoint — no auth required.
+Returns all **public** agents ordered by most recently updated. No auth required. No subscription flags.
+
+> **Decision:** The original endpoint returned every agent regardless of visibility, leaking private agents to unauthenticated callers. It is kept for back-compat but now scoped to `visibility = 'public'`. New clients should use `GET /api/agents/public` (adds `isSubscribed` when authenticated) or `GET /api/agents/mine` (owned + subscribed, with flags).
 
 **Response 200** — array of agent objects (see shape below).
+
+---
+
+### `GET /api/agents/public`
+
+Returns all public agents ordered by `updated_at DESC`. Accepts an optional Bearer token — when authenticated, each item includes an `isSubscribed` flag.
+
+**Headers (optional)**
+
+| Header | Value |
+|---|---|
+| `Authorization` | `Bearer <token>` |
+
+**Response 200 — anonymous**
+
+```json
+[
+  {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "name": "Research Agent",
+    "visibility": "public",
+    "ownerId": "cccccccc-0000-0000-0000-000000000001",
+    "createdAt": "2024-01-01T00:00:00.000Z",
+    "updatedAt": "2024-01-01T00:00:00.000Z"
+  }
+]
+```
+
+**Response 200 — authenticated** (same shape, plus `isSubscribed` on every item)
+
+```json
+[
+  {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "name": "Research Agent",
+    "visibility": "public",
+    "ownerId": "cccccccc-0000-0000-0000-000000000001",
+    "isSubscribed": true,
+    "createdAt": "2024-01-01T00:00:00.000Z",
+    "updatedAt": "2024-01-01T00:00:00.000Z"
+  }
+]
+```
+
+---
+
+### `GET /api/agents/mine`
+
+Returns the authenticated user's **owned agents** plus any **subscribed public agents**, ordered by `updated_at DESC`. Each item carries `isOwned` and `isSubscribed` boolean flags.
+
+**Headers**
+
+| Header | Value |
+|---|---|
+| `Authorization` | `Bearer <token>` |
+
+**Response 200**
+
+```json
+[
+  {
+    "id": "aaaaaaaa-0000-0000-0000-000000000001",
+    "name": "My Private Agent",
+    "visibility": "private",
+    "ownerId": "cccccccc-0000-0000-0000-000000000001",
+    "isOwned": true,
+    "isSubscribed": false,
+    "createdAt": "2024-01-01T00:00:00.000Z",
+    "updatedAt": "2024-01-01T00:00:00.000Z"
+  },
+  {
+    "id": "bbbbbbbb-0000-0000-0000-000000000002",
+    "name": "Someone's Public Agent",
+    "visibility": "public",
+    "ownerId": "dddddddd-0000-0000-0000-000000000002",
+    "isOwned": false,
+    "isSubscribed": true,
+    "createdAt": "2024-01-01T00:00:00.000Z",
+    "updatedAt": "2024-01-01T00:00:00.000Z"
+  }
+]
+```
+
+**Response 401** — missing or invalid token.
 
 ---
 

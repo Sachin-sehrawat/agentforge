@@ -265,6 +265,130 @@ describe('GET /api/agents', () => {
     const res = await req('GET', '/api/agents');
     expect(res.headers.get('content-type')).toMatch(/application\/json/);
   });
+
+  it('only queries public agents (scoped to visibility=public after security fix)', async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [] });
+    await req('GET', '/api/agents');
+    const query = mockPoolQuery.mock.calls[0][0];
+    expect(query).toMatch(/visibility\s*=\s*'public'/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/agents/public
+// ---------------------------------------------------------------------------
+
+describe('GET /api/agents/public', () => {
+  it('returns 200 with public agents (anonymous)', async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [agentRow({ visibility: 'public' })] });
+    const res = await req('GET', '/api/agents/public');
+    expect(res.status).toBe(200);
+    const agents = await res.json();
+    expect(agents).toHaveLength(1);
+    expect(agents[0].visibility).toBe('public');
+  });
+
+  it('does not include isSubscribed when anonymous', async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [agentRow({ visibility: 'public' })] });
+    const res = await req('GET', '/api/agents/public');
+    const agents = await res.json();
+    expect(agents[0]).not.toHaveProperty('isSubscribed');
+  });
+
+  it('returns empty array when no public agents', async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [] });
+    const res = await req('GET', '/api/agents/public');
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual([]);
+  });
+
+  it('returns isSubscribed: true when authenticated and subscribed', async () => {
+    mockPoolQuery.mockResolvedValueOnce({
+      rows: [{ ...agentRow({ visibility: 'public' }), is_subscribed: true }],
+    });
+    const res = await authReq('GET', '/api/agents/public');
+    expect(res.status).toBe(200);
+    const agents = await res.json();
+    expect(agents[0].isSubscribed).toBe(true);
+  });
+
+  it('returns isSubscribed: false when authenticated but not subscribed', async () => {
+    mockPoolQuery.mockResolvedValueOnce({
+      rows: [{ ...agentRow({ visibility: 'public' }), is_subscribed: false }],
+    });
+    const res = await authReq('GET', '/api/agents/public');
+    expect(res.status).toBe(200);
+    const agents = await res.json();
+    expect(agents[0].isSubscribed).toBe(false);
+  });
+
+  it('returns 500 on db error', async () => {
+    mockPoolQuery.mockRejectedValueOnce(new Error('db down'));
+    const res = await req('GET', '/api/agents/public');
+    expect(res.status).toBe(500);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/agents/mine
+// ---------------------------------------------------------------------------
+
+describe('GET /api/agents/mine', () => {
+  it('returns 401 when unauthenticated', async () => {
+    const res = await req('GET', '/api/agents/mine');
+    expect(res.status).toBe(401);
+  });
+
+  it('returns owned agents with isOwned: true', async () => {
+    mockPoolQuery.mockResolvedValueOnce({
+      rows: [{ ...agentRow({ owner_id: TEST_USER_ID, visibility: 'private' }), is_owned: true, is_subscribed: false }],
+    });
+    const res = await authReq('GET', '/api/agents/mine');
+    expect(res.status).toBe(200);
+    const agents = await res.json();
+    expect(agents[0].isOwned).toBe(true);
+    expect(agents[0].isSubscribed).toBe(false);
+  });
+
+  it('returns subscribed public agents with isSubscribed: true', async () => {
+    mockPoolQuery.mockResolvedValueOnce({
+      rows: [{ ...agentRow({ owner_id: OTHER_USER_ID, visibility: 'public' }), is_owned: false, is_subscribed: true }],
+    });
+    const res = await authReq('GET', '/api/agents/mine');
+    expect(res.status).toBe(200);
+    const agents = await res.json();
+    expect(agents[0].isOwned).toBe(false);
+    expect(agents[0].isSubscribed).toBe(true);
+  });
+
+  it('returns mixed owned and subscribed agents', async () => {
+    const ownedRow = { ...agentRow({ owner_id: TEST_USER_ID, visibility: 'private' }), is_owned: true, is_subscribed: false };
+    const subscribedRow = {
+      ...agentRow({ id: 'bbbbbbbb-1111-0000-0000-000000000002', owner_id: OTHER_USER_ID, visibility: 'public' }),
+      is_owned: false,
+      is_subscribed: true,
+    };
+    mockPoolQuery.mockResolvedValueOnce({ rows: [ownedRow, subscribedRow] });
+    const res = await authReq('GET', '/api/agents/mine');
+    expect(res.status).toBe(200);
+    const agents = await res.json();
+    expect(agents).toHaveLength(2);
+    expect(agents.find((a) => a.isOwned && !a.isSubscribed)).toBeDefined();
+    expect(agents.find((a) => a.isSubscribed && !a.isOwned)).toBeDefined();
+  });
+
+  it('returns empty array when user has no owned or subscribed agents', async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [] });
+    const res = await authReq('GET', '/api/agents/mine');
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual([]);
+  });
+
+  it('returns 500 on db error', async () => {
+    mockPoolQuery.mockRejectedValueOnce(new Error('db down'));
+    const res = await authReq('GET', '/api/agents/mine');
+    expect(res.status).toBe(500);
+  });
 });
 
 // ---------------------------------------------------------------------------
