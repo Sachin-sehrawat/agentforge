@@ -81,6 +81,7 @@ app.use('/api/auth', rateLimit);
 app.use('/api/preferences', rateLimit);
 app.use('/api/workspace', rateLimit);
 app.use('/api/drafts', rateLimit);
+app.use('/api/subscriptions', rateLimit);
 
 // --- Tool catalog ---------------------------------------------------------
 
@@ -425,6 +426,72 @@ app.delete('/api/drafts/:draftId', async (req, res) => {
   }
 });
 
+// --- Subscriptions --------------------------------------------------------
+// Reference semantics: each row is a pointer from a user to a public agent.
+// The agent is never copied; subscribers always see the live version.
+
+app.post('/api/subscriptions', requireAuth, async (req, res) => {
+  const agentId = typeof req.body?.agentId === 'string' ? req.body.agentId.trim() : '';
+  if (!agentId) return res.status(400).json({ error: 'agentId is required' });
+
+  const userId = req.user.userId;
+  try {
+    await db.query(
+      'INSERT INTO subscriptions (user_id, agent_id) VALUES ($1, $2)',
+      [userId, agentId]
+    );
+    res.status(201).json({ userId, agentId });
+  } catch (err) {
+    if (err.code === '23505') return res.status(409).json({ error: 'Already subscribed to this agent' });
+    if (err.code === '23503') return res.status(404).json({ error: 'Agent not found' });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/subscriptions/:agentId', requireAuth, async (req, res) => {
+  const userId = req.user.userId;
+  try {
+    const { rowCount } = await db.query(
+      'DELETE FROM subscriptions WHERE user_id = $1 AND agent_id = $2',
+      [userId, req.params.agentId]
+    );
+    if (rowCount === 0) return res.status(404).json({ error: 'Subscription not found' });
+    res.status(204).end();
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/subscriptions', requireAuth, async (req, res) => {
+  const userId = req.user.userId;
+  try {
+    const { rows } = await db.query(
+      `SELECT a.*, s.created_at AS subscribed_at
+       FROM subscriptions s
+       JOIN agents a ON a.id = s.agent_id
+       WHERE s.user_id = $1
+       ORDER BY s.created_at DESC`,
+      [userId]
+    );
+    res.json(rows.map(serializeSubscribedAgent));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/subscriptions/:agentId', requireAuth, async (req, res) => {
+  const userId = req.user.userId;
+  try {
+    const { rows } = await db.query(
+      'SELECT 1 FROM subscriptions WHERE user_id = $1 AND agent_id = $2',
+      [userId, req.params.agentId]
+    );
+    res.json({ subscribed: rows.length > 0 });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // --- Auth ----------------------------------------------------------------
 
 app.post('/api/auth/signup', async (req, res) => {
@@ -507,6 +574,10 @@ function serializeAgent(row) {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+function serializeSubscribedAgent(row) {
+  return { ...serializeAgent(row), subscribedAt: row.subscribed_at };
 }
 
 function serializeDraft(doc) {

@@ -10,7 +10,7 @@
 
 # Database Schema
 
-AgentForge uses **PostgreSQL 14+** as its primary data store. The schema is initialized automatically when starting the Docker Compose stack via the ordered init scripts in `backend/db/init/` (`01_schema.sql`, `02_performance_indexes.sql`, `03_users.sql`, `04_ownership.sql`).
+AgentForge uses **PostgreSQL 14+** as its primary data store. The schema is initialized automatically when starting the Docker Compose stack via the ordered init scripts in `backend/db/init/` (`01_schema.sql`, `02_performance_indexes.sql`, `03_users.sql`, `04_ownership.sql`, `05_subscriptions.sql`).
 
 ## Tables
 
@@ -96,6 +96,39 @@ Stores user accounts for authentication and identity.
 | `idx_users_email_lower` | `LOWER(email)` UNIQUE | Case-insensitive unique lookup; guards against duplicate accounts differing only in case |
 | `idx_users_auth_provider` | `auth_provider` | Supports filtering users by auth method |
 | `idx_users_created_at` | `created_at DESC` | Supports admin queries sorted by registration date |
+
+---
+
+### `subscriptions`
+
+Stores user subscriptions to public agents. Uses **reference semantics** — each row is a join record pointing at the original public agent rather than a copy of it. Subscribers always see the live, up-to-date version of the agent.
+
+| Column | Type | Constraints | Description |
+|---|---|---|---|
+| `user_id` | `UUID` | `NOT NULL`, FK → `users.id` ON DELETE CASCADE, part of PK | Subscribing user |
+| `agent_id` | `UUID` | `NOT NULL`, FK → `agents.id` ON DELETE CASCADE, part of PK | Target public agent |
+| `created_at` | `TIMESTAMPTZ` | `NOT NULL DEFAULT NOW()` | When the subscription was created |
+
+**Constraints**
+
+- `PRIMARY KEY (user_id, agent_id)` — composite key prevents a user from subscribing to the same agent more than once. A duplicate `INSERT` raises PostgreSQL error `23505` (unique_violation), which the API translates to HTTP 409.
+- `ON DELETE CASCADE` on both foreign keys — deleting a user removes all their subscriptions; deleting an agent removes all subscriptions to it.
+
+**Indexes**
+
+| Name | Column | Rationale |
+|---|---|---|
+| `idx_subscriptions_user_id` | `user_id` | Powers the "My Agents" list: all agents subscribed to by a given user |
+| `idx_subscriptions_agent_id` | `agent_id` | Powers analytics / admin queries: all subscribers for a given agent |
+
+**API endpoints**
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `POST` | `/api/subscriptions` | required | Subscribe to an agent (`{ agentId }` in body). Returns `201` or `409` on duplicate. |
+| `DELETE` | `/api/subscriptions/:agentId` | required | Unsubscribe. Returns `204` or `404` if not subscribed. |
+| `GET` | `/api/subscriptions` | required | List all agents the authenticated user has subscribed to. Returns agent objects with an extra `subscribedAt` field. |
+| `GET` | `/api/subscriptions/:agentId` | required | Check whether the authenticated user is subscribed. Returns `{ subscribed: boolean }`. |
 
 ---
 
