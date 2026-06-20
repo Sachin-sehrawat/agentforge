@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { api, _clearCache } from '../src/api.js';
+import { api, _clearCache, setToken, onUnauthorized } from '../src/api.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -569,6 +569,156 @@ describe('deleteDraftAgent', () => {
     global.fetch.mockRejectedValue(new Error('Network error'));
 
     await expect(api.deleteDraftAgent('draft-1')).rejects.toThrow('Failed to delete draft');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Auth API
+// ---------------------------------------------------------------------------
+
+describe('Auth API — token attachment', () => {
+  it('sends Authorization header when token is set', async () => {
+    setToken('my-token');
+    global.fetch.mockResolvedValue(ok([]));
+
+    await api.getTools();
+
+    const [, opts] = global.fetch.mock.calls[0];
+    expect(opts.headers['Authorization']).toBe('Bearer my-token');
+  });
+
+  it('omits Authorization header when no token is set', async () => {
+    global.fetch.mockResolvedValue(ok([]));
+
+    await api.getTools();
+
+    const [, opts] = global.fetch.mock.calls[0];
+    expect(opts.headers['Authorization']).toBeUndefined();
+  });
+
+  it('_clearCache resets token so subsequent requests carry no Authorization', async () => {
+    setToken('token-to-clear');
+    _clearCache();
+    global.fetch.mockResolvedValue(ok([]));
+
+    await api.getTools();
+
+    const [, opts] = global.fetch.mock.calls[0];
+    expect(opts.headers['Authorization']).toBeUndefined();
+  });
+});
+
+describe('Auth API — signup / login / me / logout', () => {
+  it('api.signup posts to /auth/signup and returns token + user', async () => {
+    const response = { token: 'jwt-token', user: { id: '1', email: 'a@b.com', displayName: 'Alice' } };
+    global.fetch.mockResolvedValue(ok(response, 201));
+
+    const result = await api.signup('a@b.com', 'password', 'Alice');
+
+    const [url, opts] = global.fetch.mock.calls[0];
+    expect(url).toBe('/api/auth/signup');
+    expect(opts.method).toBe('POST');
+    expect(JSON.parse(opts.body)).toMatchObject({ email: 'a@b.com', password: 'password', display_name: 'Alice' });
+    expect(result).toEqual(response);
+  });
+
+  it('api.signup throws on 409 duplicate email', async () => {
+    global.fetch.mockResolvedValue(err({ error: 'Email address is already registered' }, 409));
+
+    await expect(api.signup('dup@b.com', 'pass')).rejects.toThrow('Email address is already registered');
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('api.login posts to /auth/login and returns token + user', async () => {
+    const response = { token: 'jwt-token', user: { id: '1', email: 'a@b.com' } };
+    global.fetch.mockResolvedValue(ok(response));
+
+    const result = await api.login('a@b.com', 'password');
+
+    const [url, opts] = global.fetch.mock.calls[0];
+    expect(url).toBe('/api/auth/login');
+    expect(opts.method).toBe('POST');
+    expect(JSON.parse(opts.body)).toMatchObject({ email: 'a@b.com', password: 'password' });
+    expect(result).toEqual(response);
+  });
+
+  it('api.login throws on 401 invalid credentials', async () => {
+    global.fetch.mockResolvedValue(err({ error: 'Invalid email or password' }, 401));
+
+    await expect(api.login('a@b.com', 'wrong')).rejects.toThrow('Invalid email or password');
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('api.me sends GET to /auth/me with the current token', async () => {
+    setToken('active-token');
+    const user = { id: '1', email: 'a@b.com' };
+    global.fetch.mockResolvedValue(ok(user));
+
+    const result = await api.me();
+
+    const [url, opts] = global.fetch.mock.calls[0];
+    expect(url).toBe('/api/auth/me');
+    expect(opts.headers['Authorization']).toBe('Bearer active-token');
+    expect(result).toEqual(user);
+  });
+
+  it('api.logout clears the in-memory token immediately', async () => {
+    setToken('active-token');
+    api.logout();
+
+    global.fetch.mockResolvedValue(ok([]));
+    await api.getTools();
+
+    const [, opts] = global.fetch.mock.calls[0];
+    expect(opts.headers['Authorization']).toBeUndefined();
+  });
+});
+
+describe('Auth API — 401 global handling', () => {
+  it('clears the token on any 401 response', async () => {
+    setToken('expired-token');
+    global.fetch.mockResolvedValue(err({ error: 'Unauthorized' }, 401));
+
+    await expect(api.getTools()).rejects.toThrow();
+
+    global.fetch.mockResolvedValue(ok([]));
+    await api.getTools();
+    const [, opts] = global.fetch.mock.calls[1];
+    expect(opts.headers['Authorization']).toBeUndefined();
+  });
+
+  it('calls the onUnauthorized handler when a token was present', async () => {
+    setToken('active-token');
+    const handler = vi.fn();
+    onUnauthorized(handler);
+    global.fetch.mockResolvedValue(err({ error: 'Unauthorized' }, 401));
+
+    await expect(api.getTools()).rejects.toThrow();
+
+    expect(handler).toHaveBeenCalledOnce();
+  });
+
+  it('does NOT call the onUnauthorized handler when no token was present', async () => {
+    const handler = vi.fn();
+    onUnauthorized(handler);
+    global.fetch.mockResolvedValue(err({ error: 'Invalid email or password' }, 401));
+
+    await expect(api.login('a@b.com', 'wrong')).rejects.toThrow();
+
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('_clearCache resets the onUnauthorized handler between tests', async () => {
+    const handler = vi.fn();
+    onUnauthorized(handler);
+    _clearCache();
+
+    setToken('some-token');
+    global.fetch.mockResolvedValue(err({ error: 'Unauthorized' }, 401));
+
+    await expect(api.getTools()).rejects.toThrow();
+
+    expect(handler).not.toHaveBeenCalled();
   });
 });
 
