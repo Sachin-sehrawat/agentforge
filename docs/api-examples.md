@@ -8,6 +8,41 @@ For the full endpoint reference including field constraints and error codes, see
 
 ## cURL Examples
 
+### Auth
+
+```bash
+# Sign up
+curl -X POST http://localhost:4000/api/auth/signup \
+  -H "Content-Type: application/json" \
+  -d '{"email":"alice@example.com","password":"s3cr3tpassword","display_name":"Alice"}'
+
+# Log in
+curl -X POST http://localhost:4000/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"alice@example.com","password":"s3cr3tpassword"}'
+
+# Get current user (replace <token> with the JWT from signup/login)
+curl http://localhost:4000/api/auth/me \
+  -H "Authorization: Bearer <token>"
+```
+
+**Signup / Login response:**
+```json
+{
+  "token": "<JWT access token>",
+  "user": {
+    "id": "cccccccc-0000-0000-0000-000000000001",
+    "email": "alice@example.com",
+    "displayName": "Alice",
+    "authProvider": "local",
+    "createdAt": "2024-01-01T00:00:00.000Z",
+    "updatedAt": "2024-01-01T00:00:00.000Z"
+  }
+}
+```
+
+---
+
 ### Health checks
 
 ```bash
@@ -180,6 +215,42 @@ curl -X DELETE http://localhost:4000/api/drafts/6670a1b2c3d4e5f6a7b8c9d0
 ---
 
 ## JavaScript / fetch Examples
+
+### Auth
+
+```js
+const BASE = 'http://localhost:4000';
+
+// Sign up a new user
+const { token, user } = await fetch(`${BASE}/api/auth/signup`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    email: 'alice@example.com',
+    password: 's3cr3tpassword',
+    display_name: 'Alice',
+  }),
+}).then(r => r.json());
+
+console.log(token); // JWT access token
+console.log(user.id); // UUID assigned by the server
+
+// Log in with existing credentials
+const { token: loginToken } = await fetch(`${BASE}/api/auth/login`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ email: 'alice@example.com', password: 's3cr3tpassword' }),
+}).then(r => r.json());
+
+// Fetch the current user
+const me = await fetch(`${BASE}/api/auth/me`, {
+  headers: { Authorization: `Bearer ${loginToken}` },
+}).then(r => r.json());
+
+console.log(me.email); // 'alice@example.com'
+```
+
+---
 
 ### Agents
 
