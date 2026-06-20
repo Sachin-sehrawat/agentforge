@@ -258,6 +258,46 @@ app.delete('/api/agents/:id', requireAuth, async (req, res) => {
   }
 });
 
+// --- Agent subscribe / unsubscribe ----------------------------------------
+// REST sugar over the subscriptions table, scoped to an agent URL.
+// Only public agents are subscribable; subscribing to your own agent is allowed.
+// Subscribe is idempotent (ON CONFLICT DO NOTHING → 200 on duplicate).
+// Unsubscribe returns 404 when the row doesn't exist.
+
+app.post('/api/agents/:id/subscribe', requireAuth, async (req, res) => {
+  const agentId = req.params.id;
+  const userId = req.user.userId;
+  try {
+    const { rows } = await db.query('SELECT visibility FROM agents WHERE id = $1', [agentId]);
+    if (!rows[0]) return res.status(404).json({ error: 'Agent not found' });
+    if (rows[0].visibility !== 'public') {
+      return res.status(403).json({ error: 'Cannot subscribe to a private agent' });
+    }
+    await db.query(
+      'INSERT INTO subscriptions (user_id, agent_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+      [userId, agentId]
+    );
+    res.status(200).json({ userId, agentId });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/agents/:id/subscribe', requireAuth, async (req, res) => {
+  const agentId = req.params.id;
+  const userId = req.user.userId;
+  try {
+    const { rowCount } = await db.query(
+      'DELETE FROM subscriptions WHERE user_id = $1 AND agent_id = $2',
+      [userId, agentId]
+    );
+    if (rowCount === 0) return res.status(404).json({ error: 'Subscription not found' });
+    res.status(204).end();
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // --- Custom Skills CRUD ---------------------------------------------------
 
 app.get('/api/skills', async (req, res) => {
