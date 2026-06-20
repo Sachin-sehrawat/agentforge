@@ -1,10 +1,28 @@
 const BASE = '/api';
 
+// --- Auth state --------------------------------------------------------------
+
+let _token = null;
+let _on401Handler = null;
+
+export function setToken(token) {
+  _token = token;
+}
+
+// Register a callback invoked when any authenticated request receives 401.
+// Only fires when a token was present — avoids spurious redirects on login failures.
+export function onUnauthorized(handler) {
+  _on401Handler = handler;
+}
+
 // --- Core request ------------------------------------------------------------
 
 async function request(path, options = {}) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (_token) headers['Authorization'] = `Bearer ${_token}`;
+
   const res = await fetch(`${BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     ...options,
   });
 
@@ -18,6 +36,13 @@ async function request(path, options = {}) {
     }
     const err = new Error(message);
     err.status = res.status;
+
+    if (res.status === 401) {
+      const hadToken = !!_token;
+      _token = null;
+      if (hadToken && _on401Handler) _on401Handler();
+    }
+
     throw err;
   }
 
@@ -55,6 +80,8 @@ const _serverTimestamps = new Map();
 export function _clearCache() {
   _cache.clear();
   _serverTimestamps.clear();
+  _token = null;
+  _on401Handler = null;
 }
 
 // --- Retry -------------------------------------------------------------------
@@ -130,6 +157,14 @@ export const api = {
   createSkill: (skill) => request('/skills', { method: 'POST', body: JSON.stringify(skill) }),
   updateSkill: (id, skill) => request(`/skills/${id}`, { method: 'PUT', body: JSON.stringify(skill) }),
   deleteSkill: (id) => request(`/skills/${id}`, { method: 'DELETE' }),
+
+  // --- Auth ----------------------------------------------------------------
+  signup: (email, password, display_name) =>
+    request('/auth/signup', { method: 'POST', body: JSON.stringify({ email, password, display_name }) }),
+  login: (email, password) =>
+    request('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
+  me: () => request('/auth/me'),
+  logout: () => { _token = null; },
 
   // --- Health ---------------------------------------------------------------
   health: () => request('/health'),
