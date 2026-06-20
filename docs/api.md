@@ -359,6 +359,56 @@ Deletes an agent. Requires authentication and ownership.
 
 ---
 
+### `POST /api/agents/:id/subscribe`
+
+Subscribes the authenticated user to a public agent. Idempotent — subscribing again returns 200 instead of an error.
+
+**Rules:**
+- Only `visibility: "public"` agents are subscribable; private agents return 403.
+- Subscribing to your own agent is allowed.
+- The agent is never copied; subscribers always see the live version.
+
+**Headers**
+
+| Header | Value |
+|---|---|
+| `Authorization` | `Bearer <token>` |
+
+**Response 200**
+
+```json
+{
+  "userId": "cccccccc-0000-0000-0000-000000000001",
+  "agentId": "550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+**Response 401** — missing or invalid token.
+
+**Response 403** — `{ "error": "Cannot subscribe to a private agent" }`
+
+**Response 404** — `{ "error": "Agent not found" }`
+
+---
+
+### `DELETE /api/agents/:id/subscribe`
+
+Unsubscribes the authenticated user from an agent. Returns 404 when the subscription did not exist.
+
+**Headers**
+
+| Header | Value |
+|---|---|
+| `Authorization` | `Bearer <token>` |
+
+**Response 204** — no body.
+
+**Response 401** — missing or invalid token.
+
+**Response 404** — `{ "error": "Subscription not found" }`
+
+---
+
 ## Custom Skills
 
 ### `GET /api/skills`

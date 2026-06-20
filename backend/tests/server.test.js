@@ -655,6 +655,91 @@ describe('DELETE /api/agents/:id', () => {
 });
 
 // ---------------------------------------------------------------------------
+// POST /api/agents/:id/subscribe
+// ---------------------------------------------------------------------------
+
+describe('POST /api/agents/:id/subscribe', () => {
+  const AGENT_ID = 'aaaaaaaa-0000-0000-0000-000000000001';
+
+  it('returns 401 when unauthenticated', async () => {
+    const res = await req('POST', `/api/agents/${AGENT_ID}/subscribe`);
+    expect(res.status).toBe(401);
+  });
+
+  it('returns 200 with userId and agentId on success', async () => {
+    mockPoolQuery
+      .mockResolvedValueOnce({ rows: [{ visibility: 'public' }] })
+      .mockResolvedValueOnce({ rowCount: 1 });
+    const res = await authReq('POST', `/api/agents/${AGENT_ID}/subscribe`);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.userId).toBe(TEST_USER_ID);
+    expect(body.agentId).toBe(AGENT_ID);
+  });
+
+  it('returns 200 (no-op) on duplicate subscribe', async () => {
+    mockPoolQuery
+      .mockResolvedValueOnce({ rows: [{ visibility: 'public' }] })
+      .mockResolvedValueOnce({ rowCount: 0 }); // ON CONFLICT DO NOTHING
+    const res = await authReq('POST', `/api/agents/${AGENT_ID}/subscribe`);
+    expect(res.status).toBe(200);
+  });
+
+  it('returns 403 when agent is private', async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [{ visibility: 'private' }] });
+    const res = await authReq('POST', `/api/agents/${AGENT_ID}/subscribe`);
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toMatch(/private/i);
+  });
+
+  it('returns 404 when agent does not exist', async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [] });
+    const res = await authReq('POST', `/api/agents/nonexistent/subscribe`);
+    expect(res.status).toBe(404);
+    expect((await res.json()).error).toBe('Agent not found');
+  });
+
+  it('returns 500 on db error', async () => {
+    mockPoolQuery.mockRejectedValueOnce(new Error('db down'));
+    const res = await authReq('POST', `/api/agents/${AGENT_ID}/subscribe`);
+    expect(res.status).toBe(500);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DELETE /api/agents/:id/subscribe
+// ---------------------------------------------------------------------------
+
+describe('DELETE /api/agents/:id/subscribe', () => {
+  const AGENT_ID = 'aaaaaaaa-0000-0000-0000-000000000001';
+
+  it('returns 401 when unauthenticated', async () => {
+    const res = await req('DELETE', `/api/agents/${AGENT_ID}/subscribe`);
+    expect(res.status).toBe(401);
+  });
+
+  it('returns 204 on successful unsubscribe', async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rowCount: 1 });
+    const res = await authReq('DELETE', `/api/agents/${AGENT_ID}/subscribe`);
+    expect(res.status).toBe(204);
+    expect(await res.text()).toBe('');
+  });
+
+  it('returns 404 when subscription does not exist', async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rowCount: 0 });
+    const res = await authReq('DELETE', `/api/agents/${AGENT_ID}/subscribe`);
+    expect(res.status).toBe(404);
+    expect((await res.json()).error).toMatch(/subscription not found/i);
+  });
+
+  it('returns 500 on db error', async () => {
+    mockPoolQuery.mockRejectedValueOnce(new Error('db down'));
+    const res = await authReq('DELETE', `/api/agents/${AGENT_ID}/subscribe`);
+    expect(res.status).toBe(500);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // GET /api/skills
 // ---------------------------------------------------------------------------
 
