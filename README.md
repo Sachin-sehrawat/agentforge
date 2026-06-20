@@ -7,6 +7,35 @@ and export the finished spec as Markdown — no AI provider required.
 AgentForge is **provider-agnostic**: it defines *what* an agent should do, not
 how to run it. The Markdown output can be handed off to any LLM runtime you choose.
 
+## Architecture
+
+AgentForge uses a dual-database backend:
+
+```
+Browser
+  │
+  ▼
+React frontend  (no localStorage — all state via REST API)
+  │  HTTP
+  ▼
+Express API  (port 4000)
+  ├── pg pool ──────────► PostgreSQL 14  (port 5432)
+  │   agents                persistent agent configurations
+  │   custom_skills         reusable skill definitions
+  │
+  └── MongoClient ────────► MongoDB 7.0  (port 27017)
+      user_preferences      per-user UI settings
+      workspace_state       canvas layout and active tab
+      draft_agents          auto-saved agent drafts
+```
+
+**PostgreSQL** stores structured, queryable agent data. **MongoDB** stores
+ephemeral user and session state. If MongoDB is unreachable the API returns 503
+on those endpoints only — core agent CRUD continues to work.
+
+See [docs/migration-overview.md](docs/migration-overview.md) for the full
+architecture rationale and migration history.
+
 ## Features
 
 - **Canvas** — an "Agent core" node where you set the name, persona, system prompt, and model target.
@@ -31,7 +60,7 @@ docker-compose up -d
 This starts both **PostgreSQL 14** and **MongoDB 7.0**.
 
 - The PostgreSQL init script in `backend/db/init/` runs automatically on first start and creates the `agents` and `custom_skills` tables. See [docs/database-schema.md](docs/database-schema.md) for the full schema.
-- MongoDB collections (`user_preferences`, `workspace_data`, `draft_agents`) are created automatically when the backend starts. See [docs/mongodb-schema.md](docs/mongodb-schema.md) for the full schema.
+- MongoDB collections (`user_preferences`, `workspace_state`, `draft_agents`) are created automatically when the backend starts. See [docs/database-schema.md](docs/database-schema.md#mongodb-collections) for the collection definitions.
 
 ### 2. Backend
 
@@ -74,20 +103,31 @@ Open `http://localhost:5173` in your browser (API calls are proxied to the backe
 
 ```
 agent-builder/
-├── docker-compose.yml          # PostgreSQL 14 + MongoDB 7.0 services
+├── docker-compose.yml          # PostgreSQL 14 + MongoDB 7.0 + backend services
 ├── docs/
-│   ├── database-schema.md      # PostgreSQL table definitions
-│   └── mongodb-schema.md       # MongoDB collection definitions
+│   ├── migration-overview.md   # Architecture history, phases, key decisions
+│   ├── database-schema.md      # PostgreSQL tables + MongoDB collections
+│   ├── api.md                  # Full REST API reference
+│   ├── api-examples.md         # cURL and JS fetch examples for every endpoint
+│   ├── docker-setup.md         # Local Docker Compose setup guide
+│   ├── deployment-guide.md     # Production deployment and monitoring
+│   ├── migration-guide.md      # SQLite → PostgreSQL migration instructions
+│   ├── migration-checklist.md  # Operator checklist for migration day
+│   ├── disaster-recovery.md    # Backup scheduling and recovery procedures
+│   ├── runbook.md              # Day-to-day operations and troubleshooting
+│   └── testing-guide.md        # Running tests and coverage reports
 ├── backend/
 │   ├── db/
-│   │   ├── init/
-│   │   │   └── 01_schema.sql   # PostgreSQL schema (run by Docker on first start)
-│   │   └── mongo-seed.js       # MongoDB fixture data seed script
+│   │   ├── init/01_schema.sql  # PostgreSQL schema (auto-runs on first Docker start)
+│   │   └── mongo-init/         # MongoDB init scripts
+│   ├── scripts/                # backup-*.js, migrate-sqlite-to-pg.js, rollback-migration.js
 │   ├── src/
-│   │   ├── server.js           # Express app & REST API
+│   │   ├── server.js           # Express server startup
+│   │   ├── app.js              # Express app, routes, rate limiting
 │   │   ├── db.js               # PostgreSQL pool connection
 │   │   ├── mongo.js            # MongoDB client connection
 │   │   ├── mongo-init.js       # MongoDB collection & index setup
+│   │   ├── validation.js       # Input validation helpers
 │   │   └── tools/
 │   │       ├── calculator.js
 │   │       ├── codeRunner.js
@@ -96,8 +136,8 @@ agent-builder/
 │   └── .env.example
 └── frontend/
     └── src/
-        ├── App.jsx             # Top-level state & layout
-        ├── api.js              # Backend API client
+        ├── App.jsx             # Root state management and layout
+        ├── api.js              # Backend API client with cache and retry
         ├── toolMeta.jsx        # Icons, colors, blurbs per tool
         ├── useNodeDrag.jsx     # Drag-to-reposition hook
         └── components/
@@ -106,8 +146,14 @@ agent-builder/
             ├── Canvas.jsx
             ├── AgentNode.jsx
             ├── ToolNode.jsx
+            ├── PersonaPanel.jsx
             ├── PersonaLibrary.jsx
-            └── Skills.jsx
+            ├── SkillsBar.jsx
+            ├── SkillsPage.jsx
+            ├── AgentsPage.jsx
+            ├── ChatPanel.jsx
+            ├── TraceLog.jsx
+            └── ErrorBoundary.jsx
 ```
 
 ## Adding a new tool
