@@ -1,0 +1,187 @@
+name: Rollback Deployment
+
+# Manual trigger only — callable from a failed deploy or on-call response.
+# Target < 5 minutes from trigger to confirmed healthy state.
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to roll back'
+        required: true
+        type: choice
+        options: [staging, production]
+      image_tag:
+        description: 'Docker image tag to roll back to (e.g. v1.2.3 or sha-abc1234). Leave blank to use the previous stable tag.'
+        required: false
+        type: string
+      reason:
+        description: 'Reason for rollback (shown in deployment summary)'
+        required: true
+        type: string
+
+env:
+  REGISTRY: docker.io
+  IMAGE_NAME: ${{ secrets.DOCKER_HUB_USERNAME }}/agentforge-backend
+
+jobs:
+  rollback:
+    name: Rollback ${{ github.event.inputs.environment }}
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci --omit=dev
+
+      # ── Determine rollback target image ──────────────────────────────────────
+      - name: Resolve rollback image tag
+        id: resolve
+        run: |
+          TAG="${{ github.event.inputs.image_tag }}"
+          if [ -z "$TAG" ]; then
+            # Query Docker Hub for the second-most-recent tag (previous stable)
+            echo "No tag specified — querying registry for previous stable tag"
+            TAGS=$(curl -sf \
+              "https://hub.docker.com/v2/repositories/${{ secrets.DOCKER_HUB_USERNAME }}/agentforge-backend/tags/?page_size=10&ordering=last_updated" \
+              -H "Authorization: Bearer ${{ secrets.DOCKER_HUB_TOKEN }}" \
+              | grep -o '"name":"[^"]*"' | cut -d'"' -f4 \
+              | grep -v '^latest$' | grep -v '^sha-')
+            # Second entry = previous stable (first = current)
+            TAG=$(echo "$TAGS" | sed -n '2p')
+            if [ -z "$TAG" ]; then
+              echo "ERROR: Could not determine previous stable tag. Provide image_tag explicitly."
+              exit 1
+            fi
+          fi
+          echo "Rollback target: ${{ env.IMAGE_NAME }}:$TAG"
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
+      # ── Restore database from backup artifact ─────────────────────────────
+      - name: Download latest backup artifact
+        uses: actions/download-artifact@v4
+        with:
+          pattern: ${{ github.event.inputs.environment }}-backups-*
+          path: backend/backups/
+          merge-multiple: true
+        continue-on-error: true
+
+      - name: Validate backup before restore
+        id: validate_backup
+        working-directory: backend
+        run: |
+          PG_BACKUP=$(ls -t backups/postgresql/*.json 2>/dev/null | head -1)
+          if [ -z "$PG_BACKUP" ]; then
+            echo "WARNING: No local backup artifact found. Database state will not be restored."
+            echo "has_backup=false" >> $GITHUB_OUTPUT
+          else
+            echo "Validating $PG_BACKUP"
+            node scripts/rollback-migration.js --pg-backup "$PG_BACKUP" --dry-run
+            echo "has_backup=true" >> $GITHUB_OUTPUT
+            echo "pg_backup=$PG_BACKUP" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Restore PostgreSQL from backup
+        if: steps.validate_backup.outputs.has_backup == 'true'
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ github.event.inputs.environment == 'production' && secrets.PROD_POSTGRES_URL || secrets.STAGING_POSTGRES_URL }}
+        run: |
+          echo "Restoring PostgreSQL from ${{ steps.validate_backup.outputs.pg_backup }}"
+          node scripts/rollback-migration.js \
+            --pg-backup "${{ steps.validate_backup.outputs.pg_backup }}"
+
+      - name: Restore MongoDB from backup
+        if: steps.validate_backup.outputs.has_backup == 'true'
+        working-directory: backend
+        env:
+          MONGO_URI: ${{ github.event.inputs.environment == 'production' && secrets.PROD_MONGO_URI || secrets.STAGING_MONGO_URI }}
+        run: |
+          MONGO_BACKUP=$(ls -t backups/mongodb/*.json 2>/dev/null | head -1)
+          if [ -n "$MONGO_BACKUP" ]; then
+            echo "Restoring MongoDB from $MONGO_BACKUP"
+            node scripts/rollback-migration.js \
+              --mongo-backup "$MONGO_BACKUP" \
+              --mongo-only
+          fi
+
+      # ── Roll back the container ───────────────────────────────────────────
+      - name: Roll back staging container
+        if: github.event.inputs.environment == 'staging'
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.STAGING_HOST }}
+          username: ${{ secrets.STAGING_SSH_USER }}
+          key: ${{ secrets.STAGING_SSH_KEY }}
+          script: |
+            set -e
+            cd /opt/agentforge
+            IMAGE="${{ env.IMAGE_NAME }}:${{ steps.resolve.outputs.tag }}"
+            docker pull "$IMAGE"
+            sed -i "s|image: .*agentforge-backend.*|image: $IMAGE|g" docker-compose.override.yml
+            docker compose up -d --no-deps --wait backend
+            sleep 10
+            curl -sf http://localhost:4000/api/health
+            curl -sf http://localhost:4000/api/health/mongo
+            echo "Rollback complete on staging"
+
+      - name: Roll back production container
+        if: github.event.inputs.environment == 'production'
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.PROD_HOST }}
+          username: ${{ secrets.PROD_SSH_USER }}
+          key: ${{ secrets.PROD_SSH_KEY }}
+          script: |
+            set -e
+            cd /opt/agentforge
+            IMAGE="${{ env.IMAGE_NAME }}:${{ steps.resolve.outputs.tag }}"
+            docker pull "$IMAGE"
+            sed -i "s|image: .*agentforge-backend.*|image: $IMAGE|g" docker-compose.override.yml
+            docker compose up -d --no-deps --wait backend
+            sleep 15
+            curl -sf http://localhost:4000/api/health
+            curl -sf http://localhost:4000/api/health/mongo
+            echo "Rollback complete on production"
+
+      # ── Validate rollback success ─────────────────────────────────────────
+      - name: Validate rollback
+        run: |
+          if [ "${{ github.event.inputs.environment }}" = "production" ]; then
+            BASE=${{ vars.PRODUCTION_URL }}
+          else
+            BASE=${{ vars.STAGING_URL }}
+          fi
+
+          PG=$(curl -sf "$BASE/api/health" || echo '{"ok":false}')
+          MONGO=$(curl -sf "$BASE/api/health/mongo" || echo '{"ok":false}')
+
+          echo "PostgreSQL health: $PG"
+          echo "MongoDB health:    $MONGO"
+
+          if echo "$PG" | grep -q '"ok":true' && echo "$MONGO" | grep -q '"ok":true'; then
+            echo "Rollback validated — services healthy"
+          else
+            echo "ERROR: Services unhealthy after rollback. Manual intervention required."
+            exit 1
+          fi
+
+      - name: Rollback summary
+        if: always()
+        run: |
+          echo "### Rollback: ${{ github.event.inputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Rolled back to:** \`${{ env.IMAGE_NAME }}:${{ steps.resolve.outputs.tag }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Triggered by:** ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Reason:** ${{ github.event.inputs.reason }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Database restored:** ${{ steps.validate_backup.outputs.has_backup }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Time:** $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_STEP_SUMMARY
