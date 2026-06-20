@@ -122,8 +122,8 @@ app.post('/api/agents', async (req, res) => {
   const id = crypto.randomUUID();
   try {
     const { rows } = await db.query(
-      `INSERT INTO agents (id, name, persona, system_prompt, model, tools, positions, skills, instructions)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      `INSERT INTO agents (id, name, persona, system_prompt, model, tools, positions, skills, instructions, visibility)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
        RETURNING *`,
       [
         id,
@@ -135,6 +135,7 @@ app.post('/api/agents', async (req, res) => {
         JSON.stringify(agent.positions),
         JSON.stringify(agent.skills),
         JSON.stringify(agent.instructions),
+        agent.visibility,
       ]
     );
     res.status(201).json(serializeAgent(rows[0]));
@@ -153,8 +154,8 @@ app.put('/api/agents/:id', async (req, res) => {
       `UPDATE agents
        SET name = $1, persona = $2, system_prompt = $3, model = $4,
            tools = $5, positions = $6, skills = $7, instructions = $8,
-           updated_at = NOW()
-       WHERE id = $9
+           visibility = $9, updated_at = NOW()
+       WHERE id = $10
        RETURNING *`,
       [
         agent.name,
@@ -165,6 +166,7 @@ app.put('/api/agents/:id', async (req, res) => {
         JSON.stringify(agent.positions),
         JSON.stringify(agent.skills),
         JSON.stringify(agent.instructions),
+        agent.visibility,
         req.params.id,
       ]
     );
@@ -203,8 +205,8 @@ app.post('/api/skills', async (req, res) => {
   const id = crypto.randomUUID();
   try {
     const { rows } = await db.query(
-      'INSERT INTO custom_skills (id, label, color, description, instruction) VALUES ($1, $2, $3, $4, $5) RETURNING *',
-      [id, skill.label, skill.color, skill.description, skill.instruction]
+      'INSERT INTO custom_skills (id, label, color, description, instruction, visibility) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
+      [id, skill.label, skill.color, skill.description, skill.instruction, skill.visibility]
     );
     res.status(201).json(rows[0]);
   } catch (err) {
@@ -219,10 +221,10 @@ app.put('/api/skills/:id', async (req, res) => {
   try {
     const { rows } = await db.query(
       `UPDATE custom_skills
-       SET label = $1, color = $2, description = $3, instruction = $4, updated_at = NOW()
-       WHERE id = $5
+       SET label = $1, color = $2, description = $3, instruction = $4, visibility = $5, updated_at = NOW()
+       WHERE id = $6
        RETURNING *`,
-      [skill.label, skill.color, skill.description, skill.instruction, req.params.id]
+      [skill.label, skill.color, skill.description, skill.instruction, skill.visibility, req.params.id]
     );
     if (!rows[0]) return res.status(404).json({ error: 'Skill not found' });
     res.json(rows[0]);
@@ -500,6 +502,8 @@ function serializeAgent(row) {
     positions: row.positions ?? {},
     skills: row.skills ?? [],
     instructions: row.instructions ?? [],
+    ownerId: row.owner_id ?? null,
+    visibility: row.visibility ?? 'private',
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -522,6 +526,12 @@ export function validateAgentInput(body) {
 
   const tools = Array.isArray(body.tools) ? body.tools.filter((t) => TOOL_CATALOG[t]) : [];
 
+  const VALID_VISIBILITY = ['public', 'private'];
+  const visibility =
+    typeof body.visibility === 'string' && VALID_VISIBILITY.includes(body.visibility)
+      ? body.visibility
+      : 'private';
+
   return {
     name,
     persona: typeof body.persona === 'string' ? body.persona : '',
@@ -531,6 +541,7 @@ export function validateAgentInput(body) {
     positions: typeof body.positions === 'object' && body.positions ? body.positions : {},
     skills: Array.isArray(body.skills) ? body.skills.filter((s) => typeof s === 'string') : [],
     instructions: Array.isArray(body.instructions) ? body.instructions.filter((s) => typeof s === 'string') : [],
+    visibility,
   };
 }
 
@@ -540,11 +551,19 @@ export function validateSkillInput(body) {
   if (!label) return { error: 'Skill label is required' };
   const instruction = typeof body.instruction === 'string' ? body.instruction.trim() : '';
   if (!instruction) return { error: 'Skill instruction is required' };
+
+  const VALID_VISIBILITY = ['public', 'private'];
+  const visibility =
+    typeof body.visibility === 'string' && VALID_VISIBILITY.includes(body.visibility)
+      ? body.visibility
+      : 'private';
+
   return {
     label,
     color: typeof body.color === 'string' && body.color ? body.color : '#6366f1',
     description: typeof body.description === 'string' ? body.description.trim() : '',
     instruction,
+    visibility,
   };
 }
 

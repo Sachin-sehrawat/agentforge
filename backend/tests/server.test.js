@@ -139,6 +139,8 @@ function agentRow(overrides = {}) {
     positions: {},
     skills: [],
     instructions: [],
+    owner_id: null,
+    visibility: 'public',
     created_at: new Date('2024-01-01T00:00:00Z'),
     updated_at: new Date('2024-01-01T00:00:00Z'),
     ...overrides,
@@ -152,6 +154,8 @@ function skillRow(overrides = {}) {
     color: '#6366f1',
     description: 'Does something useful',
     instruction: 'Be helpful always',
+    owner_id: null,
+    visibility: 'public',
     created_at: new Date('2024-01-01T00:00:00Z'),
     updated_at: new Date('2024-01-01T00:00:00Z'),
     ...overrides,
@@ -228,6 +232,8 @@ describe('GET /api/agents', () => {
     expect(a.updatedAt).toBeDefined();
     expect(a.tools).toEqual([]);
     expect(a.positions).toEqual({});
+    expect(a.ownerId).toBeNull();
+    expect(a.visibility).toBe('public');
   });
 
   it('returns 500 when db throws', async () => {
