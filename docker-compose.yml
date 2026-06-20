@@ -1,5 +1,9 @@
 version: '3.8'
 
+networks:
+  agentforge-net:
+    driver: bridge
+
 services:
   postgres:
     image: postgres:14-alpine
@@ -17,19 +21,62 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - agentforge-net
 
   mongodb:
     image: mongo:7.0
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:-admin}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-adminpassword}
+      MONGO_INITDB_DATABASE: ${MONGO_DB:-agentforge}
     ports:
       - "${MONGO_PORT:-27017}:27017"
     volumes:
       - mongo_data:/data/db
+      - ./backend/db/mongo-init:/docker-entrypoint-initdb.d
     healthcheck:
-      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      test: ["CMD-SHELL", "mongosh --username $MONGO_INITDB_ROOT_USERNAME --password $MONGO_INITDB_ROOT_PASSWORD --authenticationDatabase admin --eval 'db.adminCommand(\"ping\")' --quiet"]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 10s
+      start_period: 15s
+    networks:
+      - agentforge-net
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "${PORT:-4000}:4000"
+    environment:
+      PORT: ${PORT:-4000}
+      # PostgreSQL — uses service name as host inside Docker network
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-agentforge}
+      POSTGRES_USER: ${POSTGRES_USER:-agentforge}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-agentforge}
+      POSTGRES_POOL_MAX: ${POSTGRES_POOL_MAX:-10}
+      POSTGRES_POOL_MIN: ${POSTGRES_POOL_MIN:-2}
+      # MongoDB — authenticated URI using service name
+      MONGO_URI: mongodb://${MONGO_ROOT_USERNAME:-admin}:${MONGO_ROOT_PASSWORD:-adminpassword}@mongodb:27017/${MONGO_DB:-agentforge}?authSource=admin
+      QUERY_TIMEOUT_MS: ${QUERY_TIMEOUT_MS:-5000}
+      SLOW_QUERY_THRESHOLD_MS: ${SLOW_QUERY_THRESHOLD_MS:-1000}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:4000/api/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
+    networks:
+      - agentforge-net
 
 volumes:
   postgres_data:
