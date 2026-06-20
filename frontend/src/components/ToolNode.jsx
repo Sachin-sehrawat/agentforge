@@ -3,12 +3,12 @@ import { ICONS, TOOL_META } from '../toolMeta.jsx';
 import { useNodeDrag } from '../useNodeDrag.jsx';
 
 const ToolNode = React.forwardRef(function ToolNode(
-  { toolId, position, onMoveTool, onRemove, pulsing },
+  { toolId, position, onMoveTool, onRemove, pulsing, zoom = 1 },
   ref
 ) {
   const meta = TOOL_META[toolId];
   const Icon = ICONS[toolId];
-  const onHeaderPointerDown = useNodeDrag((updater) => onMoveTool(toolId, updater));
+  const onHeaderPointerDown = useNodeDrag((updater) => onMoveTool(toolId, updater), zoom);
 
 
   return (

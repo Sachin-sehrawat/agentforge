@@ -6,6 +6,7 @@ import PersonaPanel from './components/PersonaPanel.jsx';
 import SkillsBar from './components/SkillsBar.jsx';
 import AgentsPage from './components/AgentsPage.jsx';
 import SkillsPage from './components/SkillsPage.jsx';
+import ErrorBoundary from './components/ErrorBoundary.jsx';
 import { api } from './api.js';
 import { TOOL_META } from './toolMeta.jsx';
 import { SKILLS } from './data/skills.js';
@@ -85,11 +86,11 @@ export default function App() {
   const [view, setView] = useState('builder');
   const [customSkills, setCustomSkills] = useState([]);
   const [loadingWorkspace, setLoadingWorkspace] = useState(true);
+  const [canvasView, setCanvasView] = useState({ zoom: 1, pan: { x: 0, y: 0 } });
 
-  // Tracks whether the current agent state was loaded from a saved record
-  // (vs. a workspace-restored draft) to avoid overwriting user's unsaved work.
   const isRestoredRef = useRef(false);
   const autosaveTimerRef = useRef(null);
+  const canvasViewSaveTimerRef = useRef(null);
 
   const allSkills = useMemo(
     () => [
@@ -108,11 +109,17 @@ export default function App() {
       api.getUserPreferences(USER_ID),
       api.getWorkspaceData(WORKSPACE_ID),
     ]).then(([prefs, wsData]) => {
-      // Restore last view from preferences
       if (prefs.view && ['builder', 'agents', 'skills'].includes(prefs.view)) {
         setView(prefs.view);
       }
-      // Restore unsaved canvas state from workspace
+      if (typeof prefs.canvas_zoom === 'number' || prefs.canvas_pan) {
+        setCanvasView({
+          zoom: typeof prefs.canvas_zoom === 'number' ? prefs.canvas_zoom : 1,
+          pan: prefs.canvas_pan && typeof prefs.canvas_pan.x === 'number'
+            ? prefs.canvas_pan
+            : { x: 0, y: 0 },
+        });
+      }
       if (wsData.agent && typeof wsData.agent === 'object') {
         setAgent({ ...DEFAULT_AGENT, ...wsData.agent });
         isRestoredRef.current = true;
@@ -122,7 +129,6 @@ export default function App() {
     });
   }, []);
 
-  // Debounced auto-save of workspace state whenever the canvas changes.
   const scheduleWorkspaceAutosave = useCallback((agentState) => {
     if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
     autosaveTimerRef.current = setTimeout(() => {
@@ -131,7 +137,21 @@ export default function App() {
     }, AUTOSAVE_DEBOUNCE_MS);
   }, []);
 
-  // Persist view choice as a user preference.
+  // Debounced save of canvas zoom/pan to user preferences.
+  const handleCanvasViewChange = useCallback((updater) => {
+    setCanvasView((prev) => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      if (canvasViewSaveTimerRef.current) clearTimeout(canvasViewSaveTimerRef.current);
+      canvasViewSaveTimerRef.current = setTimeout(() => {
+        api.saveUserPreferences(USER_ID, {
+          canvas_zoom: next.zoom,
+          canvas_pan: next.pan,
+        }).catch(() => {});
+      }, 500);
+      return next;
+    });
+  }, []);
+
   const handleSetView = useCallback((nextView) => {
     setView(nextView);
     api.saveUserPreferences(USER_ID, { view: nextView });
@@ -352,23 +372,28 @@ export default function App() {
           {loadingWorkspace ? (
             <div className="workspace-loading">Loading workspace…</div>
           ) : (
-            <div className="workbench">
-              <Sidebar addedTools={agent.tools} onAddTool={onAddTool} />
-              <Canvas
-                agent={agent}
-                onChangeAgentField={onChangeAgentField}
-                onMoveTool={onMoveTool}
-                onAddTool={onAddTool}
-                onRemoveTool={onRemoveTool}
-                onToggleSkill={onToggleSkill}
-                onToggleInstruction={onToggleInstruction}
-                allSkills={allSkills}
-              />
-              <PersonaPanel
-                activeInstructions={agent.instructions}
-                onToggleInstruction={onToggleInstruction}
-              />
-            </div>
+            <ErrorBoundary message="The canvas encountered an error. Your work is safe — click Try again to reload.">
+              <div className="workbench">
+                <Sidebar addedTools={agent.tools} onAddTool={onAddTool} />
+                <Canvas
+                  agent={agent}
+                  onChangeAgentField={onChangeAgentField}
+                  onMoveTool={onMoveTool}
+                  onAddTool={onAddTool}
+                  onRemoveTool={onRemoveTool}
+                  onToggleSkill={onToggleSkill}
+                  onToggleInstruction={onToggleInstruction}
+                  allSkills={allSkills}
+                  zoom={canvasView.zoom}
+                  pan={canvasView.pan}
+                  onZoomPanChange={handleCanvasViewChange}
+                />
+                <PersonaPanel
+                  activeInstructions={agent.instructions}
+                  onToggleInstruction={onToggleInstruction}
+                />
+              </div>
+            </ErrorBoundary>
           )}
         </>
       )}
