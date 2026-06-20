@@ -6,7 +6,9 @@ import { ObjectId } from 'mongodb';
 import db, { pool } from './db.js';
 import { getDb, healthCheck as mongoHealth } from './mongo.js';
 import { TOOL_CATALOG, TOOL_IDS } from './tools/toolDefinitions.js';
-import { validatePreferences, validateWorkspaceData, validateDraftInput } from './validation.js';
+import { validatePreferences, validateWorkspaceData, validateDraftInput, validateSignupInput, validateLoginInput } from './validation.js';
+import { hashPassword, verifyPassword } from './auth/crypto.js';
+import { signAccessToken, verifyToken } from './auth/token.js';
 
 const app = express();
 app.use(cors());
@@ -73,7 +75,8 @@ export function rateLimit(req, res, next) {
   next();
 }
 
-// Apply rate limiting to all MongoDB-backed routes.
+// Apply rate limiting to all MongoDB-backed and auth routes.
+app.use('/api/auth', rateLimit);
 app.use('/api/preferences', rateLimit);
 app.use('/api/workspace', rateLimit);
 app.use('/api/drafts', rateLimit);
@@ -419,7 +422,82 @@ app.delete('/api/drafts/:draftId', async (req, res) => {
   }
 });
 
+// --- Auth ----------------------------------------------------------------
+
+app.post('/api/auth/signup', async (req, res) => {
+  const validation = validateSignupInput(req.body);
+  if (validation.error) return res.status(400).json({ error: validation.error });
+
+  const { email, password, display_name } = validation.data;
+  const id = crypto.randomUUID();
+  const password_hash = await hashPassword(password);
+
+  try {
+    const { rows } = await db.query(
+      `INSERT INTO users (id, email, password_hash, display_name, auth_provider, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, 'local', NOW(), NOW())
+       RETURNING *`,
+      [id, email, password_hash, display_name || null]
+    );
+    const token = signAccessToken(rows[0].id);
+    res.status(201).json({ token, user: serializeUser(rows[0]) });
+  } catch (err) {
+    if (err.code === '23505') return res.status(409).json({ error: 'Email address is already registered' });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/auth/login', async (req, res) => {
+  const validation = validateLoginInput(req.body);
+  if (validation.error) return res.status(400).json({ error: validation.error });
+
+  const { email, password } = validation.data;
+
+  try {
+    const { rows } = await db.query('SELECT * FROM users WHERE email = $1', [email]);
+    const user = rows[0];
+    const valid = user && await verifyPassword(password, user.password_hash);
+    if (!valid) return res.status(401).json({ error: 'Invalid email or password' });
+    const token = signAccessToken(user.id);
+    res.json({ token, user: serializeUser(user) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/auth/me — inline token verification until Issue 4 middleware lands.
+app.get('/api/auth/me', async (req, res) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Authorization header required' });
+  }
+  let payload;
+  try {
+    payload = verifyToken(authHeader.slice(7));
+  } catch {
+    return res.status(401).json({ error: 'Invalid or expired token' });
+  }
+  try {
+    const { rows } = await db.query('SELECT * FROM users WHERE id = $1', [payload.userId]);
+    if (!rows[0]) return res.status(401).json({ error: 'User not found' });
+    res.json(serializeUser(rows[0]));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // --- Helpers -------------------------------------------------------------
+
+function serializeUser(row) {
+  return {
+    id: row.id,
+    email: row.email,
+    displayName: row.display_name,
+    authProvider: row.auth_provider,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
 
 function serializeAgent(row) {
   return {

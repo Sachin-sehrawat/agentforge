@@ -35,10 +35,99 @@ All error responses share this shape:
 | Status | Meaning |
 |---|---|
 | `400` | Validation error — fix the request body |
+| `401` | Unauthenticated — missing or invalid token, or bad credentials |
 | `404` | Resource not found |
+| `409` | Conflict — e.g. email already registered |
 | `429` | Rate limit exceeded |
 | `500` | Unexpected server error (PostgreSQL) |
 | `503` | MongoDB unavailable |
+
+---
+
+## Auth
+
+Auth routes are rate-limited (same 100 req / IP / minute window as other limited routes). Tokens are JWTs signed with `JWT_SECRET`.
+
+### `POST /api/auth/signup`
+
+Creates a new user account and returns an access token.
+
+**Request body**
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `email` | string | Yes | Must contain `@`; stored normalized (trimmed, lowercase) |
+| `password` | string | Yes | Minimum 8 characters |
+| `display_name` | string | No | Human-readable name |
+
+**Response 201**
+
+```json
+{
+  "token": "<JWT access token>",
+  "user": {
+    "id": "cccccccc-0000-0000-0000-000000000001",
+    "email": "alice@example.com",
+    "displayName": "Alice",
+    "authProvider": "local",
+    "createdAt": "2024-01-01T00:00:00.000Z",
+    "updatedAt": "2024-01-01T00:00:00.000Z"
+  }
+}
+```
+
+**Response 400** — validation error (invalid email, password too short, malformed body).
+
+**Response 409** — `{ "error": "Email address is already registered" }`
+
+---
+
+### `POST /api/auth/login`
+
+Authenticates an existing user and returns an access token.
+
+**Request body**
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `email` | string | Yes | Registered email address |
+| `password` | string | Yes | Account password |
+
+**Response 200**
+
+```json
+{
+  "token": "<JWT access token>",
+  "user": {
+    "id": "cccccccc-0000-0000-0000-000000000001",
+    "email": "alice@example.com",
+    "displayName": "Alice",
+    "authProvider": "local",
+    "createdAt": "2024-01-01T00:00:00.000Z",
+    "updatedAt": "2024-01-01T00:00:00.000Z"
+  }
+}
+```
+
+**Response 400** — validation error (missing/invalid email or password field).
+
+**Response 401** — `{ "error": "Invalid email or password" }` (same message for unknown email and wrong password — no user enumeration).
+
+---
+
+### `GET /api/auth/me`
+
+Returns the currently authenticated user. Requires a valid access token in the `Authorization` header.
+
+**Headers**
+
+| Header | Value |
+|---|---|
+| `Authorization` | `Bearer <token>` |
+
+**Response 200** — user object (same shape as signup/login, no `password_hash`).
+
+**Response 401** — missing header, invalid token, or user no longer exists.
 
 ---
 

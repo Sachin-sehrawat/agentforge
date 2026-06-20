@@ -60,6 +60,27 @@ vi.mock('../src/mongo.js', () => ({
 }));
 
 // ---------------------------------------------------------------------------
+// Auth mocks — must be declared before app.js is imported
+// ---------------------------------------------------------------------------
+
+const mockHashPassword = vi.fn();
+const mockVerifyPassword = vi.fn();
+
+vi.mock('../src/auth/crypto.js', () => ({
+  hashPassword: mockHashPassword,
+  verifyPassword: mockVerifyPassword,
+}));
+
+const mockSignAccessToken = vi.fn(() => 'test-token');
+const mockVerifyToken = vi.fn();
+
+vi.mock('../src/auth/token.js', () => ({
+  signAccessToken: mockSignAccessToken,
+  signRefreshToken: vi.fn(),
+  verifyToken: mockVerifyToken,
+}));
+
+// ---------------------------------------------------------------------------
 // Import app AFTER mocks are registered
 // ---------------------------------------------------------------------------
 
@@ -131,6 +152,19 @@ function skillRow(overrides = {}) {
     color: '#6366f1',
     description: 'Does something useful',
     instruction: 'Be helpful always',
+    created_at: new Date('2024-01-01T00:00:00Z'),
+    updated_at: new Date('2024-01-01T00:00:00Z'),
+    ...overrides,
+  };
+}
+
+function userRow(overrides = {}) {
+  return {
+    id: 'cccccccc-0000-0000-0000-000000000001',
+    email: 'test@example.com',
+    password_hash: '$2a$12$hashedpasswordplaceholder000000000000000',
+    display_name: 'Test User',
+    auth_provider: 'local',
     created_at: new Date('2024-01-01T00:00:00Z'),
     updated_at: new Date('2024-01-01T00:00:00Z'),
     ...overrides,
@@ -996,5 +1030,211 @@ describe('Request validation', () => {
     // Express with empty body may return 400 (body-parser) or continue with undefined
     // In our case validateAgentInput(undefined) returns error
     expect([400, 500].includes(res.status)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/auth/signup
+// ---------------------------------------------------------------------------
+
+describe('POST /api/auth/signup', () => {
+  it('returns 201 with token and safe user on success', async () => {
+    const user = userRow();
+    mockHashPassword.mockResolvedValueOnce('$2a$12$hashed');
+    mockPoolQuery.mockResolvedValueOnce({ rows: [user] });
+    mockSignAccessToken.mockReturnValueOnce('access-token');
+
+    const res = await req('POST', '/api/auth/signup', {
+      email: 'test@example.com',
+      password: 'password123',
+    });
+
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(body.token).toBe('access-token');
+    expect(body.user.email).toBe('test@example.com');
+    expect(body.user.id).toBe(user.id);
+    expect(body.user.displayName).toBe('Test User');
+    expect(body.user).not.toHaveProperty('password_hash');
+    expect(body.user).not.toHaveProperty('passwordHash');
+  });
+
+  it('returns 409 when email is already registered', async () => {
+    mockHashPassword.mockResolvedValueOnce('$2a$12$hashed');
+    const err = new Error('duplicate key value violates unique constraint');
+    err.code = '23505';
+    mockPoolQuery.mockRejectedValueOnce(err);
+
+    const res = await req('POST', '/api/auth/signup', {
+      email: 'existing@example.com',
+      password: 'password123',
+    });
+
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toMatch(/already registered/i);
+  });
+
+  it('returns 400 when password is too short', async () => {
+    const res = await req('POST', '/api/auth/signup', {
+      email: 'test@example.com',
+      password: 'short',
+    });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/8 characters/i);
+  });
+
+  it('returns 400 when email is invalid', async () => {
+    const res = await req('POST', '/api/auth/signup', {
+      email: 'not-an-email',
+      password: 'password123',
+    });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/email/i);
+  });
+
+  it('returns 400 when body is malformed (array)', async () => {
+    const res = await req('POST', '/api/auth/signup', []);
+    expect(res.status).toBe(400);
+  });
+
+  it('includes X-RateLimit headers', async () => {
+    mockHashPassword.mockResolvedValueOnce('$2a$12$hashed');
+    mockPoolQuery.mockResolvedValueOnce({ rows: [userRow()] });
+
+    const res = await req('POST', '/api/auth/signup', {
+      email: 'rate@example.com',
+      password: 'password123',
+    });
+    expect(res.headers.get('x-ratelimit-limit')).toBe('100');
+  });
+
+  it('returns 500 on unexpected db error', async () => {
+    mockHashPassword.mockResolvedValueOnce('$2a$12$hashed');
+    mockPoolQuery.mockRejectedValueOnce(new Error('db down'));
+
+    const res = await req('POST', '/api/auth/signup', {
+      email: 'test@example.com',
+      password: 'password123',
+    });
+    expect(res.status).toBe(500);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/auth/login
+// ---------------------------------------------------------------------------
+
+describe('POST /api/auth/login', () => {
+  it('returns 200 with token and safe user on success', async () => {
+    const user = userRow();
+    mockPoolQuery.mockResolvedValueOnce({ rows: [user] });
+    mockVerifyPassword.mockResolvedValueOnce(true);
+    mockSignAccessToken.mockReturnValueOnce('access-token');
+
+    const res = await req('POST', '/api/auth/login', {
+      email: 'test@example.com',
+      password: 'password123',
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.token).toBe('access-token');
+    expect(body.user.email).toBe('test@example.com');
+    expect(body.user).not.toHaveProperty('password_hash');
+    expect(body.user).not.toHaveProperty('passwordHash');
+  });
+
+  it('returns 401 when password is wrong', async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [userRow()] });
+    mockVerifyPassword.mockResolvedValueOnce(false);
+
+    const res = await req('POST', '/api/auth/login', {
+      email: 'test@example.com',
+      password: 'wrongpassword',
+    });
+
+    expect(res.status).toBe(401);
+    expect((await res.json()).error).toBe('Invalid email or password');
+  });
+
+  it('returns 401 when email is not registered', async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [] });
+
+    const res = await req('POST', '/api/auth/login', {
+      email: 'unknown@example.com',
+      password: 'password123',
+    });
+
+    expect(res.status).toBe(401);
+    expect((await res.json()).error).toBe('Invalid email or password');
+  });
+
+  it('returns 400 when email is missing', async () => {
+    const res = await req('POST', '/api/auth/login', { password: 'password123' });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/email/i);
+  });
+
+  it('returns 400 when body is malformed (array)', async () => {
+    const res = await req('POST', '/api/auth/login', []);
+    expect(res.status).toBe(400);
+  });
+
+  it('returns 500 on db error', async () => {
+    mockPoolQuery.mockRejectedValueOnce(new Error('db down'));
+
+    const res = await req('POST', '/api/auth/login', {
+      email: 'test@example.com',
+      password: 'password123',
+    });
+    expect(res.status).toBe(500);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/auth/me
+// ---------------------------------------------------------------------------
+
+describe('GET /api/auth/me', () => {
+  it('returns 200 with current user when token is valid', async () => {
+    const user = userRow();
+    mockVerifyToken.mockReturnValueOnce({ userId: user.id });
+    mockPoolQuery.mockResolvedValueOnce({ rows: [user] });
+
+    const res = await fetch(`${baseUrl}/api/auth/me`, {
+      headers: { Authorization: 'Bearer valid-token' },
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.email).toBe('test@example.com');
+    expect(body.displayName).toBe('Test User');
+    expect(body).not.toHaveProperty('password_hash');
+  });
+
+  it('returns 401 when Authorization header is missing', async () => {
+    const res = await fetch(`${baseUrl}/api/auth/me`);
+    expect(res.status).toBe(401);
+    expect((await res.json()).error).toMatch(/Authorization/i);
+  });
+
+  it('returns 401 when token is invalid', async () => {
+    mockVerifyToken.mockImplementationOnce(() => { throw new Error('invalid token'); });
+
+    const res = await fetch(`${baseUrl}/api/auth/me`, {
+      headers: { Authorization: 'Bearer bad-token' },
+    });
+    expect(res.status).toBe(401);
+    expect((await res.json()).error).toMatch(/invalid/i);
+  });
+
+  it('returns 500 on db error', async () => {
+    mockVerifyToken.mockReturnValueOnce({ userId: 'user-id' });
+    mockPoolQuery.mockRejectedValueOnce(new Error('db down'));
+
+    const res = await fetch(`${baseUrl}/api/auth/me`, {
+      headers: { Authorization: 'Bearer valid-token' },
+    });
+    expect(res.status).toBe(500);
   });
 });
