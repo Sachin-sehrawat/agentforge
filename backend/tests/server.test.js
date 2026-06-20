@@ -26,6 +26,9 @@ vi.mock('pg', () => ({
       this.query = mockPoolQuery;
       this.connect = mockPoolConnect;
       this.on = vi.fn();
+      this.totalCount = 2;
+      this.idleCount = 2;
+      this.waitingCount = 0;
     }),
   },
 }));
@@ -36,6 +39,7 @@ vi.mock('pg', () => ({
 
 const mockFindOne = vi.fn();
 const mockUpdateOne = vi.fn();
+const mockFindOneAndUpdate = vi.fn();
 const mockInsertOne = vi.fn();
 const mockDeleteOne = vi.fn();
 const mockFind = vi.fn();
@@ -43,6 +47,7 @@ const mockFind = vi.fn();
 const mockCollection = vi.fn(() => ({
   findOne: mockFindOne,
   updateOne: mockUpdateOne,
+  findOneAndUpdate: mockFindOneAndUpdate,
   insertOne: mockInsertOne,
   deleteOne: mockDeleteOne,
   find: mockFind,
@@ -241,9 +246,8 @@ describe('GET /api/agents/:id', () => {
 describe('POST /api/agents', () => {
   it('returns 201 with created agent', async () => {
     const created = agentRow({ name: 'New Bot', system_prompt: 'Be helpful' });
-    mockPoolQuery
-      .mockResolvedValueOnce({ rows: [] }) // INSERT
-      .mockResolvedValueOnce({ rows: [created] }); // SELECT after insert
+    // INSERT...RETURNING * is a single round-trip
+    mockPoolQuery.mockResolvedValueOnce({ rows: [created] });
 
     const res = await req('POST', '/api/agents', {
       name: 'New Bot',
@@ -281,9 +285,7 @@ describe('POST /api/agents', () => {
 
   it('filters invalid tool IDs from tools array', async () => {
     const created = agentRow({ tools: ['calculator'] });
-    mockPoolQuery
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [created] });
+    mockPoolQuery.mockResolvedValueOnce({ rows: [created] });
 
     const res = await req('POST', '/api/agents', {
       name: 'Bot',
@@ -300,9 +302,7 @@ describe('POST /api/agents', () => {
 
   it('generates a UUID for the new agent', async () => {
     const created = agentRow();
-    mockPoolQuery
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [created] });
+    mockPoolQuery.mockResolvedValueOnce({ rows: [created] });
 
     await req('POST', '/api/agents', { name: 'Bot' });
 
@@ -325,10 +325,8 @@ describe('POST /api/agents', () => {
 describe('PUT /api/agents/:id', () => {
   it('returns 200 with updated agent', async () => {
     const updated = agentRow({ name: 'Updated Bot' });
-    mockPoolQuery
-      .mockResolvedValueOnce({ rows: [{ id: updated.id }] }) // existence check
-      .mockResolvedValueOnce({ rows: [] }) // UPDATE
-      .mockResolvedValueOnce({ rows: [updated] }); // SELECT after update
+    // UPDATE...RETURNING * is a single round-trip (no pre-check, no follow-up SELECT)
+    mockPoolQuery.mockResolvedValueOnce({ rows: [updated] });
 
     const res = await req('PUT', `/api/agents/${updated.id}`, {
       name: 'Updated Bot',
@@ -348,16 +346,14 @@ describe('PUT /api/agents/:id', () => {
   });
 
   it('returns 400 on validation error', async () => {
-    mockPoolQuery.mockResolvedValueOnce({ rows: [{ id: 'some-id' }] });
+    // Validation now runs before the DB call, so no mock needed
     const res = await req('PUT', '/api/agents/some-id', { persona: 'no name' });
     expect(res.status).toBe(400);
   });
 
   it('returns 500 on db error during update', async () => {
-    mockPoolQuery
-      .mockResolvedValueOnce({ rows: [{ id: 'some-id' }] })
-      .mockRejectedValueOnce(new Error('update failed'));
-
+    // UPDATE...RETURNING * is a single round-trip
+    mockPoolQuery.mockRejectedValueOnce(new Error('update failed'));
     const res = await req('PUT', '/api/agents/some-id', { name: 'Bot' });
     expect(res.status).toBe(500);
   });
@@ -366,10 +362,7 @@ describe('PUT /api/agents/:id', () => {
     const existing = agentRow({ name: 'Original', system_prompt: 'Old prompt' });
     const afterUpdate = agentRow({ name: 'New Name', system_prompt: 'Old prompt' });
 
-    mockPoolQuery
-      .mockResolvedValueOnce({ rows: [{ id: existing.id }] })
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [afterUpdate] });
+    mockPoolQuery.mockResolvedValueOnce({ rows: [afterUpdate] });
 
     const res = await req('PUT', `/api/agents/${existing.id}`, {
       name: 'New Name',
@@ -443,9 +436,8 @@ describe('GET /api/skills', () => {
 describe('POST /api/skills', () => {
   it('returns 201 with created skill', async () => {
     const created = skillRow({ label: 'New Skill', instruction: 'Do this' });
-    mockPoolQuery
-      .mockResolvedValueOnce({ rows: [] }) // INSERT
-      .mockResolvedValueOnce({ rows: [created] }); // SELECT
+    // INSERT...RETURNING * is a single round-trip
+    mockPoolQuery.mockResolvedValueOnce({ rows: [created] });
 
     const res = await req('POST', '/api/skills', {
       label: 'New Skill',
@@ -472,9 +464,7 @@ describe('POST /api/skills', () => {
 
   it('uses default color when not provided', async () => {
     const created = skillRow();
-    mockPoolQuery
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [created] });
+    mockPoolQuery.mockResolvedValueOnce({ rows: [created] });
 
     await req('POST', '/api/skills', {
       label: 'My Skill',
@@ -487,9 +477,7 @@ describe('POST /api/skills', () => {
 
   it('generates a UUID for the skill', async () => {
     const created = skillRow();
-    mockPoolQuery
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [created] });
+    mockPoolQuery.mockResolvedValueOnce({ rows: [created] });
 
     await req('POST', '/api/skills', { label: 'Skill', instruction: 'Do it' });
 
@@ -516,10 +504,8 @@ describe('POST /api/skills', () => {
 describe('PUT /api/skills/:id', () => {
   it('returns 200 with updated skill', async () => {
     const updated = skillRow({ label: 'Updated Skill' });
-    mockPoolQuery
-      .mockResolvedValueOnce({ rows: [{ id: updated.id }] })
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [updated] });
+    // UPDATE...RETURNING * is a single round-trip
+    mockPoolQuery.mockResolvedValueOnce({ rows: [updated] });
 
     const res = await req('PUT', `/api/skills/${updated.id}`, {
       label: 'Updated Skill',
@@ -531,6 +517,7 @@ describe('PUT /api/skills/:id', () => {
   });
 
   it('returns 404 when skill does not exist', async () => {
+    // UPDATE...RETURNING * returns empty rows when no row matched
     mockPoolQuery.mockResolvedValueOnce({ rows: [] });
     const res = await req('PUT', '/api/skills/nonexistent', {
       label: 'Skill',
@@ -541,7 +528,7 @@ describe('PUT /api/skills/:id', () => {
   });
 
   it('returns 400 on validation error', async () => {
-    mockPoolQuery.mockResolvedValueOnce({ rows: [{ id: 'some-id' }] });
+    // Validation now runs before the DB call, so no mock needed
     const res = await req('PUT', '/api/skills/some-id', { label: 'Only label' });
     expect(res.status).toBe(400);
   });
@@ -661,8 +648,8 @@ describe('GET /api/preferences/:userId', () => {
 describe('POST /api/preferences/:userId', () => {
   it('returns 200 with updated preferences document', async () => {
     const now = new Date();
-    mockUpdateOne.mockResolvedValueOnce({ upsertedCount: 1 });
-    mockFindOne.mockResolvedValueOnce({
+    // findOneAndUpdate with returnDocument:'after' is a single round-trip
+    mockFindOneAndUpdate.mockResolvedValueOnce({
       userId: 'user-1',
       preferences: { theme: 'dark' },
       createdAt: now,
@@ -706,8 +693,7 @@ describe('POST /api/preferences/:userId', () => {
 
   it('accepts all valid preference fields together', async () => {
     const now = new Date();
-    mockUpdateOne.mockResolvedValueOnce({ upsertedCount: 1 });
-    mockFindOne.mockResolvedValueOnce({
+    mockFindOneAndUpdate.mockResolvedValueOnce({
       userId: 'u1',
       preferences: { theme: 'light', canvas_zoom: 1.5, canvas_pan: { x: 0, y: 0 }, sidebar_width: 300 },
       createdAt: now,
@@ -725,7 +711,7 @@ describe('POST /api/preferences/:userId', () => {
   });
 
   it('returns 503 when MongoDB throws during upsert', async () => {
-    mockUpdateOne.mockRejectedValueOnce(new Error('mongo down'));
+    mockFindOneAndUpdate.mockRejectedValueOnce(new Error('mongo down'));
     const res = await req('POST', '/api/preferences/user-1', { theme: 'dark' });
     expect(res.status).toBe(503);
   });
@@ -767,8 +753,8 @@ describe('GET /api/workspace/:workspaceId', () => {
 describe('POST /api/workspace/:workspaceId', () => {
   it('returns 200 with upserted workspace document', async () => {
     const now = new Date();
-    mockUpdateOne.mockResolvedValueOnce({ upsertedCount: 1 });
-    mockFindOne.mockResolvedValueOnce({
+    // findOneAndUpdate with returnDocument:'after' is a single round-trip
+    mockFindOneAndUpdate.mockResolvedValueOnce({
       workspaceId: 'ws-1',
       data: { selected_agent: 'agent-1', active_tab: 'canvas', agent_positions: {} },
       createdAt: now,
@@ -805,7 +791,7 @@ describe('POST /api/workspace/:workspaceId', () => {
   });
 
   it('returns 503 on MongoDB error', async () => {
-    mockUpdateOne.mockRejectedValueOnce(new Error('mongo down'));
+    mockFindOneAndUpdate.mockRejectedValueOnce(new Error('mongo down'));
     const res = await req('POST', '/api/workspace/ws-1', { active_tab: 'canvas' });
     expect(res.status).toBe(503);
   });

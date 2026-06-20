@@ -1,22 +1,38 @@
 import express from 'express';
 import cors from 'cors';
+import compression from 'compression';
 import crypto from 'node:crypto';
 import { ObjectId } from 'mongodb';
-import db from './db.js';
+import db, { pool } from './db.js';
 import { getDb, healthCheck as mongoHealth } from './mongo.js';
 import { TOOL_CATALOG, TOOL_IDS } from './tools/toolDefinitions.js';
 import { validatePreferences, validateWorkspaceData, validateDraftInput } from './validation.js';
 
 const app = express();
 app.use(cors());
+// Compress responses > 1kb — reduces payload size by ~70% for JSON arrays
+app.use(compression({ threshold: 1024 }));
 app.use(express.json({ limit: '1mb' }));
 
-// --- Request/response logging -----------------------------------------------
+// --- Request/response logging and metrics -----------------------------------
+
+// In-memory counters for the /api/metrics endpoint
+const _metrics = {
+  requests: 0,
+  errors: 0,
+  totalDurationMs: 0,
+  startedAt: Date.now(),
+};
 
 app.use((req, res, next) => {
   const start = Date.now();
+  _metrics.requests++;
+  // Keep-Alive lets the k6/browser reuse TCP connections across requests
+  res.set('Connection', 'keep-alive');
   res.on('finish', () => {
     const ms = Date.now() - start;
+    _metrics.totalDurationMs += ms;
+    if (res.statusCode >= 500) _metrics.errors++;
     console.log(`[${new Date().toISOString()}] ${req.method} ${req.path} ${res.statusCode} ${ms}ms`);
   });
   next();
@@ -101,9 +117,10 @@ app.post('/api/agents', async (req, res) => {
 
   const id = crypto.randomUUID();
   try {
-    await db.query(
+    const { rows } = await db.query(
       `INSERT INTO agents (id, name, persona, system_prompt, model, tools, positions, skills, instructions)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       RETURNING *`,
       [
         id,
         agent.name,
@@ -116,7 +133,6 @@ app.post('/api/agents', async (req, res) => {
         JSON.stringify(agent.instructions),
       ]
     );
-    const { rows } = await db.query('SELECT * FROM agents WHERE id = $1', [id]);
     res.status(201).json(serializeAgent(rows[0]));
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -124,19 +140,18 @@ app.post('/api/agents', async (req, res) => {
 });
 
 app.put('/api/agents/:id', async (req, res) => {
+  const agent = validateAgentInput(req.body);
+  if (agent.error) return res.status(400).json({ error: agent.error });
+
   try {
-    const check = await db.query('SELECT id FROM agents WHERE id = $1', [req.params.id]);
-    if (!check.rows[0]) return res.status(404).json({ error: 'Agent not found' });
-
-    const agent = validateAgentInput(req.body);
-    if (agent.error) return res.status(400).json({ error: agent.error });
-
-    await db.query(
+    // Single round-trip: UPDATE...RETURNING replaces check + update + select
+    const { rows } = await db.query(
       `UPDATE agents
        SET name = $1, persona = $2, system_prompt = $3, model = $4,
            tools = $5, positions = $6, skills = $7, instructions = $8,
            updated_at = NOW()
-       WHERE id = $9`,
+       WHERE id = $9
+       RETURNING *`,
       [
         agent.name,
         agent.persona,
@@ -149,8 +164,7 @@ app.put('/api/agents/:id', async (req, res) => {
         req.params.id,
       ]
     );
-
-    const { rows } = await db.query('SELECT * FROM agents WHERE id = $1', [req.params.id]);
+    if (!rows[0]) return res.status(404).json({ error: 'Agent not found' });
     res.json(serializeAgent(rows[0]));
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -184,11 +198,10 @@ app.post('/api/skills', async (req, res) => {
 
   const id = crypto.randomUUID();
   try {
-    await db.query(
-      'INSERT INTO custom_skills (id, label, color, description, instruction) VALUES ($1, $2, $3, $4, $5)',
+    const { rows } = await db.query(
+      'INSERT INTO custom_skills (id, label, color, description, instruction) VALUES ($1, $2, $3, $4, $5) RETURNING *',
       [id, skill.label, skill.color, skill.description, skill.instruction]
     );
-    const { rows } = await db.query('SELECT * FROM custom_skills WHERE id = $1', [id]);
     res.status(201).json(rows[0]);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -196,21 +209,18 @@ app.post('/api/skills', async (req, res) => {
 });
 
 app.put('/api/skills/:id', async (req, res) => {
+  const skill = validateSkillInput(req.body);
+  if (skill.error) return res.status(400).json({ error: skill.error });
+
   try {
-    const check = await db.query('SELECT id FROM custom_skills WHERE id = $1', [req.params.id]);
-    if (!check.rows[0]) return res.status(404).json({ error: 'Skill not found' });
-
-    const skill = validateSkillInput(req.body);
-    if (skill.error) return res.status(400).json({ error: skill.error });
-
-    await db.query(
+    const { rows } = await db.query(
       `UPDATE custom_skills
        SET label = $1, color = $2, description = $3, instruction = $4, updated_at = NOW()
-       WHERE id = $5`,
+       WHERE id = $5
+       RETURNING *`,
       [skill.label, skill.color, skill.description, skill.instruction, req.params.id]
     );
-
-    const { rows } = await db.query('SELECT * FROM custom_skills WHERE id = $1', [req.params.id]);
+    if (!rows[0]) return res.status(404).json({ error: 'Skill not found' });
     res.json(rows[0]);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -243,6 +253,36 @@ app.get('/api/health/mongo', async (req, res) => {
   res.status(result.ok ? 200 : 503).json(result);
 });
 
+// --- Performance metrics ---------------------------------------------------
+// Exposes runtime stats for dashboards and alerting.
+// Includes PostgreSQL pool state and in-process request counters.
+
+app.get('/api/metrics', (req, res) => {
+  const uptimeSec = Math.floor((Date.now() - _metrics.startedAt) / 1000);
+  const avgDurationMs = _metrics.requests > 0
+    ? Math.round(_metrics.totalDurationMs / _metrics.requests)
+    : 0;
+
+  res.json({
+    uptime_seconds: uptimeSec,
+    requests_total: _metrics.requests,
+    errors_total: _metrics.errors,
+    error_rate: _metrics.requests > 0
+      ? (_metrics.errors / _metrics.requests).toFixed(4)
+      : '0.0000',
+    avg_duration_ms: avgDurationMs,
+    // PostgreSQL connection pool state
+    pg_pool: {
+      total: pool.totalCount,
+      idle: pool.idleCount,
+      waiting: pool.waitingCount,
+    },
+    rate_limiter: {
+      tracked_ips: rateLimitMap.size,
+    },
+  });
+});
+
 // --- User Preferences (MongoDB) -------------------------------------------
 
 app.get('/api/preferences/:userId', async (req, res) => {
@@ -263,17 +303,17 @@ app.post('/api/preferences/:userId', async (req, res) => {
   const { userId } = req.params;
   const now = new Date();
   try {
-    await getDb()
+    // findOneAndUpdate with returnDocument:'after' avoids a separate findOne round-trip
+    const doc = await getDb()
       .collection('user_preferences')
-      .updateOne(
+      .findOneAndUpdate(
         { userId },
         {
           $set: { preferences: validation.data, updatedAt: now },
           $setOnInsert: { userId, createdAt: now },
         },
-        { upsert: true }
+        { upsert: true, returnDocument: 'after' }
       );
-    const doc = await getDb().collection('user_preferences').findOne({ userId });
     res.json({
       userId: doc.userId,
       preferences: doc.preferences,
@@ -305,17 +345,16 @@ app.post('/api/workspace/:workspaceId', async (req, res) => {
   const { workspaceId } = req.params;
   const now = new Date();
   try {
-    await getDb()
+    const doc = await getDb()
       .collection('workspace_state')
-      .updateOne(
+      .findOneAndUpdate(
         { workspaceId },
         {
           $set: { data: validation.data, updatedAt: now },
           $setOnInsert: { workspaceId, createdAt: now },
         },
-        { upsert: true }
+        { upsert: true, returnDocument: 'after' }
       );
-    const doc = await getDb().collection('workspace_state').findOne({ workspaceId });
     res.json({
       workspaceId: doc.workspaceId,
       data: doc.data,
