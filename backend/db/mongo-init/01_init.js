@@ -15,7 +15,10 @@ db.workspace_state.createIndex({ updatedAt: -1 });
 
 // draft_agents — many per workspaceId, ordered by creation time
 db.createCollection('draft_agents');
-db.draft_agents.createIndex({ workspaceId: 1 });
-db.draft_agents.createIndex({ createdAt: -1 });
+// Compound index covers the primary query: find({workspaceId}).sort({createdAt:-1})
+// Single compound index replaces the two separate indexes and avoids a sort step
+db.draft_agents.createIndex({ workspaceId: 1, createdAt: -1 });
+// TTL index: auto-delete drafts older than 30 days to keep collection bounded
+db.draft_agents.createIndex({ createdAt: 1 }, { expireAfterSeconds: 30 * 24 * 60 * 60 });
 
 print('[mongo-init] Collections and indexes created in database: ' + db.getName());
