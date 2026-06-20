@@ -64,6 +64,9 @@ jobs:
           PGPASSWORD=agentforge_test psql \
             -h localhost -U agentforge -d agentforge_test \
             -f db/init/02_performance_indexes.sql
+          PGPASSWORD=agentforge_test psql \
+            -h localhost -U agentforge -d agentforge_test \
+            -f db/init/03_users.sql
         env:
           PGPASSWORD: agentforge_test
 
@@ -73,8 +76,8 @@ jobs:
             -h localhost -U agentforge -d agentforge_test -t \
             -c "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public';")
           echo "Tables created: $TABLE_COUNT"
-          if [ "$TABLE_COUNT" -lt 2 ]; then
-            echo "Schema validation failed — expected at least 2 tables"
+          if [ "$TABLE_COUNT" -lt 3 ]; then
+            echo "Schema validation failed — expected at least 3 tables"
             exit 1
           fi
         env:

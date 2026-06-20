@@ -78,6 +78,35 @@ export function validateWorkspaceData(body) {
 }
 
 /**
+ * Validates a user registration/login payload.
+ * Normalizes email to trimmed lowercase before returning data.
+ */
+export function validateUserInput(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return { error: 'Request body must be a JSON object' };
+  }
+
+  const { email, password } = body;
+
+  if (!email || typeof email !== 'string' || !email.trim().includes('@')) {
+    return { error: 'email is required and must be a valid email address' };
+  }
+
+  if (!password || typeof password !== 'string' || password.length < 8) {
+    return { error: 'password is required and must be at least 8 characters' };
+  }
+
+  return {
+    data: {
+      email:        email.trim().toLowerCase(),
+      password,
+      display_name: typeof body.display_name === 'string' ? body.display_name.trim() : '',
+      auth_provider: typeof body.auth_provider === 'string' ? body.auth_provider : 'local',
+    },
+  };
+}
+
+/**
  * Validates a draft agent payload sent to POST /api/drafts/:workspaceId.
  */
 export function validateDraftInput(body) {

@@ -10,7 +10,7 @@
 
 # Database Schema
 
-AgentForge uses **PostgreSQL 14+** as its primary data store. The schema is initialized automatically when starting the Docker Compose stack via the init script at `backend/db/init/01_schema.sql`.
+AgentForge uses **PostgreSQL 14+** as its primary data store. The schema is initialized automatically when starting the Docker Compose stack via the ordered init scripts in `backend/db/init/` (`01_schema.sql`, `02_performance_indexes.sql`, `03_users.sql`).
 
 ## Tables
 
@@ -57,9 +57,37 @@ Stores reusable skill definitions that can be attached to agents.
 
 ---
 
+### `users`
+
+Stores user accounts for authentication and identity.
+
+| Column | Type | Constraints | Description |
+|---|---|---|---|
+| `id` | `UUID` | PK, `DEFAULT gen_random_uuid()` | Unique user identifier |
+| `email` | `TEXT` | `NOT NULL UNIQUE` | User email address (stored trimmed + lowercase) |
+| `password_hash` | `TEXT` | `NOT NULL` | Bcrypt hash of the user's password |
+| `display_name` | `TEXT` | `NOT NULL DEFAULT ''` | Optional human-readable name shown in the UI |
+| `auth_provider` | `TEXT` | `NOT NULL DEFAULT 'local'` | Auth method: `'local'` (password) or OAuth provider name |
+| `created_at` | `TIMESTAMPTZ` | `NOT NULL DEFAULT NOW()` | Registration timestamp |
+| `updated_at` | `TIMESTAMPTZ` | `NOT NULL DEFAULT NOW()` | Last profile update timestamp |
+
+**Constraints**
+
+- `users_email_normalized` — `CHECK (email = LOWER(TRIM(email)))` enforces that email is always stored in normalized form. The application layer must trim and lowercase before insert.
+
+**Indexes**
+
+| Name | Column | Rationale |
+|---|---|---|
+| `idx_users_email_lower` | `LOWER(email)` UNIQUE | Case-insensitive unique lookup; guards against duplicate accounts differing only in case |
+| `idx_users_auth_provider` | `auth_provider` | Supports filtering users by auth method |
+| `idx_users_created_at` | `created_at DESC` | Supports admin queries sorted by registration date |
+
+---
+
 ## Design Notes
 
-- **UUID primary keys** — both tables use `gen_random_uuid()` so IDs are globally unique and safe to expose in APIs.
+- **UUID primary keys** — all tables use `gen_random_uuid()` so IDs are globally unique and safe to expose in APIs.
 - **JSONB for flexible fields** — `tools`, `positions`, `skills`, and `instructions` are stored as JSONB to allow schema-free evolution without migrations for structural changes to these arrays/objects.
 - **TIMESTAMPTZ** — all timestamps are stored with timezone information to avoid ambiguity.
 - The `updated_at` column is updated explicitly to `NOW()` in every `UPDATE` statement (no trigger needed for the current load).
@@ -72,7 +100,7 @@ Start PostgreSQL via Docker Compose:
 docker-compose up -d
 ```
 
-The init script runs automatically on first start and creates both tables. To connect manually:
+The init scripts run automatically on first start and create all tables. To connect manually:
 
 ```bash
 docker-compose exec postgres psql -U agentforge -d agentforge
