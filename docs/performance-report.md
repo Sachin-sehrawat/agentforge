@@ -55,6 +55,10 @@ File: `backend/db/init/02_performance_indexes.sql`
 | `idx_custom_skills_label` | `custom_skills.label` | BTREE | Label lookup |
 | `idx_agents_updated_at` | `agents.updated_at DESC` | BTREE | `ORDER BY updated_at DESC` (already existed) |
 | `idx_agents_name` | `agents.name` | BTREE | Equality lookup (already existed) |
+| `idx_agents_owner_id` | `agents.owner_id` | BTREE | List all agents owned by a user |
+| `idx_agents_visibility` | `agents.visibility` | BTREE | Filter public vs. private agents |
+| `idx_custom_skills_owner_id` | `custom_skills.owner_id` | BTREE | List all skills owned by a user |
+| `idx_custom_skills_visibility` | `custom_skills.visibility` | BTREE | Filter public vs. private skills |
 
 ### MongoDB Indexes
 
