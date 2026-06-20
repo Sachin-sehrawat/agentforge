@@ -64,6 +64,7 @@ services:
       MONGO_URI: mongodb://${MONGO_ROOT_USERNAME:-admin}:${MONGO_ROOT_PASSWORD:-adminpassword}@mongodb:27017/${MONGO_DB:-agentforge}?authSource=admin
       QUERY_TIMEOUT_MS: ${QUERY_TIMEOUT_MS:-5000}
       SLOW_QUERY_THRESHOLD_MS: ${SLOW_QUERY_THRESHOLD_MS:-1000}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set in .env.local}
     depends_on:
       postgres:
         condition: service_healthy

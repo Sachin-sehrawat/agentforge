@@ -12,10 +12,12 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
+    "bcryptjs": "^3.0.3",
     "compression": "^1.8.1",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.21.0",
+    "jsonwebtoken": "^9.0.3",
     "mathjs": "^13.1.1",
     "mongodb": "^6.0.0",
     "pg": "^8.21.0"
