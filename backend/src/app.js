@@ -8,7 +8,8 @@ import { getDb, healthCheck as mongoHealth } from './mongo.js';
 import { TOOL_CATALOG, TOOL_IDS } from './tools/toolDefinitions.js';
 import { validatePreferences, validateWorkspaceData, validateDraftInput, validateSignupInput, validateLoginInput } from './validation.js';
 import { hashPassword, verifyPassword } from './auth/crypto.js';
-import { signAccessToken, verifyToken } from './auth/token.js';
+import { signAccessToken } from './auth/token.js';
+import { requireAuth } from './middleware/auth.js';
 
 const app = express();
 app.use(cors());
@@ -465,20 +466,9 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-// GET /api/auth/me — inline token verification until Issue 4 middleware lands.
-app.get('/api/auth/me', async (req, res) => {
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({ error: 'Authorization header required' });
-  }
-  let payload;
+app.get('/api/auth/me', requireAuth, async (req, res) => {
   try {
-    payload = verifyToken(authHeader.slice(7));
-  } catch {
-    return res.status(401).json({ error: 'Invalid or expired token' });
-  }
-  try {
-    const { rows } = await db.query('SELECT * FROM users WHERE id = $1', [payload.userId]);
+    const { rows } = await db.query('SELECT * FROM users WHERE id = $1', [req.user.userId]);
     if (!rows[0]) return res.status(401).json({ error: 'User not found' });
     res.json(serializeUser(rows[0]));
   } catch (err) {
