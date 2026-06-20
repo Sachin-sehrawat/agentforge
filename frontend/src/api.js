@@ -1,5 +1,7 @@
 const BASE = '/api';
 
+// --- Core request ------------------------------------------------------------
+
 async function request(path, options = {}) {
   const res = await fetch(`${BASE}${path}`, {
     headers: { 'Content-Type': 'application/json' },
@@ -14,14 +16,17 @@ async function request(path, options = {}) {
     } catch {
       // ignore parse errors
     }
-    throw new Error(message);
+    const err = new Error(message);
+    err.status = res.status;
+    throw err;
   }
 
   if (res.status === 204) return null;
   return res.json();
 }
 
-// Simple in-memory cache with TTL
+// --- Cache -------------------------------------------------------------------
+
 const _cache = new Map();
 const CACHE_TTL_MS = 30_000;
 
@@ -42,6 +47,72 @@ function cacheSet(key, value) {
 function cacheDelete(key) {
   _cache.delete(key);
 }
+
+// Tracks server-side updatedAt timestamps for workspace conflict detection
+const _serverTimestamps = new Map();
+
+// Exposed so tests can reset module-level state between runs
+export function _clearCache() {
+  _cache.clear();
+  _serverTimestamps.clear();
+}
+
+// --- Retry -------------------------------------------------------------------
+
+// Exponential backoff: 500ms, 1000ms — skips retry for 4xx client errors
+async function withRetry(fn, maxAttempts = 3) {
+  let lastError;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastError = err;
+      if (err.status !== undefined && err.status >= 400 && err.status < 500) throw err;
+      if (attempt < maxAttempts - 1) {
+        await new Promise((r) => setTimeout(r, 500 * 2 ** attempt));
+      }
+    }
+  }
+  throw lastError;
+}
+
+// --- Preference validation ---------------------------------------------------
+
+const VALID_THEMES = new Set(['light', 'dark', 'system']);
+
+function validatePreferences(prefs) {
+  if (typeof prefs !== 'object' || prefs === null) {
+    throw new Error('Preferences must be a non-null object');
+  }
+  if (prefs.theme !== undefined && !VALID_THEMES.has(prefs.theme)) {
+    throw new Error(`theme must be one of: ${[...VALID_THEMES].join(', ')}`);
+  }
+  if (prefs.canvas_zoom !== undefined) {
+    if (typeof prefs.canvas_zoom !== 'number' || prefs.canvas_zoom < 0.1 || prefs.canvas_zoom > 5) {
+      throw new Error('canvas_zoom must be a number between 0.1 and 5');
+    }
+  }
+  if (prefs.canvas_pan !== undefined) {
+    const p = prefs.canvas_pan;
+    if (typeof p !== 'object' || p === null || typeof p.x !== 'number' || typeof p.y !== 'number') {
+      throw new Error('canvas_pan must be an object with numeric x and y');
+    }
+  }
+  if (prefs.sidebar_width !== undefined) {
+    if (typeof prefs.sidebar_width !== 'number' || prefs.sidebar_width < 0 || prefs.sidebar_width > 2000) {
+      throw new Error('sidebar_width must be a number between 0 and 2000');
+    }
+  }
+}
+
+const DEFAULT_PREFERENCES = Object.freeze({
+  theme: 'system',
+  canvas_zoom: 1,
+  canvas_pan: { x: 0, y: 0 },
+  sidebar_width: 280,
+});
+
+// --- API surface -------------------------------------------------------------
 
 export const api = {
   // --- Tools ----------------------------------------------------------------
@@ -64,34 +135,54 @@ export const api = {
   health: () => request('/health'),
 
   // --- User Preferences (MongoDB) ------------------------------------------
-  // Gracefully returns {} when MongoDB is unavailable (503 / network error).
+
+  // Returns cached preferences merged with defaults.
+  // Falls back to defaults when MongoDB is unavailable (503 / network error).
   getUserPreferences: async (userId) => {
     const key = `prefs:${userId}`;
     const cached = cacheGet(key);
     if (cached !== undefined) return cached;
     try {
       const data = await request(`/preferences/${userId}`);
-      cacheSet(key, data);
-      return data;
+      const prefs = { ...DEFAULT_PREFERENCES, ...data };
+      cacheSet(key, prefs);
+      return prefs;
     } catch {
-      return {};
+      return { ...DEFAULT_PREFERENCES };
     }
   },
 
+  // Validates the preference object, then optimistically updates the cache
+  // so the UI reflects changes immediately. Retries the network request up to
+  // 3 times (exponential backoff). Reverts the cache and throws if all
+  // attempts fail.
   saveUserPreferences: async (userId, preferences) => {
-    cacheDelete(`prefs:${userId}`);
+    validatePreferences(preferences);
+    const key = `prefs:${userId}`;
+    const previous = cacheGet(key);
+    cacheSet(key, { ...DEFAULT_PREFERENCES, ...previous, ...preferences });
     try {
-      await request(`/preferences/${userId}`, {
-        method: 'POST',
-        body: JSON.stringify(preferences),
-      });
-    } catch {
-      // best-effort; caller may choose to surface the error
+      const result = await withRetry(() =>
+        request(`/preferences/${userId}`, {
+          method: 'POST',
+          body: JSON.stringify(preferences),
+        })
+      );
+      if (result?.preferences) {
+        cacheSet(key, { ...DEFAULT_PREFERENCES, ...result.preferences });
+      }
+      return result;
+    } catch (err) {
+      if (previous !== undefined) cacheSet(key, previous);
+      else cacheDelete(key);
+      throw new Error(`Failed to save preferences: ${err.message}`);
     }
   },
 
   // --- Workspace State (MongoDB) -------------------------------------------
-  // Gracefully returns {} when MongoDB is unavailable.
+
+  // Returns cached workspace data or fetches fresh.
+  // Falls back to {} when MongoDB is unavailable.
   getWorkspaceData: async (workspaceId) => {
     const key = `ws:${workspaceId}`;
     const cached = cacheGet(key);
@@ -105,27 +196,85 @@ export const api = {
     }
   },
 
-  saveWorkspaceData: async (workspaceId, data) => {
-    cacheDelete(`ws:${workspaceId}`);
+  // Saves workspace state with optimistic cache update and retry.
+  // Pass { expectedUpdatedAt } in options to enable conflict detection —
+  // throws when the server timestamp has advanced past the expected value,
+  // indicating a concurrent edit from another session.
+  saveWorkspaceData: async (workspaceId, data, options = {}) => {
+    const key = `ws:${workspaceId}`;
+    const { expectedUpdatedAt } = options;
+
+    if (expectedUpdatedAt !== undefined) {
+      const lastKnown = _serverTimestamps.get(key);
+      if (lastKnown !== undefined && lastKnown !== expectedUpdatedAt) {
+        throw new Error('Conflict: workspace data was modified since your last save');
+      }
+    }
+
+    const previous = cacheGet(key);
+    cacheSet(key, { ...previous, ...data });
+
     try {
-      await request(`/workspace/${workspaceId}`, {
-        method: 'POST',
-        body: JSON.stringify(data),
-      });
-    } catch {
-      // best-effort
+      const result = await withRetry(() =>
+        request(`/workspace/${workspaceId}`, {
+          method: 'POST',
+          body: JSON.stringify(data),
+        })
+      );
+      if (result?.data) cacheSet(key, result.data);
+      if (result?.updatedAt) _serverTimestamps.set(key, result.updatedAt);
+      return result;
+    } catch (err) {
+      if (previous !== undefined) cacheSet(key, previous);
+      else cacheDelete(key);
+      throw new Error(`Failed to save workspace: ${err.message}`);
     }
   },
 
   // --- Draft Agents (MongoDB) ----------------------------------------------
+
+  // Returns cached drafts for the workspace, newest first.
+  // Falls back to [] when MongoDB is unavailable.
+  getDraftAgents: async (workspaceId) => {
+    const key = `drafts:${workspaceId}`;
+    const cached = cacheGet(key);
+    if (cached !== undefined) return cached;
+    try {
+      const data = await request(`/drafts/${workspaceId}`);
+      cacheSet(key, data);
+      return data;
+    } catch {
+      return [];
+    }
+  },
+
+  // Saves a new draft and invalidates the workspace's drafts cache.
+  // Retries up to 3 times on network/server errors.
   saveDraftAgent: async (workspaceId, agentData) => {
     try {
-      await request('/drafts', {
-        method: 'POST',
-        body: JSON.stringify({ workspaceId, agentData }),
-      });
-    } catch {
-      // best-effort
+      const result = await withRetry(() =>
+        request(`/drafts/${workspaceId}`, {
+          method: 'POST',
+          body: JSON.stringify({ agentData }),
+        })
+      );
+      cacheDelete(`drafts:${workspaceId}`);
+      return result;
+    } catch (err) {
+      throw new Error(`Failed to save draft: ${err.message}`);
+    }
+  },
+
+  // Deletes a draft by its MongoDB _id and invalidates all drafts caches
+  // (workspace association is not tracked client-side).
+  deleteDraftAgent: async (draftId) => {
+    try {
+      await request(`/drafts/${draftId}`, { method: 'DELETE' });
+      for (const key of _cache.keys()) {
+        if (key.startsWith('drafts:')) _cache.delete(key);
+      }
+    } catch (err) {
+      throw new Error(`Failed to delete draft: ${err.message}`);
     }
   },
 };
