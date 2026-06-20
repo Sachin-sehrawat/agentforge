@@ -1,159 +1,122 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import Canvas from '../src/components/Canvas';
 
-describe('Canvas Component', () => {
-  const mockAgents = [
-    {
-      id: '1',
-      name: 'Test Agent',
-      tools: ['calculator', 'code_runner'],
-      positions: { calculator: { x: 100, y: 100 } },
-    },
-  ];
+const DEFAULT_AGENT = {
+  id: null,
+  name: 'Test Agent',
+  persona: '',
+  systemPrompt: '',
+  tools: [],
+  positions: {},
+  skills: [],
+  instructions: [],
+};
 
-  const mockTools = [
-    { id: 'calculator', label: 'Calculator' },
-    { id: 'code_runner', label: 'Code Runner' },
-  ];
+const DEFAULT_PROPS = {
+  agent: DEFAULT_AGENT,
+  onChangeAgentField: vi.fn(),
+  onMoveTool: vi.fn(),
+  onAddTool: vi.fn(),
+  onRemoveTool: vi.fn(),
+  onToggleSkill: vi.fn(),
+  onToggleInstruction: vi.fn(),
+  allSkills: [],
+};
 
+describe('Canvas', () => {
   describe('Rendering', () => {
-    it('should render canvas container', () => {
-      const props = {
-        agents: mockAgents,
-        tools: mockTools,
-        selectedAgent: mockAgents[0],
-      };
-
-      const { container } = render(<Canvas {...props} />);
-      expect(container.querySelector('[class*="canvas"]')).toBeDefined();
+    it('renders the canvas container', () => {
+      const { container } = render(<Canvas {...DEFAULT_PROPS} />);
+      expect(container.querySelector('.canvas-wrap')).toBeTruthy();
+      expect(container.querySelector('.canvas')).toBeTruthy();
     });
 
-    it('should render agent nodes', () => {
-      const props = {
-        agents: mockAgents,
-        tools: mockTools,
-        selectedAgent: mockAgents[0],
-      };
-
-      render(<Canvas {...props} />);
-      expect(screen.queryByText('Test Agent')).toBeDefined();
+    it('renders an SVG element for wires', () => {
+      const { container } = render(<Canvas {...DEFAULT_PROPS} />);
+      expect(container.querySelector('svg.wires-svg')).toBeTruthy();
     });
 
-    it('should render tool nodes', () => {
-      const props = {
-        agents: mockAgents,
-        tools: mockTools,
-        selectedAgent: mockAgents[0],
-      };
-
-      render(<Canvas {...props} />);
-      expect(screen.queryByText('Calculator')).toBeDefined();
+    it('renders AgentNode with the agent name', () => {
+      render(<Canvas {...DEFAULT_PROPS} />);
+      expect(screen.getByDisplayValue('Test Agent')).toBeTruthy();
     });
 
-    it('should handle empty agents list', () => {
-      const props = {
-        agents: [],
-        tools: mockTools,
-        selectedAgent: null,
-      };
+    it('shows empty hint when no tools are added', () => {
+      render(<Canvas {...DEFAULT_PROPS} />);
+      expect(screen.getByText(/Drag a tool/i)).toBeTruthy();
+    });
 
-      const { container } = render(<Canvas {...props} />);
-      expect(container).toBeDefined();
+    it('does not show empty hint when tools are present', () => {
+      const agent = { ...DEFAULT_AGENT, tools: ['calculator'], positions: { calculator: { x: 400, y: 40 } } };
+      render(<Canvas {...DEFAULT_PROPS} agent={agent} />);
+      expect(screen.queryByText(/Drag a tool/i)).toBeNull();
     });
   });
 
-  describe('Node Selection', () => {
-    it('should highlight selected agent', () => {
-      const props = {
-        agents: mockAgents,
-        tools: mockTools,
-        selectedAgent: mockAgents[0],
-        onSelectAgent: () => {},
-      };
-
-      const { container } = render(<Canvas {...props} />);
-      const selected = container.querySelector('[class*="selected"]');
-      expect(selected || container).toBeDefined();
+  describe('Zoom and Pan', () => {
+    it('applies CSS transform from zoom and pan props', () => {
+      const { container } = render(
+        <Canvas {...DEFAULT_PROPS} zoom={1.5} pan={{ x: 20, y: 30 }} />
+      );
+      const canvas = container.querySelector('.canvas');
+      expect(canvas.style.transform).toBe('translate(20px, 30px) scale(1.5)');
+      expect(canvas.style.transformOrigin).toBe('0 0');
     });
 
-    it('should call onSelectAgent when agent clicked', () => {
-      const onSelectAgent = () => {};
-      const props = {
-        agents: mockAgents,
-        tools: mockTools,
-        selectedAgent: mockAgents[0],
-        onSelectAgent,
-      };
-
-      expect(typeof onSelectAgent).toBe('function');
-    });
-  });
-
-  describe('Node Positioning', () => {
-    it('should position agent node at stored coordinates', () => {
-      const agent = {
-        id: '1',
-        name: 'Test Agent',
-        tools: [],
-        positions: { agent_1: { x: 200, y: 300 } },
-      };
-
-      const props = {
-        agents: [agent],
-        tools: mockTools,
-        selectedAgent: agent,
-      };
-
-      expect(agent.positions.agent_1.x).toBe(200);
-      expect(agent.positions.agent_1.y).toBe(300);
-    });
-
-    it('should update positions on drag', () => {
-      const positions = { x: 100, y: 100 };
-      const newPositions = { x: 150, y: 150 };
-
-      expect(newPositions.x).not.toBe(positions.x);
-      expect(newPositions.y).not.toBe(positions.y);
+    it('defaults to zoom=1 and pan={x:0,y:0}', () => {
+      const { container } = render(<Canvas {...DEFAULT_PROPS} />);
+      const canvas = container.querySelector('.canvas');
+      expect(canvas.style.transform).toBe('translate(0px, 0px) scale(1)');
     });
   });
 
   describe('Drag and Drop', () => {
-    it('should support dragging agent nodes', () => {
-      const props = {
-        agents: mockAgents,
-        tools: mockTools,
-        selectedAgent: mockAgents[0],
-        onUpdateAgent: () => {},
-      };
+    it('calls onAddTool when a valid toolId is dropped', () => {
+      const onAddTool = vi.fn();
+      const { container } = render(<Canvas {...DEFAULT_PROPS} onAddTool={onAddTool} />);
+      const wrap = container.querySelector('.canvas-wrap');
 
-      expect(typeof props.onUpdateAgent).toBe('function');
+      const dropEvent = new Event('drop', { bubbles: true });
+      dropEvent.dataTransfer = { getData: () => 'calculator' };
+      dropEvent.clientX = 300;
+      dropEvent.clientY = 200;
+      // Provide a minimal getBoundingClientRect so position math works
+      container.querySelector('.canvas').getBoundingClientRect = () => ({
+        left: 0, top: 0, right: 800, bottom: 600, width: 800, height: 600,
+      });
+
+      wrap.dispatchEvent(dropEvent);
+      expect(onAddTool).toHaveBeenCalledWith('calculator', expect.objectContaining({ x: expect.any(Number), y: expect.any(Number) }));
     });
 
-    it('should support dragging tool nodes', () => {
-      const props = {
-        agents: mockAgents,
-        tools: mockTools,
-        selectedAgent: mockAgents[0],
-        onUpdateAgent: () => {},
-      };
+    it('ignores drops with unknown toolId', () => {
+      const onAddTool = vi.fn();
+      const { container } = render(<Canvas {...DEFAULT_PROPS} onAddTool={onAddTool} />);
+      const wrap = container.querySelector('.canvas-wrap');
 
-      expect(typeof props.onUpdateAgent).toBe('function');
+      const dropEvent = new Event('drop', { bubbles: true });
+      dropEvent.dataTransfer = { getData: () => 'unknown-tool-xyz' };
+      dropEvent.clientX = 300;
+      dropEvent.clientY = 200;
+      wrap.dispatchEvent(dropEvent);
+
+      expect(onAddTool).not.toHaveBeenCalled();
     });
   });
 
-  describe('Canvas Scaling and Zoom', () => {
-    it('should support zoom controls', () => {
-      const zoomLevel = 1.0;
-      expect(typeof zoomLevel).toBe('number');
-    });
-
-    it('should pan canvas', () => {
-      const panX = 100;
-      const panY = 200;
-
-      expect(typeof panX).toBe('number');
-      expect(typeof panY).toBe('number');
+  describe('Tool nodes', () => {
+    it('renders a ToolNode for each tool in agent.tools', () => {
+      const agent = {
+        ...DEFAULT_AGENT,
+        tools: ['calculator', 'code_runner'],
+        positions: {
+          calculator: { x: 400, y: 40 },
+          code_runner: { x: 400, y: 200 },
+        },
+      };
+      const { container } = render(<Canvas {...DEFAULT_PROPS} agent={agent} />);
+      expect(container.querySelectorAll('.tool-node').length).toBe(2);
     });
   });
 });
