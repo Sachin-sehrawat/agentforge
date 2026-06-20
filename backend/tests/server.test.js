@@ -108,6 +108,9 @@ afterAll(() => new Promise((resolve) => server.close(resolve)));
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // vi.clearAllMocks() does not clear mockReturnValueOnce queues — reset verifyToken
+  // explicitly so Once-queued values from auth tests don't leak into later tests.
+  mockVerifyToken.mockReset();
   // Default find mock returns empty array
   mockFind.mockReturnValue({
     sort: vi.fn().mockReturnValue({ toArray: vi.fn().mockResolvedValue([]) }),
@@ -118,10 +121,23 @@ beforeEach(() => {
 // Helpers
 // ---------------------------------------------------------------------------
 
+const TEST_USER_ID = 'cccccccc-0000-0000-0000-000000000001';
+const OTHER_USER_ID = 'dddddddd-0000-0000-0000-000000000002';
+
 async function req(method, path, body) {
   const opts = {
     method,
     headers: { 'Content-Type': 'application/json' },
+  };
+  if (body !== undefined) opts.body = JSON.stringify(body);
+  return fetch(`${baseUrl}${path}`, opts);
+}
+
+async function authReq(method, path, body) {
+  mockVerifyToken.mockReturnValueOnce({ userId: TEST_USER_ID });
+  const opts = {
+    method,
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer test-token' },
   };
   if (body !== undefined) opts.body = JSON.stringify(body);
   return fetch(`${baseUrl}${path}`, opts);
@@ -256,12 +272,35 @@ describe('GET /api/agents', () => {
 // ---------------------------------------------------------------------------
 
 describe('GET /api/agents/:id', () => {
-  it('returns 200 with agent when found', async () => {
-    mockPoolQuery.mockResolvedValueOnce({ rows: [agentRow()] });
+  it('returns 200 with public agent when found (no auth needed)', async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [agentRow({ visibility: 'public' })] });
     const res = await req('GET', '/api/agents/aaaaaaaa-0000-0000-0000-000000000001');
     expect(res.status).toBe(200);
     const a = await res.json();
     expect(a.name).toBe('Test Agent');
+  });
+
+  it('returns 200 for private agent when authenticated as owner', async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [agentRow({ visibility: 'private', owner_id: TEST_USER_ID })] });
+    const res = await authReq('GET', '/api/agents/aaaaaaaa-0000-0000-0000-000000000001');
+    expect(res.status).toBe(200);
+  });
+
+  it('returns 403 for private agent when authenticated as non-owner', async () => {
+    mockVerifyToken.mockReturnValueOnce({ userId: OTHER_USER_ID });
+    mockPoolQuery.mockResolvedValueOnce({ rows: [agentRow({ visibility: 'private', owner_id: TEST_USER_ID })] });
+    const res = await fetch(`${baseUrl}/api/agents/aaaaaaaa-0000-0000-0000-000000000001`, {
+      headers: { 'Authorization': 'Bearer other-token' },
+    });
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toBe('Forbidden');
+  });
+
+  it('returns 403 for private agent when unauthenticated', async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [agentRow({ visibility: 'private', owner_id: TEST_USER_ID })] });
+    const res = await req('GET', '/api/agents/aaaaaaaa-0000-0000-0000-000000000001');
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toBe('Forbidden');
   });
 
   it('returns 404 when agent not found', async () => {
@@ -284,12 +323,16 @@ describe('GET /api/agents/:id', () => {
 // ---------------------------------------------------------------------------
 
 describe('POST /api/agents', () => {
-  it('returns 201 with created agent', async () => {
-    const created = agentRow({ name: 'New Bot', system_prompt: 'Be helpful' });
-    // INSERT...RETURNING * is a single round-trip
+  it('returns 401 when no Authorization header', async () => {
+    const res = await req('POST', '/api/agents', { name: 'Bot' });
+    expect(res.status).toBe(401);
+  });
+
+  it('returns 201 with created agent and sets ownerId from token', async () => {
+    const created = agentRow({ name: 'New Bot', system_prompt: 'Be helpful', owner_id: TEST_USER_ID });
     mockPoolQuery.mockResolvedValueOnce({ rows: [created] });
 
-    const res = await req('POST', '/api/agents', {
+    const res = await authReq('POST', '/api/agents', {
       name: 'New Bot',
       systemPrompt: 'Be helpful',
       model: 'claude-sonnet-4-6',
@@ -300,40 +343,54 @@ describe('POST /api/agents', () => {
     const a = await res.json();
     expect(a.name).toBe('New Bot');
     expect(a.id).toBeDefined();
+    expect(a.ownerId).toBe(TEST_USER_ID);
+    // Verify owner_id was passed to the INSERT
+    const insertCall = mockPoolQuery.mock.calls[0];
+    expect(insertCall[1][10]).toBe(TEST_USER_ID);
+  });
+
+  it('defaults visibility to private', async () => {
+    const created = agentRow({ owner_id: TEST_USER_ID, visibility: 'private' });
+    mockPoolQuery.mockResolvedValueOnce({ rows: [created] });
+
+    await authReq('POST', '/api/agents', { name: 'Bot' });
+
+    const insertCall = mockPoolQuery.mock.calls[0];
+    expect(insertCall[1][9]).toBe('private');
   });
 
   it('returns 400 when name is missing', async () => {
-    const res = await req('POST', '/api/agents', { systemPrompt: 'test' });
+    const res = await authReq('POST', '/api/agents', { systemPrompt: 'test' });
     expect(res.status).toBe(400);
     const body = await res.json();
     expect(body.error).toMatch(/name/i);
   });
 
   it('returns 400 when name is empty string', async () => {
-    const res = await req('POST', '/api/agents', { name: '   ' });
+    const res = await authReq('POST', '/api/agents', { name: '   ' });
     expect(res.status).toBe(400);
   });
 
   it('returns 400 when body is not JSON object', async () => {
+    mockVerifyToken.mockReturnValueOnce({ userId: TEST_USER_ID });
     const res = await fetch(`${baseUrl}/api/agents`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer test-token' },
       body: '"just a string"',
     });
     expect(res.status).toBe(400);
   });
 
   it('filters invalid tool IDs from tools array', async () => {
-    const created = agentRow({ tools: ['calculator'] });
+    const created = agentRow({ tools: ['calculator'], owner_id: TEST_USER_ID });
     mockPoolQuery.mockResolvedValueOnce({ rows: [created] });
 
-    const res = await req('POST', '/api/agents', {
+    const res = await authReq('POST', '/api/agents', {
       name: 'Bot',
       tools: ['calculator', 'invalid_tool_xyz'],
     });
 
     expect(res.status).toBe(201);
-    // The INSERT call should only pass valid tools
     const insertCall = mockPoolQuery.mock.calls[0];
     const toolsArg = JSON.parse(insertCall[1][5]);
     expect(toolsArg).toContain('calculator');
@@ -341,10 +398,10 @@ describe('POST /api/agents', () => {
   });
 
   it('generates a UUID for the new agent', async () => {
-    const created = agentRow();
+    const created = agentRow({ owner_id: TEST_USER_ID });
     mockPoolQuery.mockResolvedValueOnce({ rows: [created] });
 
-    await req('POST', '/api/agents', { name: 'Bot' });
+    await authReq('POST', '/api/agents', { name: 'Bot' });
 
     const insertCall = mockPoolQuery.mock.calls[0];
     const uuid = insertCall[1][0];
@@ -353,7 +410,7 @@ describe('POST /api/agents', () => {
 
   it('returns 500 on db error', async () => {
     mockPoolQuery.mockRejectedValueOnce(new Error('insert failed'));
-    const res = await req('POST', '/api/agents', { name: 'Bot' });
+    const res = await authReq('POST', '/api/agents', { name: 'Bot' });
     expect(res.status).toBe(500);
   });
 });
@@ -363,12 +420,19 @@ describe('POST /api/agents', () => {
 // ---------------------------------------------------------------------------
 
 describe('PUT /api/agents/:id', () => {
-  it('returns 200 with updated agent', async () => {
-    const updated = agentRow({ name: 'Updated Bot' });
-    // UPDATE...RETURNING * is a single round-trip (no pre-check, no follow-up SELECT)
-    mockPoolQuery.mockResolvedValueOnce({ rows: [updated] });
+  it('returns 401 when no Authorization header', async () => {
+    const res = await req('PUT', '/api/agents/some-id', { name: 'Bot' });
+    expect(res.status).toBe(401);
+  });
 
-    const res = await req('PUT', `/api/agents/${updated.id}`, {
+  it('returns 200 with updated agent when caller is owner', async () => {
+    const updated = agentRow({ name: 'Updated Bot', owner_id: TEST_USER_ID });
+    // SELECT ownership check, then UPDATE...RETURNING *
+    mockPoolQuery
+      .mockResolvedValueOnce({ rows: [{ owner_id: TEST_USER_ID }] })
+      .mockResolvedValueOnce({ rows: [updated] });
+
+    const res = await authReq('PUT', `/api/agents/${updated.id}`, {
       name: 'Updated Bot',
       model: 'claude-sonnet-4-6',
     });
@@ -378,33 +442,44 @@ describe('PUT /api/agents/:id', () => {
     expect(a.name).toBe('Updated Bot');
   });
 
+  it('returns 403 when agent is owned by a different user', async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [{ owner_id: OTHER_USER_ID }] });
+
+    const res = await authReq('PUT', '/api/agents/some-id', { name: 'Bot' });
+
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toBe('Forbidden');
+  });
+
   it('returns 404 when agent does not exist', async () => {
     mockPoolQuery.mockResolvedValueOnce({ rows: [] });
-    const res = await req('PUT', '/api/agents/nonexistent', { name: 'Bot' });
+    const res = await authReq('PUT', '/api/agents/nonexistent', { name: 'Bot' });
     expect(res.status).toBe(404);
     expect((await res.json()).error).toBe('Agent not found');
   });
 
   it('returns 400 on validation error', async () => {
-    // Validation now runs before the DB call, so no mock needed
-    const res = await req('PUT', '/api/agents/some-id', { persona: 'no name' });
+    // Validation runs before the DB call
+    const res = await authReq('PUT', '/api/agents/some-id', { persona: 'no name' });
     expect(res.status).toBe(400);
   });
 
   it('returns 500 on db error during update', async () => {
-    // UPDATE...RETURNING * is a single round-trip
-    mockPoolQuery.mockRejectedValueOnce(new Error('update failed'));
-    const res = await req('PUT', '/api/agents/some-id', { name: 'Bot' });
+    mockPoolQuery
+      .mockResolvedValueOnce({ rows: [{ owner_id: TEST_USER_ID }] })
+      .mockRejectedValueOnce(new Error('update failed'));
+    const res = await authReq('PUT', '/api/agents/some-id', { name: 'Bot' });
     expect(res.status).toBe(500);
   });
 
   it('preserves existing fields when partial update is sent', async () => {
-    const existing = agentRow({ name: 'Original', system_prompt: 'Old prompt' });
-    const afterUpdate = agentRow({ name: 'New Name', system_prompt: 'Old prompt' });
+    const afterUpdate = agentRow({ name: 'New Name', system_prompt: 'Old prompt', owner_id: TEST_USER_ID });
 
-    mockPoolQuery.mockResolvedValueOnce({ rows: [afterUpdate] });
+    mockPoolQuery
+      .mockResolvedValueOnce({ rows: [{ owner_id: TEST_USER_ID }] })
+      .mockResolvedValueOnce({ rows: [afterUpdate] });
 
-    const res = await req('PUT', `/api/agents/${existing.id}`, {
+    const res = await authReq('PUT', `/api/agents/${afterUpdate.id}`, {
       name: 'New Name',
       systemPrompt: 'Old prompt',
     });
@@ -420,23 +495,37 @@ describe('PUT /api/agents/:id', () => {
 // ---------------------------------------------------------------------------
 
 describe('DELETE /api/agents/:id', () => {
-  it('returns 204 on successful delete', async () => {
-    mockPoolQuery.mockResolvedValueOnce({ rowCount: 1 });
-    const res = await req('DELETE', '/api/agents/aaaaaaaa-0000-0000-0000-000000000001');
+  it('returns 401 when no Authorization header', async () => {
+    const res = await req('DELETE', '/api/agents/some-id');
+    expect(res.status).toBe(401);
+  });
+
+  it('returns 204 on successful delete when caller is owner', async () => {
+    mockPoolQuery
+      .mockResolvedValueOnce({ rows: [{ owner_id: TEST_USER_ID }] })
+      .mockResolvedValueOnce({ rowCount: 1 });
+    const res = await authReq('DELETE', '/api/agents/aaaaaaaa-0000-0000-0000-000000000001');
     expect(res.status).toBe(204);
     expect(await res.text()).toBe('');
   });
 
+  it('returns 403 when agent is owned by a different user', async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [{ owner_id: OTHER_USER_ID }] });
+    const res = await authReq('DELETE', '/api/agents/some-id');
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toBe('Forbidden');
+  });
+
   it('returns 404 when agent not found', async () => {
-    mockPoolQuery.mockResolvedValueOnce({ rowCount: 0 });
-    const res = await req('DELETE', '/api/agents/nonexistent-id');
+    mockPoolQuery.mockResolvedValueOnce({ rows: [] });
+    const res = await authReq('DELETE', '/api/agents/nonexistent-id');
     expect(res.status).toBe(404);
     expect((await res.json()).error).toBe('Agent not found');
   });
 
   it('returns 500 on db error', async () => {
     mockPoolQuery.mockRejectedValueOnce(new Error('delete failed'));
-    const res = await req('DELETE', '/api/agents/some-id');
+    const res = await authReq('DELETE', '/api/agents/some-id');
     expect(res.status).toBe(500);
   });
 });
@@ -1027,15 +1116,15 @@ describe('CORS', () => {
 // ---------------------------------------------------------------------------
 
 describe('Request validation', () => {
-  it('returns 400 on completely missing body for POST /api/agents', async () => {
+  it('returns 400 or 401 on completely missing body for POST /api/agents', async () => {
+    // No auth header: body-parser may reject (400) before the route handler,
+    // or pass with undefined body and hit requireAuth (401).
     const res = await fetch(`${baseUrl}/api/agents`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: '',
     });
-    // Express with empty body may return 400 (body-parser) or continue with undefined
-    // In our case validateAgentInput(undefined) returns error
-    expect([400, 500].includes(res.status)).toBe(true);
+    expect([400, 401, 500].includes(res.status)).toBe(true);
   });
 });
 

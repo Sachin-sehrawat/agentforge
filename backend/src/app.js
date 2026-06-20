@@ -9,7 +9,7 @@ import { TOOL_CATALOG, TOOL_IDS } from './tools/toolDefinitions.js';
 import { validatePreferences, validateWorkspaceData, validateDraftInput, validateSignupInput, validateLoginInput } from './validation.js';
 import { hashPassword, verifyPassword } from './auth/crypto.js';
 import { signAccessToken } from './auth/token.js';
-import { requireAuth } from './middleware/auth.js';
+import { requireAuth, optionalAuth } from './middleware/auth.js';
 
 const app = express();
 app.use(cors());
@@ -106,25 +106,30 @@ app.get('/api/agents', async (req, res) => {
   }
 });
 
-app.get('/api/agents/:id', async (req, res) => {
+app.get('/api/agents/:id', optionalAuth, async (req, res) => {
   try {
     const { rows } = await db.query('SELECT * FROM agents WHERE id = $1', [req.params.id]);
     if (!rows[0]) return res.status(404).json({ error: 'Agent not found' });
-    res.json(serializeAgent(rows[0]));
+    const agent = rows[0];
+    if (agent.visibility !== 'public' && agent.owner_id !== req.user?.userId) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    res.json(serializeAgent(agent));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-app.post('/api/agents', async (req, res) => {
+app.post('/api/agents', requireAuth, async (req, res) => {
   const agent = validateAgentInput(req.body);
   if (agent.error) return res.status(400).json({ error: agent.error });
 
   const id = crypto.randomUUID();
+  const owner_id = req.user.userId;
   try {
     const { rows } = await db.query(
-      `INSERT INTO agents (id, name, persona, system_prompt, model, tools, positions, skills, instructions, visibility)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      `INSERT INTO agents (id, name, persona, system_prompt, model, tools, positions, skills, instructions, visibility, owner_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
        RETURNING *`,
       [
         id,
@@ -137,6 +142,7 @@ app.post('/api/agents', async (req, res) => {
         JSON.stringify(agent.skills),
         JSON.stringify(agent.instructions),
         agent.visibility,
+        owner_id,
       ]
     );
     res.status(201).json(serializeAgent(rows[0]));
@@ -145,12 +151,18 @@ app.post('/api/agents', async (req, res) => {
   }
 });
 
-app.put('/api/agents/:id', async (req, res) => {
+app.put('/api/agents/:id', requireAuth, async (req, res) => {
   const agent = validateAgentInput(req.body);
   if (agent.error) return res.status(400).json({ error: agent.error });
 
   try {
-    // Single round-trip: UPDATE...RETURNING replaces check + update + select
+    const { rows: existing } = await db.query(
+      'SELECT owner_id FROM agents WHERE id = $1',
+      [req.params.id]
+    );
+    if (!existing[0]) return res.status(404).json({ error: 'Agent not found' });
+    if (existing[0].owner_id !== req.user.userId) return res.status(403).json({ error: 'Forbidden' });
+
     const { rows } = await db.query(
       `UPDATE agents
        SET name = $1, persona = $2, system_prompt = $3, model = $4,
@@ -171,17 +183,22 @@ app.put('/api/agents/:id', async (req, res) => {
         req.params.id,
       ]
     );
-    if (!rows[0]) return res.status(404).json({ error: 'Agent not found' });
     res.json(serializeAgent(rows[0]));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-app.delete('/api/agents/:id', async (req, res) => {
+app.delete('/api/agents/:id', requireAuth, async (req, res) => {
   try {
-    const { rowCount } = await db.query('DELETE FROM agents WHERE id = $1', [req.params.id]);
-    if (rowCount === 0) return res.status(404).json({ error: 'Agent not found' });
+    const { rows } = await db.query(
+      'SELECT owner_id FROM agents WHERE id = $1',
+      [req.params.id]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Agent not found' });
+    if (rows[0].owner_id !== req.user.userId) return res.status(403).json({ error: 'Forbidden' });
+
+    await db.query('DELETE FROM agents WHERE id = $1', [req.params.id]);
     res.status(204).end();
   } catch (err) {
     res.status(500).json({ error: err.message });

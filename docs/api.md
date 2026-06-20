@@ -36,6 +36,7 @@ All error responses share this shape:
 |---|---|
 | `400` | Validation error — fix the request body |
 | `401` | Unauthenticated — missing or invalid token, or bad credentials |
+| `403` | Forbidden — authenticated but not the resource owner |
 | `404` | Resource not found |
 | `409` | Conflict — e.g. email already registered |
 | `429` | Rate limit exceeded |
@@ -154,15 +155,25 @@ Returns the catalog of built-in tools available to agents.
 
 ## Agents
 
+Agent objects include `ownerId` (the user ID that created it) and `visibility` (`"public"` or `"private"`).
+
 ### `GET /api/agents`
 
-Returns all agents ordered by most recently updated.
+Returns all agents ordered by most recently updated. Public endpoint — no auth required.
 
 **Response 200** — array of agent objects (see shape below).
 
 ---
 
 ### `GET /api/agents/:id`
+
+Returns the agent if it is public, or if the requester is the owner.
+
+**Headers (optional)**
+
+| Header | Value |
+|---|---|
+| `Authorization` | `Bearer <token>` |
 
 **Response 200**
 
@@ -177,10 +188,14 @@ Returns all agents ordered by most recently updated.
   "positions": { "web_search": { "x": 100, "y": 200 } },
   "skills": ["skill-uuid-1"],
   "instructions": ["Always cite sources"],
+  "ownerId": "cccccccc-0000-0000-0000-000000000001",
+  "visibility": "public",
   "createdAt": "2024-01-01T00:00:00.000Z",
   "updatedAt": "2024-01-01T00:00:00.000Z"
 }
 ```
+
+**Response 403** — `{ "error": "Forbidden" }` (private agent, not the owner).
 
 **Response 404** — `{ "error": "Agent not found" }`
 
@@ -188,7 +203,13 @@ Returns all agents ordered by most recently updated.
 
 ### `POST /api/agents`
 
-Creates a new agent.
+Creates a new agent. Requires authentication. The `owner_id` is set automatically from the token; `visibility` defaults to `"private"`.
+
+**Headers**
+
+| Header | Value |
+|---|---|
+| `Authorization` | `Bearer <token>` |
 
 **Request body**
 
@@ -202,18 +223,31 @@ Creates a new agent.
 | `positions` | object | No | Canvas node positions |
 | `skills` | string[] | No | Custom skill IDs |
 | `instructions` | string[] | No | Ordered instruction list |
+| `visibility` | string | No | `"public"` or `"private"` (default `"private"`) |
 
-**Response 201** — created agent object.
+**Response 201** — created agent object (includes `ownerId` set to the authenticated user).
 
 **Response 400** — `{ "error": "Agent name is required" }`
+
+**Response 401** — missing or invalid token.
 
 ---
 
 ### `PUT /api/agents/:id`
 
-Replaces all fields of an existing agent.
+Replaces all fields of an existing agent. Requires authentication and ownership.
+
+**Headers**
+
+| Header | Value |
+|---|---|
+| `Authorization` | `Bearer <token>` |
 
 **Response 200** — updated agent object.
+
+**Response 401** — missing or invalid token.
+
+**Response 403** — `{ "error": "Forbidden" }` (authenticated but not the owner).
 
 **Response 404** — `{ "error": "Agent not found" }`
 
@@ -221,7 +255,19 @@ Replaces all fields of an existing agent.
 
 ### `DELETE /api/agents/:id`
 
+Deletes an agent. Requires authentication and ownership.
+
+**Headers**
+
+| Header | Value |
+|---|---|
+| `Authorization` | `Bearer <token>` |
+
 **Response 204** — no body.
+
+**Response 401** — missing or invalid token.
+
+**Response 403** — `{ "error": "Forbidden" }` (authenticated but not the owner).
 
 **Response 404** — `{ "error": "Agent not found" }`
 
