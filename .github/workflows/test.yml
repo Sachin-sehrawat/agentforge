@@ -11,6 +11,35 @@ jobs:
     name: Backend Tests
     runs-on: ubuntu-latest
 
+    services:
+      postgres:
+        image: postgres:14-alpine
+        env:
+          POSTGRES_USER: agentforge
+          POSTGRES_PASSWORD: agentforge_test
+          POSTGRES_DB: agentforge_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U agentforge"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      mongodb:
+        image: mongo:7.0
+        env:
+          MONGO_INITDB_ROOT_USERNAME: admin
+          MONGO_INITDB_ROOT_PASSWORD: admintest
+          MONGO_INITDB_DATABASE: agentforge_test
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --eval \"db.adminCommand('ping')\" --quiet"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -26,11 +55,42 @@ jobs:
         working-directory: backend
         run: npm ci
 
+      - name: Apply PostgreSQL schema
+        working-directory: backend
+        run: |
+          PGPASSWORD=agentforge_test psql \
+            -h localhost -U agentforge -d agentforge_test \
+            -f db/init/01_schema.sql
+          PGPASSWORD=agentforge_test psql \
+            -h localhost -U agentforge -d agentforge_test \
+            -f db/init/02_performance_indexes.sql
+        env:
+          PGPASSWORD: agentforge_test
+
+      - name: Validate schema applied
+        run: |
+          TABLE_COUNT=$(PGPASSWORD=agentforge_test psql \
+            -h localhost -U agentforge -d agentforge_test -t \
+            -c "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public';")
+          echo "Tables created: $TABLE_COUNT"
+          if [ "$TABLE_COUNT" -lt 2 ]; then
+            echo "Schema validation failed — expected at least 2 tables"
+            exit 1
+          fi
+        env:
+          PGPASSWORD: agentforge_test
+
       - name: Run backend tests with coverage
         working-directory: backend
         run: npm run test:coverage
         env:
           NODE_ENV: test
+          POSTGRES_HOST: localhost
+          POSTGRES_PORT: 5432
+          POSTGRES_DB: agentforge_test
+          POSTGRES_USER: agentforge
+          POSTGRES_PASSWORD: agentforge_test
+          MONGO_URI: mongodb://admin:admintest@localhost:27017/agentforge_test?authSource=admin
 
       - name: Upload backend coverage report
         uses: actions/upload-artifact@v4
@@ -74,7 +134,7 @@ jobs:
           retention-days: 14
 
   lint-check:
-    name: Lint & Type Check
+    name: Lint & Build Check
     runs-on: ubuntu-latest
 
     steps:
@@ -97,6 +157,13 @@ jobs:
       - name: Build frontend
         working-directory: frontend
         run: npm run build
+
+      - name: Upload frontend build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist/
+          retention-days: 7
 
   coverage-report:
     name: Coverage Summary
@@ -129,7 +196,7 @@ jobs:
 
             const summarize = (dir, label) => {
               try {
-                const files = fs.readdirSync(dir);
+                fs.readdirSync(dir);
                 comment += `### ${label}\n`;
                 comment += `Coverage artifacts uploaded — check the \`${label.toLowerCase().replace(' ', '-')}\` artifact for the full HTML report.\n\n`;
               } catch {
