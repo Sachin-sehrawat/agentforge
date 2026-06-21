@@ -84,7 +84,12 @@ _Created with AgentForge · ${date}_
 export default function App() {
   const { user, isAuthenticated, logout } = useAuth();
   const [agent, setAgent] = useState(DEFAULT_AGENT);
-  const [savedAgents, setSavedAgents] = useState([]);
+  const [publicAgents, setPublicAgents] = useState([]);
+  const [myAgents, setMyAgents] = useState([]);
+  const [loadingPublic, setLoadingPublic] = useState(false);
+  const [loadingMine, setLoadingMine] = useState(false);
+  const [errorPublic, setErrorPublic] = useState(null);
+  const [errorMine, setErrorMine] = useState(null);
   const [saving, setSaving] = useState(false);
   const [view, setView] = useState('builder');
   const [customSkills, setCustomSkills] = useState([]);
@@ -104,9 +109,9 @@ export default function App() {
     [customSkills]
   );
 
-  // On mount: load saved agents, custom skills, user preferences, and the last workspace state.
+  // On mount: load public agents, custom skills, user preferences, and the last workspace state.
   useEffect(() => {
-    refreshSavedAgents();
+    refreshPublicAgents();
     refreshCustomSkills();
 
     Promise.all([
@@ -161,8 +166,37 @@ export default function App() {
     api.saveUserPreferences(USER_ID, { view: nextView });
   }, []);
 
+  // Load or clear the user's own agents whenever authentication state changes.
+  useEffect(() => {
+    if (isAuthenticated) {
+      refreshMyAgents();
+    } else {
+      setMyAgents([]);
+      setErrorMine(null);
+    }
+  }, [isAuthenticated]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function refreshPublicAgents() {
+    setLoadingPublic(true);
+    setErrorPublic(null);
+    api.listPublicAgents()
+      .then(setPublicAgents)
+      .catch((err) => setErrorPublic(err.message))
+      .finally(() => setLoadingPublic(false));
+  }
+
+  function refreshMyAgents() {
+    setLoadingMine(true);
+    setErrorMine(null);
+    api.listMyAgents()
+      .then(setMyAgents)
+      .catch((err) => setErrorMine(err.message))
+      .finally(() => setLoadingMine(false));
+  }
+
   function refreshSavedAgents() {
-    api.listAgents().then(setSavedAgents).catch(() => {});
+    refreshPublicAgents();
+    if (isAuthenticated) refreshMyAgents();
   }
 
   function refreshCustomSkills() {
@@ -361,7 +395,7 @@ export default function App() {
         onNew={onNew}
         onSave={onSave}
         saving={saving}
-        savedAgents={savedAgents}
+        savedAgents={isAuthenticated ? myAgents : publicAgents}
         onLoad={onLoad}
         onDelete={onDelete}
         onDownload={onDownload}
@@ -387,11 +421,18 @@ export default function App() {
 
       {view === 'agents' ? (
         <AgentsPage
-          savedAgents={savedAgents}
+          publicAgents={publicAgents}
+          myAgents={myAgents}
+          loadingPublic={loadingPublic}
+          loadingMine={loadingMine}
+          errorPublic={errorPublic}
+          errorMine={errorMine}
+          isAuthenticated={isAuthenticated}
           onOpen={onLoad}
           onDownload={onDownload}
           onDelete={onDelete}
           onNew={onNew}
+          onOpenAuth={(tab) => setAuthModal({ tab, onSuccess: null })}
         />
       ) : view === 'skills' ? (
         <SkillsPage

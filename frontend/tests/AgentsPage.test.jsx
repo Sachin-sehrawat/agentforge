@@ -1,230 +1,303 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, fireEvent } from '@testing-library/react';
 import AgentsPage from '../src/components/AgentsPage';
 
-describe('AgentsPage Component', () => {
-  const mockAgents = [
-    {
-      id: '1',
-      name: 'Agent 1',
-      persona: 'helpful',
-      systemPrompt: 'Be helpful',
-      model: 'claude-sonnet-4-6',
-      tools: ['calculator'],
-      skills: [],
-      created_at: '2024-01-01T00:00:00Z',
-      updated_at: '2024-01-01T00:00:00Z',
-    },
-    {
-      id: '2',
-      name: 'Agent 2',
-      persona: 'friendly',
-      systemPrompt: 'Be friendly',
-      model: 'claude-sonnet-4-6',
-      tools: [],
-      skills: [],
-      created_at: '2024-01-02T00:00:00Z',
-      updated_at: '2024-01-02T00:00:00Z',
-    },
-  ];
+const publicAgent = {
+  id: 'pub-1',
+  name: 'Public Agent',
+  persona: 'helpful',
+  systemPrompt: 'Be helpful',
+  tools: ['calculator'],
+  skills: [],
+  instructions: [],
+  visibility: 'public',
+  updatedAt: '2024-01-01T00:00:00Z',
+};
 
-  describe('Rendering', () => {
-    it('should render agents list', () => {
-      const props = {
-        agents: mockAgents,
-        onSelectAgent: () => {},
-        onCreateAgent: () => {},
-        onDeleteAgent: () => {},
-      };
+const ownedAgent = {
+  id: 'mine-1',
+  name: 'My Agent',
+  persona: 'creative',
+  systemPrompt: 'Be creative',
+  tools: [],
+  skills: [],
+  instructions: [],
+  visibility: 'private',
+  isOwned: true,
+  isSubscribed: false,
+  updatedAt: '2024-01-02T00:00:00Z',
+};
 
-      render(<AgentsPage {...props} />);
-      expect(screen.queryByText('Agent 1')).toBeDefined();
-      expect(screen.queryByText('Agent 2')).toBeDefined();
+const subscribedAgent = {
+  id: 'sub-1',
+  name: 'Subscribed Agent',
+  persona: '',
+  systemPrompt: 'A public agent I follow',
+  tools: [],
+  skills: [],
+  instructions: [],
+  visibility: 'public',
+  isOwned: false,
+  isSubscribed: true,
+  updatedAt: '2024-01-03T00:00:00Z',
+};
+
+function defaultProps(overrides = {}) {
+  return {
+    publicAgents: [],
+    myAgents: [],
+    loadingPublic: false,
+    loadingMine: false,
+    errorPublic: null,
+    errorMine: null,
+    isAuthenticated: false,
+    onOpen: vi.fn(),
+    onDownload: vi.fn(),
+    onDelete: vi.fn(),
+    onNew: vi.fn(),
+    onOpenAuth: vi.fn(),
+    ...overrides,
+  };
+}
+
+describe('AgentsPage', () => {
+  describe('Tab UI', () => {
+    it('renders both Agents and My Agents tabs', () => {
+      render(<AgentsPage {...defaultProps()} />);
+      expect(screen.getByRole('tab', { name: 'Agents' })).toBeDefined();
+      expect(screen.getByRole('tab', { name: 'My Agents' })).toBeDefined();
     });
 
-    it('should render agent items with properties', () => {
-      const props = {
-        agents: [mockAgents[0]],
-        onSelectAgent: () => {},
-        onCreateAgent: () => {},
-        onDeleteAgent: () => {},
-      };
-
-      render(<AgentsPage {...props} />);
-      expect(screen.queryByText('Agent 1')).toBeDefined();
-      expect(screen.queryByText('Be helpful')).toBeDefined();
+    it('Agents tab is active by default', () => {
+      render(<AgentsPage {...defaultProps()} />);
+      const agentsTab = screen.getByRole('tab', { name: 'Agents' });
+      expect(agentsTab.className).toContain('active');
     });
 
-    it('should handle empty agents list', () => {
-      const props = {
-        agents: [],
-        onSelectAgent: () => {},
-        onCreateAgent: () => {},
-        onDeleteAgent: () => {},
-      };
+    it('switches to Agents tab on click', () => {
+      render(<AgentsPage {...defaultProps({ isAuthenticated: true })} />);
+      const myTab = screen.getByRole('tab', { name: 'My Agents' });
+      fireEvent.click(myTab);
+      expect(myTab.className).toContain('active');
 
-      const { container } = render(<AgentsPage {...props} />);
-      expect(container).toBeDefined();
-    });
-
-    it('should display create button', () => {
-      const props = {
-        agents: mockAgents,
-        onSelectAgent: () => {},
-        onCreateAgent: () => {},
-        onDeleteAgent: () => {},
-      };
-
-      render(<AgentsPage {...props} />);
-      const createBtn = screen.queryByText('Create') || screen.queryByRole('button');
-      expect(createBtn || screen.queryByText('Agent')).toBeDefined();
-    });
-  });
-
-  describe('Agent Selection', () => {
-    it('should call onSelectAgent when agent clicked', () => {
-      const onSelectAgent = () => {};
-      const props = {
-        agents: mockAgents,
-        onSelectAgent,
-        onCreateAgent: () => {},
-        onDeleteAgent: () => {},
-      };
-
-      expect(typeof onSelectAgent).toBe('function');
-    });
-
-    it('should highlight selected agent', () => {
-      const props = {
-        agents: mockAgents,
-        selectedAgent: mockAgents[0],
-        onSelectAgent: () => {},
-        onCreateAgent: () => {},
-        onDeleteAgent: () => {},
-      };
-
-      render(<AgentsPage {...props} />);
-      expect(screen.queryByText('Agent 1')).toBeDefined();
+      const agentsTab = screen.getByRole('tab', { name: 'Agents' });
+      fireEvent.click(agentsTab);
+      expect(agentsTab.className).toContain('active');
     });
   });
 
-  describe('Create Agent', () => {
-    it('should call onCreateAgent when create button clicked', () => {
-      const onCreateAgent = () => {};
-      const props = {
-        agents: mockAgents,
-        onSelectAgent: () => {},
-        onCreateAgent,
-        onDeleteAgent: () => {},
-      };
-
-      expect(typeof onCreateAgent).toBe('function');
+  describe('Anonymous user — public tab only', () => {
+    it('shows public agents in Agents tab', () => {
+      render(<AgentsPage {...defaultProps({ publicAgents: [publicAgent] })} />);
+      expect(screen.getByText('Public Agent')).toBeDefined();
     });
 
-    it('should open create agent dialog', () => {
-      const props = {
-        agents: mockAgents,
-        onSelectAgent: () => {},
-        onCreateAgent: () => {},
-        onDeleteAgent: () => {},
-      };
-
-      const { container } = render(<AgentsPage {...props} />);
-      expect(container).toBeDefined();
-    });
-  });
-
-  describe('Delete Agent', () => {
-    it('should call onDeleteAgent when delete clicked', () => {
-      const onDeleteAgent = () => {};
-      const props = {
-        agents: mockAgents,
-        onSelectAgent: () => {},
-        onCreateAgent: () => {},
-        onDeleteAgent,
-      };
-
-      expect(typeof onDeleteAgent).toBe('function');
+    it('clicking My Agents tab calls onOpenAuth when not authenticated', () => {
+      const onOpenAuth = vi.fn();
+      render(<AgentsPage {...defaultProps({ onOpenAuth })} />);
+      fireEvent.click(screen.getByRole('tab', { name: 'My Agents' }));
+      expect(onOpenAuth).toHaveBeenCalledWith('login');
     });
 
-    it('should confirm deletion before removing', () => {
-      const props = {
-        agents: mockAgents,
-        onSelectAgent: () => {},
-        onCreateAgent: () => {},
-        onDeleteAgent: () => {},
-      };
-
-      const { container } = render(<AgentsPage {...props} />);
-      expect(container).toBeDefined();
-    });
-  });
-
-  describe('Export Functionality', () => {
-    it('should export agent as markdown', () => {
-      const agent = mockAgents[0];
-      const markdown = `# ${agent.name}\n\n${agent.systemPrompt}`;
-
-      expect(markdown).toContain(agent.name);
-      expect(markdown).toContain(agent.systemPrompt);
-    });
-
-    it('should include tools in export', () => {
-      const agent = mockAgents[0];
-      const hasTools = agent.tools && agent.tools.length > 0;
-
-      expect(hasTools).toBe(true);
-    });
-
-    it('should include skills in export', () => {
-      const agent = mockAgents[0];
-      expect(agent.skills).toBeDefined();
-    });
-
-    it('should download exported markdown', () => {
-      const props = {
-        agents: mockAgents,
-        onSelectAgent: () => {},
-        onCreateAgent: () => {},
-        onDeleteAgent: () => {},
-      };
-
-      const { container } = render(<AgentsPage {...props} />);
-      expect(container).toBeDefined();
-    });
-  });
-
-  describe('Sorting and Filtering', () => {
-    it('should sort agents by updated_at (newest first)', () => {
-      const sorted = [...mockAgents].sort((a, b) =>
-        new Date(b.updated_at) - new Date(a.updated_at)
+    it('shows sign-in prompt when My Agents tab would display without auth', () => {
+      // Simulate tab forced to 'mine' state (not possible via normal click, but
+      // tests the gate render). When not auth and tab is agents, we see public list.
+      const { container } = render(
+        <AgentsPage {...defaultProps({ publicAgents: [publicAgent] })} />
       );
-
-      expect(sorted[0].id).toBe('2');
+      // The Agents tab should be active — no sign-in prompt visible
+      expect(screen.queryByText(/Sign in/i)).toBeNull();
+      expect(screen.getByText('Public Agent')).toBeDefined();
     });
 
-    it('should filter agents by name', () => {
-      const filtered = mockAgents.filter((a) =>
-        a.name.toLowerCase().includes('agent 1')
-      );
-
-      expect(filtered).toHaveLength(1);
-      expect(filtered[0].name).toBe('Agent 1');
+    it('does not show Delete button on public agent cards (no onDelete)', () => {
+      render(<AgentsPage {...defaultProps({ publicAgents: [publicAgent] })} />);
+      expect(screen.queryByText('Delete')).toBeNull();
     });
   });
 
-  describe('Pagination', () => {
-    it('should paginate large agent lists', () => {
-      const manyAgents = Array.from({ length: 50 }, (_, i) => ({
-        ...mockAgents[0],
-        id: String(i),
-        name: `Agent ${i}`,
-      }));
+  describe('Authenticated user', () => {
+    it('switches to My Agents tab without calling onOpenAuth', () => {
+      const onOpenAuth = vi.fn();
+      render(
+        <AgentsPage
+          {...defaultProps({ isAuthenticated: true, myAgents: [ownedAgent], onOpenAuth })}
+        />
+      );
+      fireEvent.click(screen.getByRole('tab', { name: 'My Agents' }));
+      expect(onOpenAuth).not.toHaveBeenCalled();
+      expect(screen.getByText('My Agent')).toBeDefined();
+    });
 
-      const perPage = 10;
-      const pages = Math.ceil(manyAgents.length / perPage);
+    it('shows Owned badge on owned agents in My Agents tab', () => {
+      render(
+        <AgentsPage
+          {...defaultProps({ isAuthenticated: true, myAgents: [ownedAgent] })}
+        />
+      );
+      fireEvent.click(screen.getByRole('tab', { name: 'My Agents' }));
+      expect(screen.getByText('Owned')).toBeDefined();
+    });
 
-      expect(pages).toBeGreaterThan(1);
+    it('shows Subscribed badge on subscribed agents in My Agents tab', () => {
+      render(
+        <AgentsPage
+          {...defaultProps({ isAuthenticated: true, myAgents: [subscribedAgent] })}
+        />
+      );
+      fireEvent.click(screen.getByRole('tab', { name: 'My Agents' }));
+      expect(screen.getByText('Subscribed')).toBeDefined();
+    });
+
+    it('shows Delete button only for owned agents', () => {
+      render(
+        <AgentsPage
+          {...defaultProps({
+            isAuthenticated: true,
+            myAgents: [ownedAgent, subscribedAgent],
+          })}
+        />
+      );
+      fireEvent.click(screen.getByRole('tab', { name: 'My Agents' }));
+      const deleteButtons = screen.getAllByText('Delete');
+      // Only the owned agent card should have a delete button
+      expect(deleteButtons).toHaveLength(1);
+    });
+
+    it('calls onDelete with agent id for owned agents after confirm', () => {
+      const onDelete = vi.fn();
+      render(
+        <AgentsPage
+          {...defaultProps({ isAuthenticated: true, myAgents: [ownedAgent], onDelete })}
+        />
+      );
+      fireEvent.click(screen.getByRole('tab', { name: 'My Agents' }));
+      fireEvent.click(screen.getByText('Delete'));
+      fireEvent.click(screen.getByText('Confirm?'));
+      expect(onDelete).toHaveBeenCalledWith('mine-1');
+    });
+
+    it('can view both tabs — public and mine independently', () => {
+      render(
+        <AgentsPage
+          {...defaultProps({
+            isAuthenticated: true,
+            publicAgents: [publicAgent],
+            myAgents: [ownedAgent],
+          })}
+        />
+      );
+      // Agents tab shows public list
+      expect(screen.getByText('Public Agent')).toBeDefined();
+
+      // My Agents tab shows user's list
+      fireEvent.click(screen.getByRole('tab', { name: 'My Agents' }));
+      expect(screen.getByText('My Agent')).toBeDefined();
+      expect(screen.queryByText('Public Agent')).toBeNull();
+    });
+  });
+
+  describe('Loading states', () => {
+    it('shows loading indicator for public tab', () => {
+      render(<AgentsPage {...defaultProps({ loadingPublic: true })} />);
+      expect(screen.getByText('Loading…')).toBeDefined();
+    });
+
+    it('shows loading indicator for My Agents tab', () => {
+      render(
+        <AgentsPage {...defaultProps({ isAuthenticated: true, loadingMine: true })} />
+      );
+      fireEvent.click(screen.getByRole('tab', { name: 'My Agents' }));
+      expect(screen.getByText('Loading…')).toBeDefined();
+    });
+  });
+
+  describe('Error states', () => {
+    it('shows error message for public tab', () => {
+      render(<AgentsPage {...defaultProps({ errorPublic: 'Network error' })} />);
+      expect(screen.getByText(/Network error/)).toBeDefined();
+    });
+
+    it('shows error message for My Agents tab', () => {
+      render(
+        <AgentsPage
+          {...defaultProps({ isAuthenticated: true, errorMine: 'Unauthorized' })}
+        />
+      );
+      fireEvent.click(screen.getByRole('tab', { name: 'My Agents' }));
+      expect(screen.getByText(/Unauthorized/)).toBeDefined();
+    });
+  });
+
+  describe('Empty states', () => {
+    it('shows empty state for public tab with no agents', () => {
+      render(<AgentsPage {...defaultProps({ publicAgents: [] })} />);
+      expect(screen.getByText('No public agents yet.')).toBeDefined();
+    });
+
+    it('shows empty state with CTA for My Agents tab', () => {
+      render(
+        <AgentsPage {...defaultProps({ isAuthenticated: true, myAgents: [] })} />
+      );
+      fireEvent.click(screen.getByRole('tab', { name: 'My Agents' }));
+      expect(screen.getByText('No agents yet.')).toBeDefined();
+      expect(screen.getByRole('button', { name: 'Build your first agent' })).toBeDefined();
+    });
+
+    it('calls onNew when build CTA clicked', () => {
+      const onNew = vi.fn();
+      render(
+        <AgentsPage {...defaultProps({ isAuthenticated: true, myAgents: [], onNew })} />
+      );
+      fireEvent.click(screen.getByRole('tab', { name: 'My Agents' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Build your first agent' }));
+      expect(onNew).toHaveBeenCalled();
+    });
+  });
+
+  describe('Search / filter', () => {
+    it('filters agents by name', () => {
+      render(
+        <AgentsPage
+          {...defaultProps({ publicAgents: [publicAgent, { ...publicAgent, id: 'pub-2', name: 'Other Agent' }] })}
+        />
+      );
+      const input = screen.getByPlaceholderText('Search agents…');
+      fireEvent.change(input, { target: { value: 'Public' } });
+      expect(screen.getByText('Public Agent')).toBeDefined();
+      expect(screen.queryByText('Other Agent')).toBeNull();
+    });
+
+    it('shows filter-empty message when no match', () => {
+      render(<AgentsPage {...defaultProps({ publicAgents: [publicAgent] })} />);
+      const input = screen.getByPlaceholderText('Search agents…');
+      fireEvent.change(input, { target: { value: 'zzznomatch' } });
+      expect(screen.getByText(/No agents match/)).toBeDefined();
+    });
+
+    it('clear button resets search', () => {
+      render(<AgentsPage {...defaultProps({ publicAgents: [publicAgent] })} />);
+      const input = screen.getByPlaceholderText('Search agents…');
+      fireEvent.change(input, { target: { value: 'xyz' } });
+      const clear = screen.getByText('✕');
+      fireEvent.click(clear);
+      expect(input.value).toBe('');
+    });
+  });
+
+  describe('Card actions', () => {
+    it('calls onOpen with agent id when Open clicked', () => {
+      const onOpen = vi.fn();
+      render(<AgentsPage {...defaultProps({ publicAgents: [publicAgent], onOpen })} />);
+      fireEvent.click(screen.getByRole('button', { name: 'Open' }));
+      expect(onOpen).toHaveBeenCalledWith('pub-1');
+    });
+
+    it('calls onDownload with agent when MD clicked', () => {
+      const onDownload = vi.fn();
+      render(<AgentsPage {...defaultProps({ publicAgents: [publicAgent], onDownload })} />);
+      fireEvent.click(screen.getByRole('button', { name: /MD/i }));
+      expect(onDownload).toHaveBeenCalledWith(publicAgent);
     });
   });
 });

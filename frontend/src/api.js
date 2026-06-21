@@ -147,6 +147,8 @@ export const api = {
 
   // --- Agents (PostgreSQL) -------------------------------------------------
   listAgents: () => request('/agents'),
+  listPublicAgents: () => request('/agents/public'),
+  listMyAgents: () => request('/agents/mine'),
   getAgent: (id) => request(`/agents/${id}`),
   createAgent: (agent) => request('/agents', { method: 'POST', body: JSON.stringify(agent) }),
   updateAgent: (id, agent) => request(`/agents/${id}`, { method: 'PUT', body: JSON.stringify(agent) }),

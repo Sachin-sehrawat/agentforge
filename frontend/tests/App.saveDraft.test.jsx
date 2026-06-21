@@ -27,6 +27,8 @@ vi.mock('../src/AuthContext.jsx', () => ({
 vi.mock('../src/api.js', () => ({
   api: {
     listAgents: vi.fn(),
+    listPublicAgents: vi.fn(),
+    listMyAgents: vi.fn(),
     listSkills: vi.fn(),
     getUserPreferences: vi.fn(),
     getWorkspaceData: vi.fn(),
@@ -66,6 +68,8 @@ vi.mock('../src/components/SkillsPage.jsx', () => ({
 
 function setupApiDefaults() {
   api.listAgents.mockResolvedValue([]);
+  api.listPublicAgents.mockResolvedValue([]);
+  api.listMyAgents.mockResolvedValue([]);
   api.listSkills.mockResolvedValue([]);
   api.getUserPreferences.mockResolvedValue({});
   api.getWorkspaceData.mockResolvedValue({});
