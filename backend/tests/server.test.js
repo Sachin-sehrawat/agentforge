@@ -108,9 +108,11 @@ afterAll(() => new Promise((resolve) => server.close(resolve)));
 
 beforeEach(() => {
   vi.clearAllMocks();
-  // vi.clearAllMocks() does not clear mockReturnValueOnce queues — reset verifyToken
-  // explicitly so Once-queued values from auth tests don't leak into later tests.
+  // vi.clearAllMocks() does not clear mockReturnValueOnce queues — reset each
+  // mock that uses Once queues so unconsumed values don't leak between tests.
   mockVerifyToken.mockReset();
+  mockPoolQuery.mockReset();
+  mockClientQuery.mockReset();
   // Default find mock returns empty array
   mockFind.mockReturnValue({
     sort: vi.fn().mockReturnValue({ toArray: vi.fn().mockResolvedValue([]) }),
@@ -454,7 +456,10 @@ describe('POST /api/agents', () => {
 
   it('returns 201 with created agent and sets ownerId from token', async () => {
     const created = agentRow({ name: 'New Bot', system_prompt: 'Be helpful', owner_id: TEST_USER_ID });
-    mockPoolQuery.mockResolvedValueOnce({ rows: [created] });
+    // withClient: BEGIN, INSERT INTO agents, INSERT INTO agent_versions, COMMIT
+    mockClientQuery
+      .mockResolvedValueOnce({}) // BEGIN
+      .mockResolvedValueOnce({ rows: [created] }); // INSERT INTO agents
 
     const res = await authReq('POST', '/api/agents', {
       name: 'New Bot',
@@ -468,18 +473,20 @@ describe('POST /api/agents', () => {
     expect(a.name).toBe('New Bot');
     expect(a.id).toBeDefined();
     expect(a.ownerId).toBe(TEST_USER_ID);
-    // Verify owner_id was passed to the INSERT
-    const insertCall = mockPoolQuery.mock.calls[0];
+    // Verify owner_id was passed to the INSERT (call[1] = INSERT INTO agents, after BEGIN)
+    const insertCall = mockClientQuery.mock.calls[1];
     expect(insertCall[1][10]).toBe(TEST_USER_ID);
   });
 
   it('defaults visibility to private', async () => {
     const created = agentRow({ owner_id: TEST_USER_ID, visibility: 'private' });
-    mockPoolQuery.mockResolvedValueOnce({ rows: [created] });
+    mockClientQuery
+      .mockResolvedValueOnce({}) // BEGIN
+      .mockResolvedValueOnce({ rows: [created] }); // INSERT INTO agents
 
     await authReq('POST', '/api/agents', { name: 'Bot' });
 
-    const insertCall = mockPoolQuery.mock.calls[0];
+    const insertCall = mockClientQuery.mock.calls[1];
     expect(insertCall[1][9]).toBe('private');
   });
 
@@ -507,7 +514,9 @@ describe('POST /api/agents', () => {
 
   it('filters invalid tool IDs from tools array', async () => {
     const created = agentRow({ tools: ['calculator'], owner_id: TEST_USER_ID });
-    mockPoolQuery.mockResolvedValueOnce({ rows: [created] });
+    mockClientQuery
+      .mockResolvedValueOnce({}) // BEGIN
+      .mockResolvedValueOnce({ rows: [created] }); // INSERT INTO agents
 
     const res = await authReq('POST', '/api/agents', {
       name: 'Bot',
@@ -515,7 +524,7 @@ describe('POST /api/agents', () => {
     });
 
     expect(res.status).toBe(201);
-    const insertCall = mockPoolQuery.mock.calls[0];
+    const insertCall = mockClientQuery.mock.calls[1];
     const toolsArg = JSON.parse(insertCall[1][5]);
     expect(toolsArg).toContain('calculator');
     expect(toolsArg).not.toContain('invalid_tool_xyz');
@@ -523,17 +532,21 @@ describe('POST /api/agents', () => {
 
   it('generates a UUID for the new agent', async () => {
     const created = agentRow({ owner_id: TEST_USER_ID });
-    mockPoolQuery.mockResolvedValueOnce({ rows: [created] });
+    mockClientQuery
+      .mockResolvedValueOnce({}) // BEGIN
+      .mockResolvedValueOnce({ rows: [created] }); // INSERT INTO agents
 
     await authReq('POST', '/api/agents', { name: 'Bot' });
 
-    const insertCall = mockPoolQuery.mock.calls[0];
+    const insertCall = mockClientQuery.mock.calls[1];
     const uuid = insertCall[1][0];
     expect(uuid).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
   });
 
   it('returns 500 on db error', async () => {
-    mockPoolQuery.mockRejectedValueOnce(new Error('insert failed'));
+    mockClientQuery
+      .mockResolvedValueOnce({}) // BEGIN
+      .mockRejectedValueOnce(new Error('insert failed')); // INSERT INTO agents
     const res = await authReq('POST', '/api/agents', { name: 'Bot' });
     expect(res.status).toBe(500);
   });
@@ -551,10 +564,12 @@ describe('PUT /api/agents/:id', () => {
 
   it('returns 200 with updated agent when caller is owner', async () => {
     const updated = agentRow({ name: 'Updated Bot', owner_id: TEST_USER_ID });
-    // SELECT ownership check, then UPDATE...RETURNING *
-    mockPoolQuery
-      .mockResolvedValueOnce({ rows: [{ owner_id: TEST_USER_ID }] })
-      .mockResolvedValueOnce({ rows: [updated] });
+    // withClient: BEGIN, SELECT owner, UPDATE agents, SELECT latest version, INSERT version, COMMIT
+    mockClientQuery
+      .mockResolvedValueOnce({}) // BEGIN
+      .mockResolvedValueOnce({ rows: [{ owner_id: TEST_USER_ID }] }) // SELECT owner
+      .mockResolvedValueOnce({ rows: [updated] }) // UPDATE agents RETURNING *
+      .mockResolvedValueOnce({ rows: [{ canonical_hash: 'oldhash', version_no: 1 }] }); // SELECT latest (different hash → insert version)
 
     const res = await authReq('PUT', `/api/agents/${updated.id}`, {
       name: 'Updated Bot',
@@ -567,7 +582,9 @@ describe('PUT /api/agents/:id', () => {
   });
 
   it('returns 403 when agent is owned by a different user', async () => {
-    mockPoolQuery.mockResolvedValueOnce({ rows: [{ owner_id: OTHER_USER_ID }] });
+    mockClientQuery
+      .mockResolvedValueOnce({}) // BEGIN
+      .mockResolvedValueOnce({ rows: [{ owner_id: OTHER_USER_ID }] }); // SELECT owner
 
     const res = await authReq('PUT', '/api/agents/some-id', { name: 'Bot' });
 
@@ -576,7 +593,9 @@ describe('PUT /api/agents/:id', () => {
   });
 
   it('returns 404 when agent does not exist', async () => {
-    mockPoolQuery.mockResolvedValueOnce({ rows: [] });
+    mockClientQuery
+      .mockResolvedValueOnce({}) // BEGIN
+      .mockResolvedValueOnce({ rows: [] }); // SELECT owner → not found
     const res = await authReq('PUT', '/api/agents/nonexistent', { name: 'Bot' });
     expect(res.status).toBe(404);
     expect((await res.json()).error).toBe('Agent not found');
@@ -589,9 +608,10 @@ describe('PUT /api/agents/:id', () => {
   });
 
   it('returns 500 on db error during update', async () => {
-    mockPoolQuery
-      .mockResolvedValueOnce({ rows: [{ owner_id: TEST_USER_ID }] })
-      .mockRejectedValueOnce(new Error('update failed'));
+    mockClientQuery
+      .mockResolvedValueOnce({}) // BEGIN
+      .mockResolvedValueOnce({ rows: [{ owner_id: TEST_USER_ID }] }) // SELECT owner
+      .mockRejectedValueOnce(new Error('update failed')); // UPDATE agents
     const res = await authReq('PUT', '/api/agents/some-id', { name: 'Bot' });
     expect(res.status).toBe(500);
   });
@@ -599,9 +619,11 @@ describe('PUT /api/agents/:id', () => {
   it('preserves existing fields when partial update is sent', async () => {
     const afterUpdate = agentRow({ name: 'New Name', system_prompt: 'Old prompt', owner_id: TEST_USER_ID });
 
-    mockPoolQuery
-      .mockResolvedValueOnce({ rows: [{ owner_id: TEST_USER_ID }] })
-      .mockResolvedValueOnce({ rows: [afterUpdate] });
+    mockClientQuery
+      .mockResolvedValueOnce({}) // BEGIN
+      .mockResolvedValueOnce({ rows: [{ owner_id: TEST_USER_ID }] }) // SELECT owner
+      .mockResolvedValueOnce({ rows: [afterUpdate] }) // UPDATE agents RETURNING *
+      .mockResolvedValueOnce({ rows: [{ canonical_hash: 'oldhash', version_no: 1 }] }); // SELECT latest
 
     const res = await authReq('PUT', `/api/agents/${afterUpdate.id}`, {
       name: 'New Name',
@@ -734,6 +756,269 @@ describe('DELETE /api/agents/:id', () => {
   it('returns 500 on db error', async () => {
     mockPoolQuery.mockRejectedValueOnce(new Error('delete failed'));
     const res = await authReq('DELETE', '/api/agents/some-id');
+    expect(res.status).toBe(500);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/agents/:id/versions
+// ---------------------------------------------------------------------------
+
+describe('GET /api/agents/:id/versions', () => {
+  const AGENT_ID = 'aaaaaaaa-0000-0000-0000-000000000001';
+
+  it('returns 401 when unauthenticated', async () => {
+    const res = await req('GET', `/api/agents/${AGENT_ID}/versions`);
+    expect(res.status).toBe(401);
+  });
+
+  it('returns 403 when caller is not the owner', async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [{ owner_id: OTHER_USER_ID }] });
+    const res = await authReq('GET', `/api/agents/${AGENT_ID}/versions`);
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toBe('Forbidden');
+  });
+
+  it('returns 404 when agent does not exist', async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [] });
+    const res = await authReq('GET', `/api/agents/nonexistent/versions`);
+    expect(res.status).toBe(404);
+    expect((await res.json()).error).toBe('Agent not found');
+  });
+
+  it('returns 200 with version list newest-first (no snapshot body)', async () => {
+    mockPoolQuery
+      .mockResolvedValueOnce({ rows: [{ owner_id: TEST_USER_ID }] })
+      .mockResolvedValueOnce({
+        rows: [
+          { version_no: 3, change_summary: 'third', created_by: TEST_USER_ID, created_at: new Date('2024-03-01') },
+          { version_no: 2, change_summary: 'second', created_by: null, created_at: new Date('2024-02-01') },
+          { version_no: 1, change_summary: null, created_by: null, created_at: new Date('2024-01-01') },
+        ],
+      });
+    const res = await authReq('GET', `/api/agents/${AGENT_ID}/versions`);
+    expect(res.status).toBe(200);
+    const versions = await res.json();
+    expect(versions).toHaveLength(3);
+    expect(versions[0].versionNo).toBe(3);
+    expect(versions[0].changeSummary).toBe('third');
+    expect(versions[0].createdBy).toBe(TEST_USER_ID);
+    expect(versions[1].versionNo).toBe(2);
+    expect(versions[1].createdBy).toBeNull();
+    expect(versions[2].changeSummary).toBe('');
+    // snapshot must not be present
+    for (const v of versions) {
+      expect(v).not.toHaveProperty('snapshot');
+    }
+  });
+
+  it('returns 200 with empty array when agent has no versions', async () => {
+    mockPoolQuery
+      .mockResolvedValueOnce({ rows: [{ owner_id: TEST_USER_ID }] })
+      .mockResolvedValueOnce({ rows: [] });
+    const res = await authReq('GET', `/api/agents/${AGENT_ID}/versions`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual([]);
+  });
+
+  it('returns 500 on db error', async () => {
+    mockPoolQuery.mockRejectedValueOnce(new Error('db down'));
+    const res = await authReq('GET', `/api/agents/${AGENT_ID}/versions`);
+    expect(res.status).toBe(500);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/agents/:id/versions/:versionNo
+// ---------------------------------------------------------------------------
+
+describe('GET /api/agents/:id/versions/:versionNo', () => {
+  const AGENT_ID = 'aaaaaaaa-0000-0000-0000-000000000001';
+  const snap = { schemaVersion: 1, name: 'Old Bot', persona: '', systemPrompt: '', model: '', tools: [], skills: [], instructions: [], positions: {} };
+
+  it('returns 401 when unauthenticated', async () => {
+    const res = await req('GET', `/api/agents/${AGENT_ID}/versions/1`);
+    expect(res.status).toBe(401);
+  });
+
+  it('returns 400 when versionNo is not a positive integer', async () => {
+    const res = await authReq('GET', `/api/agents/${AGENT_ID}/versions/abc`);
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/positive integer/i);
+  });
+
+  it('returns 403 when caller is not the owner', async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [{ owner_id: OTHER_USER_ID }] });
+    const res = await authReq('GET', `/api/agents/${AGENT_ID}/versions/1`);
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toBe('Forbidden');
+  });
+
+  it('returns 404 when agent does not exist', async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [] });
+    const res = await authReq('GET', `/api/agents/nonexistent/versions/1`);
+    expect(res.status).toBe(404);
+    expect((await res.json()).error).toBe('Agent not found');
+  });
+
+  it('returns 404 when version does not exist', async () => {
+    mockPoolQuery
+      .mockResolvedValueOnce({ rows: [{ owner_id: TEST_USER_ID }] })
+      .mockResolvedValueOnce({ rows: [] });
+    const res = await authReq('GET', `/api/agents/${AGENT_ID}/versions/99`);
+    expect(res.status).toBe(404);
+    expect((await res.json()).error).toBe('Version not found');
+  });
+
+  it('returns 200 with full snapshot for existing version', async () => {
+    mockPoolQuery
+      .mockResolvedValueOnce({ rows: [{ owner_id: TEST_USER_ID }] })
+      .mockResolvedValueOnce({
+        rows: [{
+          version_no: 2,
+          snapshot: snap,
+          change_summary: 'my change',
+          created_by: TEST_USER_ID,
+          created_at: new Date('2024-02-01'),
+        }],
+      });
+    const res = await authReq('GET', `/api/agents/${AGENT_ID}/versions/2`);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.versionNo).toBe(2);
+    expect(body.changeSummary).toBe('my change');
+    expect(body.createdBy).toBe(TEST_USER_ID);
+    expect(body.snapshot).toEqual(snap);
+  });
+
+  it('returns 500 on db error', async () => {
+    mockPoolQuery.mockRejectedValueOnce(new Error('db down'));
+    const res = await authReq('GET', `/api/agents/${AGENT_ID}/versions/1`);
+    expect(res.status).toBe(500);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/agents/:id/versions/:versionNo/restore
+// ---------------------------------------------------------------------------
+
+describe('POST /api/agents/:id/versions/:versionNo/restore', () => {
+  const AGENT_ID = 'aaaaaaaa-0000-0000-0000-000000000001';
+  const snap = { schemaVersion: 1, name: 'Old Bot', persona: 'helpful', systemPrompt: 'be nice', model: 'gpt-4', tools: ['calculator'], skills: [], instructions: [], positions: {} };
+
+  it('returns 401 when unauthenticated', async () => {
+    const res = await req('POST', `/api/agents/${AGENT_ID}/versions/1/restore`);
+    expect(res.status).toBe(401);
+  });
+
+  it('returns 400 when versionNo is not a positive integer', async () => {
+    const res = await authReq('POST', `/api/agents/${AGENT_ID}/versions/0/restore`);
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/positive integer/i);
+  });
+
+  it('returns 403 when caller is not the owner', async () => {
+    mockClientQuery
+      .mockResolvedValueOnce({}) // BEGIN
+      .mockResolvedValueOnce({ rows: [{ owner_id: OTHER_USER_ID }] }) // SELECT owner
+      .mockResolvedValueOnce({}); // ROLLBACK
+    const res = await authReq('POST', `/api/agents/${AGENT_ID}/versions/1/restore`);
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toBe('Forbidden');
+  });
+
+  it('returns 404 when agent does not exist', async () => {
+    mockClientQuery
+      .mockResolvedValueOnce({}) // BEGIN
+      .mockResolvedValueOnce({ rows: [] }) // SELECT owner
+      .mockResolvedValueOnce({}); // ROLLBACK
+    const res = await authReq('POST', `/api/agents/nonexistent/versions/1/restore`);
+    expect(res.status).toBe(404);
+    expect((await res.json()).error).toBe('Agent not found');
+  });
+
+  it('returns 404 when version does not exist', async () => {
+    mockClientQuery
+      .mockResolvedValueOnce({}) // BEGIN
+      .mockResolvedValueOnce({ rows: [{ owner_id: TEST_USER_ID }] }) // SELECT owner
+      .mockResolvedValueOnce({ rows: [] }) // SELECT version
+      .mockResolvedValueOnce({}); // ROLLBACK
+    const res = await authReq('POST', `/api/agents/${AGENT_ID}/versions/99/restore`);
+    expect(res.status).toBe(404);
+    expect((await res.json()).error).toBe('Version not found');
+  });
+
+  it('returns 200 with updated agent after restore', async () => {
+    const restoredRow = agentRow({
+      name: 'Old Bot',
+      persona: 'helpful',
+      system_prompt: 'be nice',
+      model: 'gpt-4',
+      tools: ['calculator'],
+      owner_id: TEST_USER_ID,
+    });
+    mockClientQuery
+      .mockResolvedValueOnce({}) // BEGIN
+      .mockResolvedValueOnce({ rows: [{ owner_id: TEST_USER_ID }] }) // SELECT owner
+      .mockResolvedValueOnce({ rows: [{ snapshot: snap }] }) // SELECT version
+      .mockResolvedValueOnce({ rows: [restoredRow] }) // UPDATE agents
+      .mockResolvedValueOnce({ rows: [{ version_no: 5 }] }) // SELECT latest version_no
+      .mockResolvedValueOnce({}) // INSERT new version
+      .mockResolvedValueOnce({}); // COMMIT
+    const res = await authReq('POST', `/api/agents/${AGENT_ID}/versions/2/restore`);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.name).toBe('Old Bot');
+    expect(body.ownerId).toBe(TEST_USER_ID);
+  });
+
+  it('inserts a new version with change_summary referencing the source version', async () => {
+    const restoredRow = agentRow({ name: 'Old Bot', owner_id: TEST_USER_ID });
+    mockClientQuery
+      .mockResolvedValueOnce({}) // BEGIN
+      .mockResolvedValueOnce({ rows: [{ owner_id: TEST_USER_ID }] })
+      .mockResolvedValueOnce({ rows: [{ snapshot: snap }] })
+      .mockResolvedValueOnce({ rows: [restoredRow] })
+      .mockResolvedValueOnce({ rows: [{ version_no: 3 }] })
+      .mockResolvedValueOnce({}) // INSERT
+      .mockResolvedValueOnce({}); // COMMIT
+    await authReq('POST', `/api/agents/${AGENT_ID}/versions/2/restore`);
+    const insertCall = mockClientQuery.mock.calls.find((c) =>
+      typeof c[0] === 'string' && c[0].startsWith('INSERT INTO agent_versions')
+    );
+    expect(insertCall).toBeDefined();
+    // version_no should be latest + 1 = 4
+    expect(insertCall[1][1]).toBe(4);
+    // change_summary should reference v2
+    expect(insertCall[1][4]).toBe('Restored from v2');
+    // created_by should be the requesting user
+    expect(insertCall[1][5]).toBe(TEST_USER_ID);
+  });
+
+  it('is non-destructive: history length grows by one after restore', async () => {
+    const restoredRow = agentRow({ name: 'Old Bot', owner_id: TEST_USER_ID });
+    mockClientQuery
+      .mockResolvedValueOnce({}) // BEGIN
+      .mockResolvedValueOnce({ rows: [{ owner_id: TEST_USER_ID }] })
+      .mockResolvedValueOnce({ rows: [{ snapshot: snap }] })
+      .mockResolvedValueOnce({ rows: [restoredRow] })
+      .mockResolvedValueOnce({ rows: [{ version_no: 5 }] }) // had 5 versions before
+      .mockResolvedValueOnce({}) // INSERT (v6)
+      .mockResolvedValueOnce({}); // COMMIT
+    await authReq('POST', `/api/agents/${AGENT_ID}/versions/2/restore`);
+    const insertCall = mockClientQuery.mock.calls.find((c) =>
+      typeof c[0] === 'string' && c[0].startsWith('INSERT INTO agent_versions')
+    );
+    // next version should be 6, not overwrite any existing version
+    expect(insertCall[1][1]).toBe(6);
+  });
+
+  it('returns 500 on db error', async () => {
+    mockClientQuery
+      .mockResolvedValueOnce({}) // BEGIN
+      .mockRejectedValueOnce(new Error('db down'))
+      .mockResolvedValueOnce({}); // ROLLBACK
+    const res = await authReq('POST', `/api/agents/${AGENT_ID}/versions/1/restore`);
     expect(res.status).toBe(500);
   });
 });
