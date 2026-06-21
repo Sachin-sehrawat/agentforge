@@ -135,16 +135,25 @@ export default function Topbar({
 
       {view === 'builder' && (
         <div className="topbar-actions">
-          {agent.id && (
-            <button className="btn download" onClick={() => onDownload(agent)} title="Download agent as Markdown">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                <polyline points="7 10 12 15 17 10" />
-                <line x1="12" y1="15" x2="12" y2="3" />
-              </svg>
-              Export MD
-            </button>
-          )}
+          <button
+            className="btn download"
+            onClick={() => onDownload(agent)}
+            title="Download agent as Markdown"
+            disabled={
+              !agent.persona &&
+              !agent.systemPrompt &&
+              (!agent.tools || agent.tools.length === 0) &&
+              (!agent.skills || agent.skills.length === 0) &&
+              (!agent.instructions || agent.instructions.length === 0)
+            }
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="7 10 12 15 17 10" />
+              <line x1="12" y1="15" x2="12" y2="3" />
+            </svg>
+            Export MD
+          </button>
           <button className="btn" onClick={onNew}>New</button>
           <button className="btn primary" onClick={onSave} disabled={saving}>
             {saving ? 'Saving…' : 'Save agent'}
