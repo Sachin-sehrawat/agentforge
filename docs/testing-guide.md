@@ -112,7 +112,7 @@ mockCreate.mockResolvedValueOnce({
 | File | What it tests | Approach |
 |------|--------------|----------|
 | `api.test.js` | `api.js` client: caching, retry, validation | Mocked `fetch`, `_clearCache` helper |
-| `integration.test.js` | React components + full API lifecycle | React Testing Library + mocked `fetch` |
+| `integration.test.jsx` | React components, full API lifecycle, and critical E2E flows | React Testing Library + mocked `fetch` |
 
 **Key pattern — component tests:**
 
@@ -365,11 +365,49 @@ global.fetch.mockRejectedValueOnce(new Error('Network error'));
 - Conflict detection for workspace saves
 - Graceful fallback to defaults/empty when MongoDB returns 503
 
-### React Components (`integration.test.js`)
+### React Components (`integration.test.jsxx`)
 
 - `ErrorBoundary` — renders children normally, shows fallback on throw
 - `ErrorBoundary` — custom message prop, componentDidCatch called
 - `ErrorBoundary` — "Try again" button resets error state
+
+### E2E Critical-Path Flows (`integration.test.jsx`)
+
+These scenario tests exercise end-to-end user journeys with all fetch calls mocked.
+Import `setToken` and `onUnauthorized` from `api.js` to drive auth state.
+
+| Flow | What is asserted |
+|------|-----------------|
+| Anonymous build → download | Draft saves without auth header; draft data is fully retrievable; `createAgent` 401s without token |
+| Anonymous save → login → save completes | `createAgent` throws on 401, `login` returns token, `setToken` enables the retry, auth header appears on retry |
+| Token expiry | `onUnauthorized` fires when a valid-but-stale token receives 401; token is nulled so next request carries no header |
+| signup → create → publish → public tab | `signup` sends correct fields; created agent is private; `PATCH` toggles visibility; agent appears in `listPublicAgents` |
+| subscribe → My Agents → unsubscribe | `subscribeAgent` posts to `/subscribe`; `listMyAgents` reflects `isSubscribed: true`; `unsubscribeAgent` DELETEs; agent gone from next `listMyAgents` |
+| Subscribe edge cases | 404 on missing agent; 404 when not subscribed; 401 without token |
+
+**Pattern for auth-gated flows:**
+
+```javascript
+import { api, _clearCache, setToken, onUnauthorized } from '../src/api.js';
+
+// Each test starts with _token = null (reset by beforeEach → _clearCache)
+it('save → login → retry', async () => {
+  // 1. Unauthenticated attempt
+  global.fetch.mockResolvedValueOnce(err({ error: 'Unauthorized' }, 401));
+  await expect(api.createAgent({ name: 'Bot' })).rejects.toThrow('Unauthorized');
+
+  // 2. Login
+  global.fetch.mockResolvedValueOnce(ok({ token: 'jwt-abc', user: { id: 'u1' } }));
+  const { token } = await api.login('a@b.com', 'pass');
+  setToken(token);
+
+  // 3. Retry — now authenticated
+  global.fetch.mockResolvedValueOnce(ok({ id: 'new-bot', name: 'Bot' }, 201));
+  const result = await api.createAgent({ name: 'Bot' });
+  expect(result.id).toBe('new-bot');
+  expect(global.fetch.mock.calls[2][1].headers['Authorization']).toBe('Bearer jwt-abc');
+});
+```
 
 ---
 
@@ -411,7 +449,7 @@ cd frontend && npm run test:coverage && npm run build
 ### New React Component
 
 1. Create the component in `frontend/src/components/`
-2. Add tests in `frontend/tests/integration.test.js`:
+2. Add tests in `frontend/tests/integration.test.jsx`:
    - Renders children / default state
    - User interactions (click, input)
    - Error states
