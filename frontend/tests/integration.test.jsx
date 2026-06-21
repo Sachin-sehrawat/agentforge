@@ -11,7 +11,7 @@ import userEvent from '@testing-library/user-event';
 import React from 'react';
 
 import ErrorBoundary from '../src/components/ErrorBoundary.jsx';
-import { api, _clearCache } from '../src/api.js';
+import { api, _clearCache, setToken, onUnauthorized } from '../src/api.js';
 
 // ---------------------------------------------------------------------------
 // Global setup
@@ -746,5 +746,255 @@ describe('Cache behavior', () => {
     const result = await api.getUserPreferences('user-1');
     expect(result.theme).toBe('light');
     expect(global.fetch).toHaveBeenCalledTimes(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// E2E: anonymous build → download
+// ---------------------------------------------------------------------------
+
+describe('E2E: anonymous build → download', () => {
+  it('anonymous user saves agent config as draft and retrieves it', async () => {
+    // No auth token — _clearCache already set _token = null
+    const agentConfig = { name: 'Anon Bot', tools: ['calculator'], systemPrompt: 'Help me' };
+
+    // Build step: save draft (no auth required for drafts)
+    const draft = { id: 'draft-anon-1', agentData: agentConfig, workspaceId: 'ws-anon' };
+    global.fetch.mockResolvedValueOnce(ok(draft, 201));
+    const saved = await api.saveDraftAgent('ws-anon', agentConfig);
+    expect(saved.id).toBe('draft-anon-1');
+    expect(saved.agentData.name).toBe('Anon Bot');
+
+    // No Authorization header was sent
+    const [, saveOpts] = global.fetch.mock.calls[0];
+    expect(saveOpts.headers['Authorization']).toBeUndefined();
+
+    // Download step: retrieve draft and access agent config
+    global.fetch.mockResolvedValueOnce(ok([draft]));
+    const drafts = await api.getDraftAgents('ws-anon');
+    expect(drafts).toHaveLength(1);
+
+    const downloaded = drafts[0].agentData;
+    expect(downloaded.name).toBe('Anon Bot');
+    expect(downloaded.tools).toContain('calculator');
+    expect(downloaded.systemPrompt).toBe('Help me');
+
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('anonymous user cannot create a published agent without auth (401)', async () => {
+    global.fetch.mockResolvedValueOnce(err({ error: 'Unauthorized' }, 401));
+
+    await expect(
+      api.createAgent({ name: 'Needs Auth Bot', tools: [] })
+    ).rejects.toThrow('Unauthorized');
+
+    // No auth header was present
+    const [, opts] = global.fetch.mock.calls[0];
+    expect(opts.headers['Authorization']).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// E2E: anonymous save → login → save completes
+// ---------------------------------------------------------------------------
+
+describe('E2E: anonymous save → login → save completes', () => {
+  it('unauthenticated save fails, login provides token, retry succeeds', async () => {
+    // Step 1: Attempt to create agent without auth → 401
+    global.fetch.mockResolvedValueOnce(err({ error: 'Unauthorized' }, 401));
+    await expect(
+      api.createAgent({ name: 'Deferred Agent', tools: [] })
+    ).rejects.toThrow('Unauthorized');
+
+    // No Authorization header on unauthenticated request
+    const [, firstOpts] = global.fetch.mock.calls[0];
+    expect(firstOpts.headers['Authorization']).toBeUndefined();
+
+    // Step 2: User completes login via auth modal
+    const user = { id: 'u1', email: 'user@example.com', display_name: 'User One' };
+    global.fetch.mockResolvedValueOnce(ok({ token: 'jwt-xyz', user }));
+    const loginResult = await api.login('user@example.com', 'pass123');
+    expect(loginResult.token).toBe('jwt-xyz');
+    setToken(loginResult.token);
+
+    const [loginUrl, loginOpts] = global.fetch.mock.calls[1];
+    expect(loginUrl).toBe('/api/auth/login');
+    expect(loginOpts.method).toBe('POST');
+
+    // Step 3: Retry save — now authenticated
+    const created = { id: 'agent-deferred', name: 'Deferred Agent', tools: [] };
+    global.fetch.mockResolvedValueOnce(ok(created, 201));
+    const result = await api.createAgent({ name: 'Deferred Agent', tools: [] });
+    expect(result.id).toBe('agent-deferred');
+
+    // Authorization header present on authenticated retry
+    const [, thirdOpts] = global.fetch.mock.calls[2];
+    expect(thirdOpts.headers['Authorization']).toBe('Bearer jwt-xyz');
+
+    expect(global.fetch).toHaveBeenCalledTimes(3);
+  });
+
+  it('onUnauthorized fires when an existing session token is rejected', async () => {
+    let loggedOut = false;
+    onUnauthorized(() => { loggedOut = true; });
+    setToken('stale-jwt');
+
+    // Server rejects the stale token (session expired)
+    global.fetch.mockResolvedValueOnce(err({ error: 'Token expired' }, 401));
+    await expect(api.listMyAgents()).rejects.toThrow('Token expired');
+
+    // Handler fired and token was cleared
+    expect(loggedOut).toBe(true);
+
+    // Subsequent request carries no auth header (token was nulled)
+    global.fetch.mockResolvedValueOnce(ok([]));
+    await api.listPublicAgents();
+    const [, secondOpts] = global.fetch.mock.calls[1];
+    expect(secondOpts.headers['Authorization']).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// E2E: signup → create → publish → appears in public tab
+// ---------------------------------------------------------------------------
+
+describe('E2E: signup → create → publish → appears in public tab', () => {
+  it('new user registers, creates agent, publishes it, and it appears publicly', async () => {
+    // Step 1: Signup
+    const user = { id: 'user-new', email: 'signup@example.com', display_name: 'New User' };
+    global.fetch.mockResolvedValueOnce(ok({ token: 'jwt-new', user }, 201));
+    const signupResult = await api.signup('signup@example.com', 'securepass', 'New User');
+    expect(signupResult.token).toBe('jwt-new');
+    expect(signupResult.user.id).toBe('user-new');
+    setToken(signupResult.token);
+
+    const [signupUrl, signupOpts] = global.fetch.mock.calls[0];
+    expect(signupUrl).toBe('/api/auth/signup');
+    expect(signupOpts.method).toBe('POST');
+    expect(JSON.parse(signupOpts.body)).toMatchObject({
+      email: 'signup@example.com',
+      display_name: 'New User',
+    });
+
+    // Step 2: Create agent (private by default)
+    const agent = { id: 'agent-pub', name: 'Community Bot', tools: [], visibility: 'private' };
+    global.fetch.mockResolvedValueOnce(ok(agent, 201));
+    const created = await api.createAgent({ name: 'Community Bot', tools: [] });
+    expect(created.id).toBe('agent-pub');
+    expect(created.visibility).toBe('private');
+
+    // Step 3: Publish — toggle visibility to public
+    const published = { ...agent, visibility: 'public' };
+    global.fetch.mockResolvedValueOnce(ok(published));
+    const toggled = await api.updateAgentVisibility('agent-pub', 'public');
+    expect(toggled.visibility).toBe('public');
+
+    const [patchUrl, patchOpts] = global.fetch.mock.calls[2];
+    expect(patchUrl).toBe('/api/agents/agent-pub');
+    expect(patchOpts.method).toBe('PATCH');
+    expect(JSON.parse(patchOpts.body)).toEqual({ visibility: 'public' });
+
+    // Step 4: Agent appears in public tab
+    global.fetch.mockResolvedValueOnce(ok([published]));
+    const publicAgents = await api.listPublicAgents();
+    const found = publicAgents.find((a) => a.id === 'agent-pub');
+    expect(found).toBeDefined();
+    expect(found.visibility).toBe('public');
+    expect(global.fetch.mock.calls[3][0]).toBe('/api/agents/public');
+
+    expect(global.fetch).toHaveBeenCalledTimes(4);
+  });
+
+  it('signup sends correct fields and token is usable for authenticated calls', async () => {
+    const user = { id: 'u2', email: 'user2@example.com', display_name: 'User Two' };
+    global.fetch.mockResolvedValueOnce(ok({ token: 'jwt-u2', user }, 201));
+    const result = await api.signup('user2@example.com', 'pass', 'User Two');
+    setToken(result.token);
+
+    // Verify the token flows into subsequent requests
+    global.fetch.mockResolvedValueOnce(ok([]));
+    await api.listMyAgents();
+    const [, opts] = global.fetch.mock.calls[1];
+    expect(opts.headers['Authorization']).toBe('Bearer jwt-u2');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// E2E: subscribe to public agent → appears in My Agents → unsubscribe
+// ---------------------------------------------------------------------------
+
+describe('E2E: subscribe to public → appears in My Agents → unsubscribe', () => {
+  it('user subscribes to public agent, sees it in My Agents, then unsubscribes', async () => {
+    setToken('jwt-subscriber');
+
+    const publicAgent = {
+      id: 'agent-popular',
+      name: 'Popular Bot',
+      visibility: 'public',
+      isSubscribed: false,
+    };
+
+    // Step 1: Browse public agents
+    global.fetch.mockResolvedValueOnce(ok([publicAgent]));
+    const publicList = await api.listPublicAgents();
+    expect(publicList).toHaveLength(1);
+    expect(publicList[0].isSubscribed).toBe(false);
+    expect(global.fetch.mock.calls[0][0]).toBe('/api/agents/public');
+
+    // Step 2: Subscribe
+    global.fetch.mockResolvedValueOnce(ok({ userId: 'u-sub', agentId: 'agent-popular' }));
+    const subResult = await api.subscribeAgent('agent-popular');
+    expect(subResult.agentId).toBe('agent-popular');
+
+    const [subUrl, subOpts] = global.fetch.mock.calls[1];
+    expect(subUrl).toBe('/api/agents/agent-popular/subscribe');
+    expect(subOpts.method).toBe('POST');
+
+    // Step 3: Agent appears in My Agents as subscribed
+    const subscribedAgent = { ...publicAgent, isSubscribed: true, isOwned: false };
+    global.fetch.mockResolvedValueOnce(ok([subscribedAgent]));
+    const myAgents = await api.listMyAgents();
+    const found = myAgents.find((a) => a.id === 'agent-popular');
+    expect(found).toBeDefined();
+    expect(found.isSubscribed).toBe(true);
+    expect(global.fetch.mock.calls[2][0]).toBe('/api/agents/mine');
+
+    // Step 4: Unsubscribe
+    global.fetch.mockResolvedValueOnce({ ok: true, status: 204, json: async () => null });
+    const unsubResult = await api.unsubscribeAgent('agent-popular');
+    expect(unsubResult).toBeNull();
+
+    const [unsubUrl, unsubOpts] = global.fetch.mock.calls[3];
+    expect(unsubUrl).toBe('/api/agents/agent-popular/subscribe');
+    expect(unsubOpts.method).toBe('DELETE');
+
+    // Step 5: My Agents no longer includes the unsubscribed agent
+    global.fetch.mockResolvedValueOnce(ok([]));
+    const myAgentsAfter = await api.listMyAgents();
+    expect(myAgentsAfter.find((a) => a.id === 'agent-popular')).toBeUndefined();
+
+    expect(global.fetch).toHaveBeenCalledTimes(5);
+  });
+
+  it('subscribing to a non-existent agent throws 404', async () => {
+    setToken('jwt-subscriber');
+    global.fetch.mockResolvedValueOnce(err({ error: 'Agent not found' }, 404));
+
+    await expect(api.subscribeAgent('no-such-agent')).rejects.toThrow('Agent not found');
+  });
+
+  it('unsubscribing without an active subscription throws 404', async () => {
+    setToken('jwt-subscriber');
+    global.fetch.mockResolvedValueOnce(err({ error: 'Subscription not found' }, 404));
+
+    await expect(api.unsubscribeAgent('agent-popular')).rejects.toThrow('Subscription not found');
+  });
+
+  it('subscribing requires authentication', async () => {
+    // No token set — should get 401
+    global.fetch.mockResolvedValueOnce(err({ error: 'Unauthorized' }, 401));
+
+    await expect(api.subscribeAgent('agent-popular')).rejects.toThrow('Unauthorized');
   });
 });
