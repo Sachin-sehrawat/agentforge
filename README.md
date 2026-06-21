@@ -41,7 +41,7 @@ architecture rationale and migration history.
 - **Canvas** — an "Agent core" node where you set the name, persona, system prompt, and model target.
 - **Tool palette** — drag built-in tools (Calculator, Code Runner, API Request, Web Search) onto the canvas to wire them into the agent.
 - **Custom skills** — create reusable skill definitions (label, description, instruction) and attach them to any agent.
-- **Markdown export** — click **Save agent** to download a Markdown spec of the agent's full configuration, or use the **Export MD** button when an agent is loaded.
+- **Markdown export** — click **Export MD** in the top bar to download a Markdown spec of the agent's full configuration. The button is always visible (no login required) and enabled as soon as the agent has any content.
 - **Saved agents** — agents are stored in PostgreSQL; reload or download them from the top bar at any time.
 
 ## Requirements
@@ -96,8 +96,9 @@ Open `http://localhost:5173` in your browser (API calls are proxied to the backe
 1. Give your agent a **name**, **persona**, and **system prompt** in the Agent core node.
 2. Drag tools from the left sidebar onto the canvas. Each tool wires itself to the agent core automatically.
 3. Open the **Skills** panel to attach reusable custom skills to the agent.
-4. Click **Save agent** — a Markdown file of the agent spec downloads automatically.
-5. Use **Saved agents** in the top bar to reload a previous agent. Each entry also has a **↓** button to re-download its Markdown spec.
+4. Click **Export MD** in the top bar to download a Markdown spec of the agent — works even before saving, with no login required.
+5. Click **Save agent** to persist the agent to the database (login required).
+6. Use **Saved agents** in the top bar to reload a previous agent. Each entry also has a **↓** button to re-download its Markdown spec.
 
 ## Project structure
 

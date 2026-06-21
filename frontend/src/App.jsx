@@ -271,7 +271,6 @@ export default function App() {
       refreshSavedAgents();
       // Clear workspace draft after a successful save
       api.saveWorkspaceData(WORKSPACE_ID, { agent: { ...payload, id: result.id } });
-      downloadMd({ ...payload, name: payload.name });
     } catch (err) {
       console.error('Could not save:', err.message);
     } finally {
