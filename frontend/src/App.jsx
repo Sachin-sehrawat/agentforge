@@ -350,6 +350,28 @@ export default function App() {
     }
   };
 
+  const onSubscribe = async (agent) => {
+    const agentId = agent.id;
+    const subscribing = !agent.isSubscribed;
+    if (subscribing) {
+      await api.subscribeAgent(agentId);
+      setPublicAgents((prev) =>
+        prev.map((a) => (a.id === agentId ? { ...a, isSubscribed: true } : a))
+      );
+      setMyAgents((prev) =>
+        prev.some((a) => a.id === agentId)
+          ? prev
+          : [{ ...agent, isSubscribed: true }, ...prev]
+      );
+    } else {
+      await api.unsubscribeAgent(agentId);
+      setPublicAgents((prev) =>
+        prev.map((a) => (a.id === agentId ? { ...a, isSubscribed: false } : a))
+      );
+      setMyAgents((prev) => prev.filter((a) => !(a.id === agentId && !a.isOwned)));
+    }
+  };
+
   const onDownload = (agentData) => {
     downloadMd(agentData || agent);
   };
@@ -433,6 +455,7 @@ export default function App() {
           onDelete={onDelete}
           onNew={onNew}
           onOpenAuth={(tab) => setAuthModal({ tab, onSuccess: null })}
+          onSubscribe={onSubscribe}
         />
       ) : view === 'skills' ? (
         <SkillsPage

@@ -153,6 +153,8 @@ export const api = {
   createAgent: (agent) => request('/agents', { method: 'POST', body: JSON.stringify(agent) }),
   updateAgent: (id, agent) => request(`/agents/${id}`, { method: 'PUT', body: JSON.stringify(agent) }),
   deleteAgent: (id) => request(`/agents/${id}`, { method: 'DELETE' }),
+  subscribeAgent: (id) => request(`/agents/${id}/subscribe`, { method: 'POST' }),
+  unsubscribeAgent: (id) => request(`/agents/${id}/subscribe`, { method: 'DELETE' }),
 
   // --- Skills (PostgreSQL) -------------------------------------------------
   listSkills: () => request('/skills'),

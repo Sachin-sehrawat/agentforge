@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import AgentsPage from '../src/components/AgentsPage';
 
 const publicAgent = {
@@ -56,6 +56,7 @@ function defaultProps(overrides = {}) {
     onDelete: vi.fn(),
     onNew: vi.fn(),
     onOpenAuth: vi.fn(),
+    onSubscribe: vi.fn(),
     ...overrides,
   };
 }
@@ -298,6 +299,179 @@ describe('AgentsPage', () => {
       render(<AgentsPage {...defaultProps({ publicAgents: [publicAgent], onDownload })} />);
       fireEvent.click(screen.getByRole('button', { name: /MD/i }));
       expect(onDownload).toHaveBeenCalledWith(publicAgent);
+    });
+  });
+});
+
+describe('Subscribe / Unsubscribe', () => {
+  describe('Subscribe button on public cards', () => {
+    it('shows Subscribe button on unsubscribed public card', () => {
+      render(
+        <AgentsPage
+          {...defaultProps({ publicAgents: [publicAgent], isAuthenticated: true })}
+        />
+      );
+      expect(screen.getByRole('button', { name: 'Subscribe' })).toBeDefined();
+    });
+
+    it('shows Unsubscribe button when agent isSubscribed', () => {
+      const subscribed = { ...publicAgent, isSubscribed: true };
+      render(
+        <AgentsPage
+          {...defaultProps({ publicAgents: [subscribed], isAuthenticated: true })}
+        />
+      );
+      expect(screen.getByRole('button', { name: 'Unsubscribe' })).toBeDefined();
+    });
+
+    it('does not show Subscribe button on My Agents tab cards', () => {
+      render(
+        <AgentsPage
+          {...defaultProps({
+            isAuthenticated: true,
+            myAgents: [ownedAgent],
+          })}
+        />
+      );
+      fireEvent.click(screen.getByRole('tab', { name: 'My Agents' }));
+      expect(screen.queryByRole('button', { name: /subscribe/i })).toBeNull();
+    });
+  });
+
+  describe('Authenticated subscribe flow', () => {
+    it('calls onSubscribe with the agent when Subscribe clicked', async () => {
+      const onSubscribe = vi.fn().mockResolvedValue(undefined);
+      render(
+        <AgentsPage
+          {...defaultProps({
+            publicAgents: [publicAgent],
+            isAuthenticated: true,
+            onSubscribe,
+          })}
+        />
+      );
+      fireEvent.click(screen.getByRole('button', { name: 'Subscribe' }));
+      await waitFor(() => expect(onSubscribe).toHaveBeenCalledWith(publicAgent));
+    });
+
+    it('calls onSubscribe with subscribed agent when Unsubscribe clicked', async () => {
+      const onSubscribe = vi.fn().mockResolvedValue(undefined);
+      const subscribed = { ...publicAgent, isSubscribed: true };
+      render(
+        <AgentsPage
+          {...defaultProps({
+            publicAgents: [subscribed],
+            isAuthenticated: true,
+            onSubscribe,
+          })}
+        />
+      );
+      fireEvent.click(screen.getByRole('button', { name: 'Unsubscribe' }));
+      await waitFor(() => expect(onSubscribe).toHaveBeenCalledWith(subscribed));
+    });
+
+    it('shows Unsubscribe optimistically after Subscribe click', async () => {
+      // onSubscribe never resolves during this test — button should show Unsubscribe
+      const onSubscribe = vi.fn().mockReturnValue(new Promise(() => {}));
+      render(
+        <AgentsPage
+          {...defaultProps({
+            publicAgents: [publicAgent],
+            isAuthenticated: true,
+            onSubscribe,
+          })}
+        />
+      );
+      fireEvent.click(screen.getByRole('button', { name: 'Subscribe' }));
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: 'Unsubscribe' })).toBeDefined()
+      );
+    });
+  });
+
+  describe('Anonymous subscribe flow', () => {
+    it('calls onOpenAuth with login when anonymous user clicks Subscribe', async () => {
+      const onOpenAuth = vi.fn();
+      render(
+        <AgentsPage
+          {...defaultProps({
+            publicAgents: [publicAgent],
+            isAuthenticated: false,
+            onOpenAuth,
+          })}
+        />
+      );
+      fireEvent.click(screen.getByRole('button', { name: 'Subscribe' }));
+      await waitFor(() => expect(onOpenAuth).toHaveBeenCalledWith('login'));
+    });
+
+    it('does not call onSubscribe for anonymous user', async () => {
+      const onSubscribe = vi.fn();
+      render(
+        <AgentsPage
+          {...defaultProps({
+            publicAgents: [publicAgent],
+            isAuthenticated: false,
+            onSubscribe,
+          })}
+        />
+      );
+      fireEvent.click(screen.getByRole('button', { name: 'Subscribe' }));
+      await waitFor(() => expect(onSubscribe).not.toHaveBeenCalled());
+    });
+
+    it('reverts optimistic toggle after anonymous click (rollback)', async () => {
+      render(
+        <AgentsPage
+          {...defaultProps({
+            publicAgents: [publicAgent],
+            isAuthenticated: false,
+          })}
+        />
+      );
+      fireEvent.click(screen.getByRole('button', { name: 'Subscribe' }));
+      // Optimistic toggle throws (auth-required) and reverts — button stays Subscribe
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: 'Subscribe' })).toBeDefined()
+      );
+    });
+  });
+
+  describe('Failure rollback', () => {
+    it('reverts to Subscribe when onSubscribe rejects', async () => {
+      const onSubscribe = vi.fn().mockRejectedValue(new Error('network error'));
+      render(
+        <AgentsPage
+          {...defaultProps({
+            publicAgents: [publicAgent],
+            isAuthenticated: true,
+            onSubscribe,
+          })}
+        />
+      );
+      fireEvent.click(screen.getByRole('button', { name: 'Subscribe' }));
+      // Rolls back after rejection
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: 'Subscribe' })).toBeDefined()
+      );
+    });
+
+    it('reverts to Unsubscribe when onSubscribe rejects on an already-subscribed agent', async () => {
+      const onSubscribe = vi.fn().mockRejectedValue(new Error('network error'));
+      const subscribed = { ...publicAgent, isSubscribed: true };
+      render(
+        <AgentsPage
+          {...defaultProps({
+            publicAgents: [subscribed],
+            isAuthenticated: true,
+            onSubscribe,
+          })}
+        />
+      );
+      fireEvent.click(screen.getByRole('button', { name: 'Unsubscribe' }));
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: 'Unsubscribe' })).toBeDefined()
+      );
     });
   });
 });
