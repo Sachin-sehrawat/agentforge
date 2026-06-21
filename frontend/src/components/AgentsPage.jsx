@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { TOOL_META } from '../toolMeta.jsx';
 
 function timeAgo(dateStr) {
@@ -30,8 +30,24 @@ function Badge({ label, color }) {
   );
 }
 
-function AgentCard({ agent, onOpen, onDownload, onDelete }) {
+function AgentCard({ agent, onOpen, onDownload, onDelete, onSubscribe }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [subscribed, setSubscribed] = useState(Boolean(agent.isSubscribed));
+
+  // Keep local state in sync when parent refreshes the agent list
+  useEffect(() => {
+    setSubscribed(Boolean(agent.isSubscribed));
+  }, [agent.isSubscribed]);
+
+  async function handleSubscribe() {
+    const wasSubscribed = subscribed;
+    setSubscribed(!wasSubscribed);
+    try {
+      await onSubscribe(agent);
+    } catch {
+      setSubscribed(wasSubscribed);
+    }
+  }
 
   function handleDelete() {
     if (confirmDelete) {
@@ -111,6 +127,15 @@ function AgentCard({ agent, onOpen, onDownload, onDelete }) {
               {confirmDelete ? 'Confirm?' : 'Delete'}
             </button>
           )}
+          {onSubscribe && (
+            <button
+              className="btn subtle"
+              onClick={handleSubscribe}
+              title={subscribed ? 'Remove from My Agents' : 'Add to My Agents'}
+            >
+              {subscribed ? 'Unsubscribe' : 'Subscribe'}
+            </button>
+          )}
           <button className="btn primary" onClick={() => onOpen(agent.id)}>
             Open
           </button>
@@ -120,7 +145,7 @@ function AgentCard({ agent, onOpen, onDownload, onDelete }) {
   );
 }
 
-function AgentsList({ agents, search, onOpen, onDownload, onDelete, canDelete, emptyNode }) {
+function AgentsList({ agents, search, onOpen, onDownload, onDelete, canDelete, onSubscribe, emptyNode }) {
   const q = search.trim().toLowerCase();
   const filtered = q
     ? agents.filter((a) =>
@@ -140,13 +165,14 @@ function AgentsList({ agents, search, onOpen, onDownload, onDelete, canDelete, e
           onOpen={onOpen}
           onDownload={onDownload}
           onDelete={canDelete && canDelete(agent) ? onDelete : null}
+          onSubscribe={onSubscribe || null}
         />
       ))}
     </div>
   );
 }
 
-function TabContent({ agents, loading, error, search, onOpen, onDownload, onDelete, canDelete, emptyNode }) {
+function TabContent({ agents, loading, error, search, onOpen, onDownload, onDelete, canDelete, onSubscribe, emptyNode }) {
   if (loading) {
     return <div className="agents-loading">Loading…</div>;
   }
@@ -161,6 +187,7 @@ function TabContent({ agents, loading, error, search, onOpen, onDownload, onDele
       onDownload={onDownload}
       onDelete={onDelete}
       canDelete={canDelete}
+      onSubscribe={onSubscribe}
       emptyNode={emptyNode}
     />
   );
@@ -179,6 +206,7 @@ export default function AgentsPage({
   onDelete,
   onNew,
   onOpenAuth,
+  onSubscribe,
 }) {
   const [activeTab, setActiveTab] = useState('agents');
   const [search, setSearch] = useState('');
@@ -194,6 +222,16 @@ export default function AgentsPage({
   }
 
   const totalShown = isMyTab ? myAgents.length : publicAgents.length;
+
+  // Wraps onSubscribe with an auth gate — anonymous clicks open the login modal
+  // and throw to roll back the AgentCard optimistic toggle.
+  function handlePublicSubscribe(agent) {
+    if (!isAuthenticated) {
+      onOpenAuth?.('login');
+      throw new Error('auth-required');
+    }
+    return onSubscribe?.(agent);
+  }
 
   return (
     <div className="agents-page">
@@ -298,6 +336,7 @@ export default function AgentsPage({
           onOpen={onOpen}
           onDownload={onDownload}
           onDelete={null}
+          onSubscribe={handlePublicSubscribe}
           emptyNode={
             <div className="agents-empty">
               <div className="agents-empty-icon">

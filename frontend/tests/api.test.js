@@ -96,6 +96,33 @@ describe('Agents API', () => {
     global.fetch.mockResolvedValue(err({ error: 'Agent not found' }, 404));
     await expect(api.getAgent('missing')).rejects.toThrow('Agent not found');
   });
+
+  it('subscribes to an agent via POST /api/agents/:id/subscribe', async () => {
+    global.fetch.mockResolvedValue(ok({ userId: 'u1', agentId: 'a1' }));
+
+    const result = await api.subscribeAgent('a1');
+
+    expect(result).toEqual({ userId: 'u1', agentId: 'a1' });
+    const [url, opts] = global.fetch.mock.calls[0];
+    expect(url).toBe('/api/agents/a1/subscribe');
+    expect(opts.method).toBe('POST');
+  });
+
+  it('unsubscribes from an agent via DELETE /api/agents/:id/subscribe', async () => {
+    global.fetch.mockResolvedValue({ ok: true, status: 204, json: async () => null });
+
+    const result = await api.unsubscribeAgent('a1');
+
+    expect(result).toBeNull();
+    const [url, opts] = global.fetch.mock.calls[0];
+    expect(url).toBe('/api/agents/a1/subscribe');
+    expect(opts.method).toBe('DELETE');
+  });
+
+  it('throws when subscribe fails', async () => {
+    global.fetch.mockResolvedValue(err({ error: 'Cannot subscribe to a private agent' }, 403));
+    await expect(api.subscribeAgent('a1')).rejects.toThrow('Cannot subscribe to a private agent');
+  });
 });
 
 // ---------------------------------------------------------------------------
