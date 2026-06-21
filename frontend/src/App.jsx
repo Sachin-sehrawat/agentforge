@@ -112,7 +112,7 @@ export default function App() {
   // On mount: load public agents, custom skills, user preferences, and the last workspace state.
   useEffect(() => {
     refreshPublicAgents();
-    refreshCustomSkills();
+    refreshCustomSkills(false); // initial fetch is unauthenticated; auth effect re-fetches with ownership
 
     Promise.all([
       api.getUserPreferences(USER_ID),
@@ -166,13 +166,15 @@ export default function App() {
     api.saveUserPreferences(USER_ID, { view: nextView });
   }, []);
 
-  // Load or clear the user's own agents whenever authentication state changes.
+  // Load or clear the user's own agents/skills whenever authentication state changes.
   useEffect(() => {
     if (isAuthenticated) {
       refreshMyAgents();
+      refreshCustomSkills(true);
     } else {
       setMyAgents([]);
       setErrorMine(null);
+      refreshCustomSkills(false);
     }
   }, [isAuthenticated]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -199,8 +201,21 @@ export default function App() {
     if (isAuthenticated) refreshMyAgents();
   }
 
-  function refreshCustomSkills() {
-    api.listSkills().then(setCustomSkills).catch(() => {});
+  function refreshCustomSkills(authenticated) {
+    const authed = authenticated !== undefined ? authenticated : isAuthenticated;
+    if (authed) {
+      Promise.all([api.listPublicSkills(), api.listMySkills()])
+        .then(([publicSkills, mySkills]) => {
+          const myIds = new Set(mySkills.map((s) => s.id));
+          setCustomSkills([
+            ...publicSkills.filter((s) => !myIds.has(s.id)),
+            ...mySkills,
+          ]);
+        })
+        .catch(() => {});
+    } else {
+      api.listPublicSkills().then(setCustomSkills).catch(() => {});
+    }
   }
 
   const onChangeAgentField = (field, value) => {
@@ -488,6 +503,8 @@ export default function App() {
           onCreateSkill={onCreateSkill}
           onUpdateSkill={onUpdateSkill}
           onDeleteSkill={onDeleteSkill}
+          isAuthenticated={isAuthenticated}
+          onOpenAuth={(tab) => setAuthModal({ tab, onSuccess: null })}
         />
       ) : (
         <>

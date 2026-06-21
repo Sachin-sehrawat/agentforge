@@ -120,15 +120,25 @@ function SkillCard({ skill, onEdit, onDelete, onDuplicate }) {
     }
   }
 
+  function badgeClass() {
+    if (skill.builtin) return 'skill-badge builtin';
+    if (skill.isOwned) return 'skill-badge custom';
+    return 'skill-badge public';
+  }
+
+  function badgeLabel() {
+    if (skill.builtin) return 'Built-in';
+    if (skill.isOwned) return 'Custom';
+    return 'Public';
+  }
+
   return (
     <div className="skill-card">
       <div className="skill-card-strip" style={{ background: skill.color }} />
       <div className="skill-card-body">
         <div className="skill-card-header-row">
           <span className="skill-card-label">{skill.label}</span>
-          <span className={`skill-badge${skill.builtin ? ' builtin' : ' custom'}`}>
-            {skill.builtin ? 'Built-in' : 'Custom'}
-          </span>
+          <span className={badgeClass()}>{badgeLabel()}</span>
         </div>
         {skill.description && (
           <p className="skill-card-description">{skill.description}</p>
@@ -140,7 +150,7 @@ function SkillCard({ skill, onEdit, onDelete, onDuplicate }) {
           <button className="btn subtle" onClick={onDuplicate}>
             Duplicate
           </button>
-        ) : (
+        ) : skill.isOwned ? (
           <>
             <button
               className={`btn${confirmDelete ? ' danger' : ' subtle'}`}
@@ -151,13 +161,13 @@ function SkillCard({ skill, onEdit, onDelete, onDuplicate }) {
             </button>
             <button className="btn subtle" onClick={onEdit}>Edit</button>
           </>
-        )}
+        ) : null}
       </div>
     </div>
   );
 }
 
-export default function SkillsPage({ allSkills, onCreateSkill, onUpdateSkill, onDeleteSkill }) {
+export default function SkillsPage({ allSkills, onCreateSkill, onUpdateSkill, onDeleteSkill, isAuthenticated, onOpenAuth }) {
   const [search, setSearch] = useState('');
   const [formState, setFormState] = useState(null);
 
@@ -171,7 +181,7 @@ export default function SkillsPage({ allSkills, onCreateSkill, onUpdateSkill, on
       )
     : allSkills;
 
-  const customCount = allSkills.filter((s) => !s.builtin).length;
+  const customCount = allSkills.filter((s) => !s.builtin && s.isOwned).length;
 
   async function handleSave(data) {
     if (formState?.id) {
@@ -217,7 +227,11 @@ export default function SkillsPage({ allSkills, onCreateSkill, onUpdateSkill, on
               <button className="filter-clear" onClick={() => setSearch('')}>✕</button>
             )}
           </div>
-          <button className="btn primary" onClick={() => setFormState({})}>
+          <button
+            className="btn primary"
+            onClick={() => isAuthenticated ? setFormState({}) : onOpenAuth?.('login')}
+            title={isAuthenticated ? undefined : 'Sign in to create skills'}
+          >
             + Create Skill
           </button>
         </div>

@@ -274,6 +274,28 @@ describe('Skills API integration', () => {
     expect(result[0].label).toBe('Skill A');
   });
 
+  it('listPublicSkills calls /api/skills/public', async () => {
+    const skills = [{ id: 's1', label: 'Skill A', instruction: 'Do A', isOwned: false }];
+    global.fetch.mockResolvedValueOnce(ok(skills));
+
+    const result = await api.listPublicSkills();
+
+    expect(result).toHaveLength(1);
+    expect(result[0].isOwned).toBe(false);
+    expect(global.fetch.mock.calls[0][0]).toBe('/api/skills/public');
+  });
+
+  it('listMySkills calls /api/skills/mine', async () => {
+    const skills = [{ id: 's2', label: 'My Skill', instruction: 'Be helpful', isOwned: true }];
+    global.fetch.mockResolvedValueOnce(ok(skills));
+
+    const result = await api.listMySkills();
+
+    expect(result).toHaveLength(1);
+    expect(result[0].isOwned).toBe(true);
+    expect(global.fetch.mock.calls[0][0]).toBe('/api/skills/mine');
+  });
+
   it('createSkill sends POST and returns created skill', async () => {
     const created = { id: 'skill-uuid', label: 'New Skill', instruction: 'Be useful' };
     global.fetch.mockResolvedValueOnce(ok(created, 201));

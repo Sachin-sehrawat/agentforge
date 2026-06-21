@@ -824,24 +824,31 @@ describe('DELETE /api/agents/:id/subscribe', () => {
 });
 
 // ---------------------------------------------------------------------------
-// GET /api/skills
+// GET /api/skills (legacy — public only)
 // ---------------------------------------------------------------------------
 
 describe('GET /api/skills', () => {
-  it('returns 200 with empty array when no skills', async () => {
+  it('returns 200 with empty array when no public skills', async () => {
     mockPoolQuery.mockResolvedValueOnce({ rows: [] });
     const res = await req('GET', '/api/skills');
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual([]);
   });
 
-  it('returns list of skills', async () => {
-    mockPoolQuery.mockResolvedValueOnce({ rows: [skillRow()] });
+  it('returns serialized public skills', async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [skillRow({ visibility: 'public' })] });
     const res = await req('GET', '/api/skills');
     const skills = await res.json();
     expect(skills).toHaveLength(1);
     expect(skills[0].label).toBe('My Skill');
     expect(skills[0].instruction).toBe('Be helpful always');
+    expect(skills[0].ownerId).toBeNull();
+  });
+
+  it('only queries public skills', async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [] });
+    await req('GET', '/api/skills');
+    expect(mockPoolQuery.mock.calls[0][0]).toMatch(/visibility\s*=\s*'public'/i);
   });
 
   it('returns 500 on db error', async () => {
@@ -852,16 +859,113 @@ describe('GET /api/skills', () => {
 });
 
 // ---------------------------------------------------------------------------
+// GET /api/skills/public
+// ---------------------------------------------------------------------------
+
+describe('GET /api/skills/public', () => {
+  it('returns 200 with public skills (anonymous)', async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [skillRow({ visibility: 'public' })] });
+    const res = await req('GET', '/api/skills/public');
+    expect(res.status).toBe(200);
+    const skills = await res.json();
+    expect(skills).toHaveLength(1);
+    expect(skills[0].label).toBe('My Skill');
+    expect(skills[0]).not.toHaveProperty('isOwned');
+  });
+
+  it('returns empty array when no public skills', async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [] });
+    const res = await req('GET', '/api/skills/public');
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual([]);
+  });
+
+  it('returns isOwned: true when authenticated as skill owner', async () => {
+    mockPoolQuery.mockResolvedValueOnce({
+      rows: [{ ...skillRow({ owner_id: TEST_USER_ID, visibility: 'public' }), is_owned: true }],
+    });
+    const res = await authReq('GET', '/api/skills/public');
+    expect(res.status).toBe(200);
+    const skills = await res.json();
+    expect(skills[0].isOwned).toBe(true);
+  });
+
+  it('returns isOwned: false when authenticated as non-owner', async () => {
+    mockPoolQuery.mockResolvedValueOnce({
+      rows: [{ ...skillRow({ owner_id: OTHER_USER_ID, visibility: 'public' }), is_owned: false }],
+    });
+    const res = await authReq('GET', '/api/skills/public');
+    expect(res.status).toBe(200);
+    const skills = await res.json();
+    expect(skills[0].isOwned).toBe(false);
+  });
+
+  it('returns 500 on db error', async () => {
+    mockPoolQuery.mockRejectedValueOnce(new Error('db down'));
+    const res = await req('GET', '/api/skills/public');
+    expect(res.status).toBe(500);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/skills/mine
+// ---------------------------------------------------------------------------
+
+describe('GET /api/skills/mine', () => {
+  it('returns 401 when unauthenticated', async () => {
+    const res = await req('GET', '/api/skills/mine');
+    expect(res.status).toBe(401);
+  });
+
+  it('returns owned skills with isOwned: true', async () => {
+    mockPoolQuery.mockResolvedValueOnce({
+      rows: [skillRow({ owner_id: TEST_USER_ID, visibility: 'private' })],
+    });
+    const res = await authReq('GET', '/api/skills/mine');
+    expect(res.status).toBe(200);
+    const skills = await res.json();
+    expect(skills).toHaveLength(1);
+    expect(skills[0].isOwned).toBe(true);
+    expect(skills[0].label).toBe('My Skill');
+  });
+
+  it('returns empty array when user has no skills', async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [] });
+    const res = await authReq('GET', '/api/skills/mine');
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual([]);
+  });
+
+  it('queries skills by owner_id', async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [] });
+    await authReq('GET', '/api/skills/mine');
+    const [query, params] = mockPoolQuery.mock.calls[0];
+    expect(query).toMatch(/owner_id\s*=\s*\$1/i);
+    expect(params[0]).toBe(TEST_USER_ID);
+  });
+
+  it('returns 500 on db error', async () => {
+    mockPoolQuery.mockRejectedValueOnce(new Error('db down'));
+    const res = await authReq('GET', '/api/skills/mine');
+    expect(res.status).toBe(500);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // POST /api/skills
 // ---------------------------------------------------------------------------
 
 describe('POST /api/skills', () => {
-  it('returns 201 with created skill', async () => {
-    const created = skillRow({ label: 'New Skill', instruction: 'Do this' });
-    // INSERT...RETURNING * is a single round-trip
+  it('returns 401 when no Authorization header', async () => {
+    const res = await req('POST', '/api/skills', { label: 'Skill', instruction: 'Do it' });
+    expect(res.status).toBe(401);
+  });
+
+  it('returns 201 with created skill and sets ownerId from token', async () => {
+    const created = skillRow({ label: 'New Skill', instruction: 'Do this', owner_id: TEST_USER_ID });
     mockPoolQuery.mockResolvedValueOnce({ rows: [created] });
 
-    const res = await req('POST', '/api/skills', {
+    const res = await authReq('POST', '/api/skills', {
       label: 'New Skill',
       instruction: 'Do this',
     });
@@ -870,25 +974,30 @@ describe('POST /api/skills', () => {
     const s = await res.json();
     expect(s.label).toBe('New Skill');
     expect(s.id).toBeDefined();
+    expect(s.ownerId).toBe(TEST_USER_ID);
+    expect(s.isOwned).toBe(true);
+    // Verify owner_id was passed to INSERT
+    const insertArgs = mockPoolQuery.mock.calls[0][1];
+    expect(insertArgs[6]).toBe(TEST_USER_ID);
   });
 
   it('returns 400 when label is missing', async () => {
-    const res = await req('POST', '/api/skills', { instruction: 'Do this' });
+    const res = await authReq('POST', '/api/skills', { instruction: 'Do this' });
     expect(res.status).toBe(400);
     expect((await res.json()).error).toMatch(/label/i);
   });
 
   it('returns 400 when instruction is missing', async () => {
-    const res = await req('POST', '/api/skills', { label: 'My Skill' });
+    const res = await authReq('POST', '/api/skills', { label: 'My Skill' });
     expect(res.status).toBe(400);
     expect((await res.json()).error).toMatch(/instruction/i);
   });
 
   it('uses default color when not provided', async () => {
-    const created = skillRow();
+    const created = skillRow({ owner_id: TEST_USER_ID });
     mockPoolQuery.mockResolvedValueOnce({ rows: [created] });
 
-    await req('POST', '/api/skills', {
+    await authReq('POST', '/api/skills', {
       label: 'My Skill',
       instruction: 'Be helpful',
     });
@@ -898,10 +1007,10 @@ describe('POST /api/skills', () => {
   });
 
   it('generates a UUID for the skill', async () => {
-    const created = skillRow();
+    const created = skillRow({ owner_id: TEST_USER_ID });
     mockPoolQuery.mockResolvedValueOnce({ rows: [created] });
 
-    await req('POST', '/api/skills', { label: 'Skill', instruction: 'Do it' });
+    await authReq('POST', '/api/skills', { label: 'Skill', instruction: 'Do it' });
 
     const insertArgs = mockPoolQuery.mock.calls[0][1];
     expect(insertArgs[0]).toMatch(
@@ -911,7 +1020,7 @@ describe('POST /api/skills', () => {
 
   it('returns 500 on db error', async () => {
     mockPoolQuery.mockRejectedValueOnce(new Error('insert failed'));
-    const res = await req('POST', '/api/skills', {
+    const res = await authReq('POST', '/api/skills', {
       label: 'Skill',
       instruction: 'Do it',
     });
@@ -924,24 +1033,41 @@ describe('POST /api/skills', () => {
 // ---------------------------------------------------------------------------
 
 describe('PUT /api/skills/:id', () => {
-  it('returns 200 with updated skill', async () => {
-    const updated = skillRow({ label: 'Updated Skill' });
-    // UPDATE...RETURNING * is a single round-trip
-    mockPoolQuery.mockResolvedValueOnce({ rows: [updated] });
+  it('returns 401 when no Authorization header', async () => {
+    const res = await req('PUT', '/api/skills/some-id', { label: 'Skill', instruction: 'Do it' });
+    expect(res.status).toBe(401);
+  });
 
-    const res = await req('PUT', `/api/skills/${updated.id}`, {
+  it('returns 200 with updated skill when caller is owner', async () => {
+    const updated = skillRow({ label: 'Updated Skill', owner_id: TEST_USER_ID });
+    mockPoolQuery
+      .mockResolvedValueOnce({ rows: [{ owner_id: TEST_USER_ID }] })
+      .mockResolvedValueOnce({ rows: [updated] });
+
+    const res = await authReq('PUT', `/api/skills/${updated.id}`, {
       label: 'Updated Skill',
       instruction: 'Be helpful always',
     });
 
     expect(res.status).toBe(200);
-    expect((await res.json()).label).toBe('Updated Skill');
+    const s = await res.json();
+    expect(s.label).toBe('Updated Skill');
+    expect(s.isOwned).toBe(true);
+  });
+
+  it('returns 403 when skill is owned by a different user', async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [{ owner_id: OTHER_USER_ID }] });
+    const res = await authReq('PUT', '/api/skills/some-id', {
+      label: 'Skill',
+      instruction: 'Do it',
+    });
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toBe('Forbidden');
   });
 
   it('returns 404 when skill does not exist', async () => {
-    // UPDATE...RETURNING * returns empty rows when no row matched
     mockPoolQuery.mockResolvedValueOnce({ rows: [] });
-    const res = await req('PUT', '/api/skills/nonexistent', {
+    const res = await authReq('PUT', '/api/skills/nonexistent', {
       label: 'Skill',
       instruction: 'Do it',
     });
@@ -950,9 +1076,19 @@ describe('PUT /api/skills/:id', () => {
   });
 
   it('returns 400 on validation error', async () => {
-    // Validation now runs before the DB call, so no mock needed
-    const res = await req('PUT', '/api/skills/some-id', { label: 'Only label' });
+    const res = await authReq('PUT', '/api/skills/some-id', { label: 'Only label' });
     expect(res.status).toBe(400);
+  });
+
+  it('returns 500 on db error during update', async () => {
+    mockPoolQuery
+      .mockResolvedValueOnce({ rows: [{ owner_id: TEST_USER_ID }] })
+      .mockRejectedValueOnce(new Error('update failed'));
+    const res = await authReq('PUT', '/api/skills/some-id', {
+      label: 'Skill',
+      instruction: 'Do it',
+    });
+    expect(res.status).toBe(500);
   });
 });
 
@@ -961,22 +1097,37 @@ describe('PUT /api/skills/:id', () => {
 // ---------------------------------------------------------------------------
 
 describe('DELETE /api/skills/:id', () => {
-  it('returns 204 on successful delete', async () => {
-    mockPoolQuery.mockResolvedValueOnce({ rowCount: 1 });
+  it('returns 401 when no Authorization header', async () => {
     const res = await req('DELETE', '/api/skills/some-id');
+    expect(res.status).toBe(401);
+  });
+
+  it('returns 204 on successful delete when caller is owner', async () => {
+    mockPoolQuery
+      .mockResolvedValueOnce({ rows: [{ owner_id: TEST_USER_ID }] })
+      .mockResolvedValueOnce({ rowCount: 1 });
+    const res = await authReq('DELETE', '/api/skills/some-id');
     expect(res.status).toBe(204);
+    expect(await res.text()).toBe('');
+  });
+
+  it('returns 403 when skill is owned by a different user', async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [{ owner_id: OTHER_USER_ID }] });
+    const res = await authReq('DELETE', '/api/skills/some-id');
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toBe('Forbidden');
   });
 
   it('returns 404 when skill not found', async () => {
-    mockPoolQuery.mockResolvedValueOnce({ rowCount: 0 });
-    const res = await req('DELETE', '/api/skills/nonexistent');
+    mockPoolQuery.mockResolvedValueOnce({ rows: [] });
+    const res = await authReq('DELETE', '/api/skills/nonexistent');
     expect(res.status).toBe(404);
     expect((await res.json()).error).toBe('Skill not found');
   });
 
   it('returns 500 on db error', async () => {
     mockPoolQuery.mockRejectedValueOnce(new Error('delete failed'));
-    const res = await req('DELETE', '/api/skills/some-id');
+    const res = await authReq('DELETE', '/api/skills/some-id');
     expect(res.status).toBe(500);
   });
 });
