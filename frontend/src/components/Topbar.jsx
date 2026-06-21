@@ -85,9 +85,9 @@ export default function Topbar({
             placeholder="Untitled agent"
           />
 
-          <div className="agent-menu" ref={menuRef}>
+          {isAuthenticated && <div className="agent-menu" ref={menuRef}>
             <button className="btn subtle" onClick={() => setMenuOpen((v) => !v)}>
-              Saved agents {savedAgents.length > 0 ? `(${savedAgents.length})` : ''}
+              My agents {savedAgents.length > 0 ? `(${savedAgents.length})` : ''}
             </button>
             {menuOpen && (
               <div className="agent-menu-list">
@@ -133,7 +133,7 @@ export default function Topbar({
                 ))}
               </div>
             )}
-          </div>
+          </div>}
         </>
       )}
 
