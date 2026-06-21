@@ -160,6 +160,8 @@ export const api = {
 
   // --- Skills (PostgreSQL) -------------------------------------------------
   listSkills: () => request('/skills'),
+  listPublicSkills: () => request('/skills/public'),
+  listMySkills: () => request('/skills/mine'),
   createSkill: (skill) => request('/skills', { method: 'POST', body: JSON.stringify(skill) }),
   updateSkill: (id, skill) => request(`/skills/${id}`, { method: 'PUT', body: JSON.stringify(skill) }),
   deleteSkill: (id) => request(`/skills/${id}`, { method: 'DELETE' }),

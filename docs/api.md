@@ -441,15 +441,55 @@ Unsubscribes the authenticated user from an agent. Returns 404 when the subscrip
 
 ## Custom Skills
 
+Skills follow the same ownership/visibility model as agents. Each skill has an `owner_id` (set on creation) and a `visibility` of `"public"` or `"private"`. Public skills are visible to all users; private skills are only visible to their owner.
+
+### Skill object
+
+```json
+{
+  "id": "bbbbbbbb-0000-0000-0000-000000000001",
+  "label": "Devil's Advocate",
+  "color": "#6b21a8",
+  "description": "Argues the opposing position",
+  "instruction": "After acknowledging the user's point…",
+  "ownerId": "cccccccc-0000-0000-0000-000000000001",
+  "visibility": "public",
+  "createdAt": "2024-01-01T00:00:00.000Z",
+  "updatedAt": "2024-01-01T00:00:00.000Z"
+}
+```
+
+When `isOwned` is present (authenticated endpoints only) it indicates whether the requesting user is the owner of that skill.
+
+---
+
 ### `GET /api/skills`
 
-Returns all custom skills ordered by creation date.
+Legacy endpoint. Returns all **public** skills ordered by creation date. No authentication required.
+
+---
+
+### `GET /api/skills/public`
+
+Returns all public skills. No authentication required.
+
+When called with a valid `Authorization` header each skill carries an `isOwned` boolean indicating whether the requesting user owns it.
+
+---
+
+### `GET /api/skills/mine`
+
+Returns all skills owned by the authenticated user (both public and private). **Requires authentication.**
+
+**Response 200** — array of skill objects, each with `isOwned: true`.
+
+**Response 401** — missing or invalid token.
 
 ---
 
 ### `POST /api/skills`
 
-Creates a custom skill.
+Creates a custom skill. **Requires authentication.** The `owner_id` is set automatically from the token.
 
 **Request body**
 
@@ -459,20 +499,39 @@ Creates a custom skill.
 | `instruction` | string | Yes | Instruction text injected into agents |
 | `description` | string | No | Short description |
 | `color` | string | No | Hex badge color (default `#6366f1`) |
+| `visibility` | string | No | `"public"` or `"private"` (default `"private"`) |
 
-**Response 201** — created skill object.
+**Response 201** — created skill object with `isOwned: true`.
+
+**Response 401** — missing or invalid token.
 
 ---
 
 ### `PUT /api/skills/:id`
 
-Updates a custom skill. **Response 200** — updated skill.
+Updates a custom skill. **Requires authentication.** Only the owner may update a skill.
+
+**Response 200** — updated skill object with `isOwned: true`.
+
+**Response 401** — missing or invalid token.
+
+**Response 403** — authenticated but not the owner.
+
+**Response 404** — skill not found.
 
 ---
 
 ### `DELETE /api/skills/:id`
 
-**Response 204** — no body. **Response 404** if not found.
+Deletes a custom skill. **Requires authentication.** Only the owner may delete a skill.
+
+**Response 204** — no body.
+
+**Response 401** — missing or invalid token.
+
+**Response 403** — authenticated but not the owner.
+
+**Response 404** — skill not found.
 
 ---
 

@@ -325,36 +325,83 @@ app.delete('/api/agents/:id/subscribe', requireAuth, async (req, res) => {
 
 // --- Custom Skills CRUD ---------------------------------------------------
 
+// Legacy endpoint — returns public skills only (no auth required).
 app.get('/api/skills', async (req, res) => {
   try {
-    const { rows } = await db.query('SELECT * FROM custom_skills ORDER BY created_at ASC');
-    res.json(rows);
+    const { rows } = await db.query(
+      "SELECT * FROM custom_skills WHERE visibility = 'public' ORDER BY created_at ASC"
+    );
+    res.json(rows.map(serializeSkill));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-app.post('/api/skills', async (req, res) => {
+// Public skills with optional isOwned flag when authenticated.
+app.get('/api/skills/public', optionalAuth, async (req, res) => {
+  try {
+    if (req.user) {
+      const { rows } = await db.query(
+        `SELECT *, (owner_id = $1) AS is_owned
+         FROM custom_skills
+         WHERE visibility = 'public'
+         ORDER BY created_at ASC`,
+        [req.user.userId]
+      );
+      return res.json(rows.map((r) => ({ ...serializeSkill(r), isOwned: Boolean(r.is_owned) })));
+    }
+    const { rows } = await db.query(
+      "SELECT * FROM custom_skills WHERE visibility = 'public' ORDER BY created_at ASC"
+    );
+    res.json(rows.map(serializeSkill));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// All skills owned by the authenticated user (public and private).
+app.get('/api/skills/mine', requireAuth, async (req, res) => {
+  const userId = req.user.userId;
+  try {
+    const { rows } = await db.query(
+      'SELECT * FROM custom_skills WHERE owner_id = $1 ORDER BY created_at ASC',
+      [userId]
+    );
+    res.json(rows.map((r) => ({ ...serializeSkill(r), isOwned: true })));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/skills', requireAuth, async (req, res) => {
   const skill = validateSkillInput(req.body);
   if (skill.error) return res.status(400).json({ error: skill.error });
 
   const id = crypto.randomUUID();
+  const owner_id = req.user.userId;
   try {
     const { rows } = await db.query(
-      'INSERT INTO custom_skills (id, label, color, description, instruction, visibility) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
-      [id, skill.label, skill.color, skill.description, skill.instruction, skill.visibility]
+      'INSERT INTO custom_skills (id, label, color, description, instruction, visibility, owner_id) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *',
+      [id, skill.label, skill.color, skill.description, skill.instruction, skill.visibility, owner_id]
     );
-    res.status(201).json(rows[0]);
+    res.status(201).json({ ...serializeSkill(rows[0]), isOwned: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-app.put('/api/skills/:id', async (req, res) => {
+app.put('/api/skills/:id', requireAuth, async (req, res) => {
   const skill = validateSkillInput(req.body);
   if (skill.error) return res.status(400).json({ error: skill.error });
 
   try {
+    const { rows: existing } = await db.query(
+      'SELECT owner_id FROM custom_skills WHERE id = $1',
+      [req.params.id]
+    );
+    if (!existing[0]) return res.status(404).json({ error: 'Skill not found' });
+    if (existing[0].owner_id !== req.user.userId) return res.status(403).json({ error: 'Forbidden' });
+
     const { rows } = await db.query(
       `UPDATE custom_skills
        SET label = $1, color = $2, description = $3, instruction = $4, visibility = $5, updated_at = NOW()
@@ -362,17 +409,22 @@ app.put('/api/skills/:id', async (req, res) => {
        RETURNING *`,
       [skill.label, skill.color, skill.description, skill.instruction, skill.visibility, req.params.id]
     );
-    if (!rows[0]) return res.status(404).json({ error: 'Skill not found' });
-    res.json(rows[0]);
+    res.json({ ...serializeSkill(rows[0]), isOwned: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-app.delete('/api/skills/:id', async (req, res) => {
+app.delete('/api/skills/:id', requireAuth, async (req, res) => {
   try {
-    const { rowCount } = await db.query('DELETE FROM custom_skills WHERE id = $1', [req.params.id]);
-    if (rowCount === 0) return res.status(404).json({ error: 'Skill not found' });
+    const { rows } = await db.query(
+      'SELECT owner_id FROM custom_skills WHERE id = $1',
+      [req.params.id]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Skill not found' });
+    if (rows[0].owner_id !== req.user.userId) return res.status(403).json({ error: 'Forbidden' });
+
+    await db.query('DELETE FROM custom_skills WHERE id = $1', [req.params.id]);
     res.status(204).end();
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -704,6 +756,20 @@ function serializeAgent(row) {
     positions: row.positions ?? {},
     skills: row.skills ?? [],
     instructions: row.instructions ?? [],
+    ownerId: row.owner_id ?? null,
+    visibility: row.visibility ?? 'private',
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function serializeSkill(row) {
+  return {
+    id: row.id,
+    label: row.label,
+    color: row.color,
+    description: row.description,
+    instruction: row.instruction,
     ownerId: row.owner_id ?? null,
     visibility: row.visibility ?? 'private',
     createdAt: row.created_at,
