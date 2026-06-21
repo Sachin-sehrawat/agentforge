@@ -1,6 +1,10 @@
 -- Performance indexes for AgentForge
 -- Runs automatically on first container start (after 01_schema.sql).
 -- For existing deployments, run manually: psql -U agentforge -d agentforge -f 02_performance_indexes.sql
+--
+-- NOTE: These indexes are also defined in 01_schema.sql (the canonical baseline).
+-- All CREATE INDEX statements here use IF NOT EXISTS so this file is a safe no-op
+-- on fresh installs and a catch-up script for deployments that pre-date 01_schema.sql.
 
 -- GIN index on agents.tools JSONB — speeds up @> (containment) queries
 -- e.g. "find all agents that use the calculator tool"
