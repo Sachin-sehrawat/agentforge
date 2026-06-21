@@ -160,6 +160,71 @@ export function validateLoginInput(body) {
 }
 
 /**
+ * Validates a builtin skill payload (POST/PUT /api/builtin-skills).
+ * Required: label, instruction. Optional: color, description.
+ */
+export function validateBuiltinSkillInput(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return { error: 'Request body must be a JSON object' };
+  }
+  const label = typeof body.label === 'string' ? body.label.trim() : '';
+  if (!label) return { error: 'label is required' };
+  const instruction = typeof body.instruction === 'string' ? body.instruction.trim() : '';
+  if (!instruction) return { error: 'instruction is required' };
+
+  return {
+    data: {
+      label,
+      color: typeof body.color === 'string' && body.color ? body.color : '#6366f1',
+      description: typeof body.description === 'string' ? body.description.trim() : '',
+      instruction,
+    },
+  };
+}
+
+/**
+ * Validates a persona category payload (POST/PUT /api/personas).
+ * Required: label. Optional: color.
+ */
+export function validatePersonaCategoryInput(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return { error: 'Request body must be a JSON object' };
+  }
+  const label = typeof body.label === 'string' ? body.label.trim() : '';
+  if (!label) return { error: 'label is required' };
+
+  return {
+    data: {
+      label,
+      color: typeof body.color === 'string' && body.color ? body.color : '#6366f1',
+    },
+  };
+}
+
+/**
+ * Validates a persona payload (POST /api/personas/:categoryId/personas and PUT variant).
+ * Required: name, systemPrompt. Optional: tagline, persona.
+ */
+export function validatePersonaInput(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return { error: 'Request body must be a JSON object' };
+  }
+  const name = typeof body.name === 'string' ? body.name.trim() : '';
+  if (!name) return { error: 'name is required' };
+  const systemPrompt = typeof body.systemPrompt === 'string' ? body.systemPrompt.trim() : '';
+  if (!systemPrompt) return { error: 'systemPrompt is required' };
+
+  return {
+    data: {
+      name,
+      tagline: typeof body.tagline === 'string' ? body.tagline.trim() : '',
+      persona: typeof body.persona === 'string' ? body.persona.trim() : '',
+      systemPrompt,
+    },
+  };
+}
+
+/**
  * Validates a draft agent payload sent to POST /api/drafts/:workspaceId.
  */
 export function validateDraftInput(body) {

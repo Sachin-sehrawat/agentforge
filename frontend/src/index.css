@@ -1815,3 +1815,135 @@ button {
   justify-content: flex-end;
   gap: 8px;
 }
+
+/* ── Admin page ────────────────────────────────────────────────────────────── */
+
+.admin-tabs {
+  display: flex;
+  gap: 2px;
+  border-bottom: 1px solid var(--border-soft);
+  margin-bottom: 24px;
+  padding: 0 24px;
+}
+
+.admin-tab {
+  background: none;
+  border: none;
+  padding: 10px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: color 0.12s, border-color 0.12s;
+}
+.admin-tab:hover {
+  color: var(--text);
+}
+.admin-tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.admin-tab-content {
+  padding: 0 24px 32px;
+}
+
+.admin-category {
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  margin-bottom: 8px;
+  overflow: hidden;
+}
+
+.admin-cat-header {
+  display: flex;
+  align-items: center;
+  padding: 4px 12px 4px 4px;
+  background: var(--panel-alt);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.persona-cat-toggle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: 1;
+  background: none;
+  border: none;
+  padding: 6px 4px;
+  cursor: pointer;
+  text-align: left;
+}
+.persona-cat-toggle:hover .persona-cat-label {
+  color: var(--text);
+}
+
+.admin-cat-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.admin-persona-list {
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.admin-persona-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 8px;
+  border-radius: var(--radius-sm);
+  transition: background 0.1s;
+}
+.admin-persona-row:hover {
+  background: var(--panel-alt);
+}
+
+.admin-persona-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.admin-persona-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.admin-persona-tagline {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.admin-persona-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.admin-add-persona {
+  margin-top: 4px;
+  align-self: flex-start;
+  font-size: 12px;
+}
+
+.btn.small {
+  font-size: 11px;
+  padding: 3px 8px;
+}
+

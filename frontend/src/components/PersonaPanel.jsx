@@ -1,7 +1,7 @@
 import React from 'react';
 import PersonaLibrary from './PersonaLibrary.jsx';
 
-export default function PersonaPanel({ activeInstructions, onToggleInstruction }) {
+export default function PersonaPanel({ activeInstructions, onToggleInstruction, categories }) {
   return (
     <aside className="persona-panel">
       <div className="persona-panel-header">
@@ -14,6 +14,7 @@ export default function PersonaPanel({ activeInstructions, onToggleInstruction }
         <PersonaLibrary
           activeInstructions={activeInstructions}
           onToggleInstruction={onToggleInstruction}
+          categories={categories}
         />
       </div>
     </aside>

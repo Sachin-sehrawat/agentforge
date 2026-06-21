@@ -166,6 +166,21 @@ export const api = {
   updateSkill: (id, skill) => request(`/skills/${id}`, { method: 'PUT', body: JSON.stringify(skill) }),
   deleteSkill: (id) => request(`/skills/${id}`, { method: 'DELETE' }),
 
+  // --- Builtin Skills (MongoDB) --------------------------------------------
+  listBuiltinSkills: () => request('/builtin-skills'),
+  createBuiltinSkill: (skill) => request('/builtin-skills', { method: 'POST', body: JSON.stringify(skill) }),
+  updateBuiltinSkill: (id, skill) => request(`/builtin-skills/${id}`, { method: 'PUT', body: JSON.stringify(skill) }),
+  deleteBuiltinSkill: (id) => request(`/builtin-skills/${id}`, { method: 'DELETE' }),
+
+  // --- Persona Categories (MongoDB) ----------------------------------------
+  listPersonaCategories: () => request('/personas'),
+  createPersonaCategory: (category) => request('/personas', { method: 'POST', body: JSON.stringify(category) }),
+  updatePersonaCategory: (id, category) => request(`/personas/${id}`, { method: 'PUT', body: JSON.stringify(category) }),
+  deletePersonaCategory: (id) => request(`/personas/${id}`, { method: 'DELETE' }),
+  createPersona: (categoryId, persona) => request(`/personas/${categoryId}/personas`, { method: 'POST', body: JSON.stringify(persona) }),
+  updatePersona: (categoryId, personaId, persona) => request(`/personas/${categoryId}/personas/${personaId}`, { method: 'PUT', body: JSON.stringify(persona) }),
+  deletePersona: (categoryId, personaId) => request(`/personas/${categoryId}/personas/${personaId}`, { method: 'DELETE' }),
+
   // --- Auth ----------------------------------------------------------------
   signup: (email, password, display_name) =>
     request('/auth/signup', { method: 'POST', body: JSON.stringify({ email, password, display_name }) }),

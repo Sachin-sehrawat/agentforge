@@ -17,6 +17,7 @@ export default function Topbar({
   user,
   onOpenAuth,
   onLogout,
+  isAuthenticated,
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef(null);
@@ -63,6 +64,14 @@ export default function Topbar({
             <span className="topbar-nav-badge">{customSkillsCount}</span>
           )}
         </button>
+        {isAuthenticated && (
+          <button
+            className={`topbar-nav-item${view === 'admin' ? ' active' : ''}`}
+            onClick={() => onSetView('admin')}
+          >
+            Admin
+          </button>
+        )}
       </nav>
 
       {view === 'builder' && (

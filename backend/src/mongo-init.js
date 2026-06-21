@@ -18,6 +18,14 @@ const COLLECTIONS = [
     name: 'draft_agents',
     indexes: [{ key: { workspaceId: 1, createdAt: -1 }, options: {} }],
   },
+  {
+    name: 'builtin_skills',
+    indexes: [{ key: { id: 1 }, options: { unique: true } }],
+  },
+  {
+    name: 'persona_categories',
+    indexes: [{ key: { id: 1 }, options: { unique: true } }],
+  },
 ];
 
 export async function setup() {

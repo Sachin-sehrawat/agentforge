@@ -1,13 +1,12 @@
 import React, { useState } from 'react';
-import { PERSONA_CATEGORIES } from '../data/personas.js';
 
-export default function PersonaLibrary({ activeInstructions, onToggleInstruction }) {
+export default function PersonaLibrary({ activeInstructions, onToggleInstruction, categories = [] }) {
   const [collapsed, setCollapsed] = useState({});
   const [query, setQuery] = useState('');
 
   const q = query.trim().toLowerCase();
 
-  const filtered = PERSONA_CATEGORIES
+  const filtered = categories
     .map((cat) => ({
       ...cat,
       personas: q

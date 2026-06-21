@@ -6,7 +6,7 @@ import { ObjectId } from 'mongodb';
 import db, { pool } from './db.js';
 import { getDb, healthCheck as mongoHealth } from './mongo.js';
 import { TOOL_CATALOG, TOOL_IDS } from './tools/toolDefinitions.js';
-import { validatePreferences, validateWorkspaceData, validateDraftInput, validateSignupInput, validateLoginInput } from './validation.js';
+import { validatePreferences, validateWorkspaceData, validateDraftInput, validateSignupInput, validateLoginInput, validateBuiltinSkillInput, validatePersonaCategoryInput, validatePersonaInput } from './validation.js';
 import { hashPassword, verifyPassword } from './auth/crypto.js';
 import { signAccessToken } from './auth/token.js';
 import { requireAuth, optionalAuth } from './middleware/auth.js';
@@ -431,6 +431,194 @@ app.delete('/api/skills/:id', requireAuth, async (req, res) => {
   }
 });
 
+// --- Builtin Skills (MongoDB) ---------------------------------------------
+// GET is public; write operations require authentication.
+
+app.get('/api/builtin-skills', async (req, res) => {
+  try {
+    const skills = await getDb()
+      .collection('builtin_skills')
+      .find({})
+      .sort({ createdAt: 1 })
+      .toArray();
+    res.json(skills.map(serializeBuiltinSkill));
+  } catch (err) {
+    res.status(503).json({ error: 'Skill service unavailable', detail: err.message });
+  }
+});
+
+app.post('/api/builtin-skills', requireAuth, async (req, res) => {
+  const validation = validateBuiltinSkillInput(req.body);
+  if (validation.error) return res.status(400).json({ error: validation.error });
+
+  const now = new Date();
+  const doc = { id: crypto.randomUUID(), ...validation.data, createdAt: now, updatedAt: now };
+  try {
+    const result = await getDb().collection('builtin_skills').insertOne(doc);
+    const inserted = await getDb().collection('builtin_skills').findOne({ _id: result.insertedId });
+    res.status(201).json(serializeBuiltinSkill(inserted));
+  } catch (err) {
+    res.status(503).json({ error: 'Skill service unavailable', detail: err.message });
+  }
+});
+
+app.put('/api/builtin-skills/:id', requireAuth, async (req, res) => {
+  const validation = validateBuiltinSkillInput(req.body);
+  if (validation.error) return res.status(400).json({ error: validation.error });
+
+  try {
+    const updated = await getDb()
+      .collection('builtin_skills')
+      .findOneAndUpdate(
+        { id: req.params.id },
+        { $set: { ...validation.data, updatedAt: new Date() } },
+        { returnDocument: 'after' }
+      );
+    if (!updated) return res.status(404).json({ error: 'Builtin skill not found' });
+    res.json(serializeBuiltinSkill(updated));
+  } catch (err) {
+    res.status(503).json({ error: 'Skill service unavailable', detail: err.message });
+  }
+});
+
+app.delete('/api/builtin-skills/:id', requireAuth, async (req, res) => {
+  try {
+    const { deletedCount } = await getDb()
+      .collection('builtin_skills')
+      .deleteOne({ id: req.params.id });
+    if (deletedCount === 0) return res.status(404).json({ error: 'Builtin skill not found' });
+    res.status(204).end();
+  } catch (err) {
+    res.status(503).json({ error: 'Skill service unavailable', detail: err.message });
+  }
+});
+
+// --- Persona Categories (MongoDB) -----------------------------------------
+// GET is public; write operations require authentication.
+// Personas are embedded documents within their parent category.
+
+app.get('/api/personas', async (req, res) => {
+  try {
+    const categories = await getDb()
+      .collection('persona_categories')
+      .find({})
+      .sort({ createdAt: 1 })
+      .toArray();
+    res.json(categories.map(serializePersonaCategory));
+  } catch (err) {
+    res.status(503).json({ error: 'Persona service unavailable', detail: err.message });
+  }
+});
+
+app.post('/api/personas', requireAuth, async (req, res) => {
+  const validation = validatePersonaCategoryInput(req.body);
+  if (validation.error) return res.status(400).json({ error: validation.error });
+
+  const now = new Date();
+  const doc = { id: crypto.randomUUID(), ...validation.data, personas: [], createdAt: now, updatedAt: now };
+  try {
+    const result = await getDb().collection('persona_categories').insertOne(doc);
+    const inserted = await getDb().collection('persona_categories').findOne({ _id: result.insertedId });
+    res.status(201).json(serializePersonaCategory(inserted));
+  } catch (err) {
+    res.status(503).json({ error: 'Persona service unavailable', detail: err.message });
+  }
+});
+
+app.put('/api/personas/:categoryId', requireAuth, async (req, res) => {
+  const validation = validatePersonaCategoryInput(req.body);
+  if (validation.error) return res.status(400).json({ error: validation.error });
+
+  try {
+    const updated = await getDb()
+      .collection('persona_categories')
+      .findOneAndUpdate(
+        { id: req.params.categoryId },
+        { $set: { label: validation.data.label, color: validation.data.color, updatedAt: new Date() } },
+        { returnDocument: 'after' }
+      );
+    if (!updated) return res.status(404).json({ error: 'Persona category not found' });
+    res.json(serializePersonaCategory(updated));
+  } catch (err) {
+    res.status(503).json({ error: 'Persona service unavailable', detail: err.message });
+  }
+});
+
+app.delete('/api/personas/:categoryId', requireAuth, async (req, res) => {
+  try {
+    const { deletedCount } = await getDb()
+      .collection('persona_categories')
+      .deleteOne({ id: req.params.categoryId });
+    if (deletedCount === 0) return res.status(404).json({ error: 'Persona category not found' });
+    res.status(204).end();
+  } catch (err) {
+    res.status(503).json({ error: 'Persona service unavailable', detail: err.message });
+  }
+});
+
+app.post('/api/personas/:categoryId/personas', requireAuth, async (req, res) => {
+  const validation = validatePersonaInput(req.body);
+  if (validation.error) return res.status(400).json({ error: validation.error });
+
+  const persona = { id: crypto.randomUUID(), ...validation.data };
+  try {
+    const updated = await getDb()
+      .collection('persona_categories')
+      .findOneAndUpdate(
+        { id: req.params.categoryId },
+        { $push: { personas: persona }, $set: { updatedAt: new Date() } },
+        { returnDocument: 'after' }
+      );
+    if (!updated) return res.status(404).json({ error: 'Persona category not found' });
+    res.status(201).json(serializePersonaCategory(updated));
+  } catch (err) {
+    res.status(503).json({ error: 'Persona service unavailable', detail: err.message });
+  }
+});
+
+app.put('/api/personas/:categoryId/personas/:personaId', requireAuth, async (req, res) => {
+  const validation = validatePersonaInput(req.body);
+  if (validation.error) return res.status(400).json({ error: validation.error });
+
+  try {
+    const updated = await getDb()
+      .collection('persona_categories')
+      .findOneAndUpdate(
+        { id: req.params.categoryId, 'personas.id': req.params.personaId },
+        {
+          $set: {
+            'personas.$.name': validation.data.name,
+            'personas.$.tagline': validation.data.tagline,
+            'personas.$.persona': validation.data.persona,
+            'personas.$.systemPrompt': validation.data.systemPrompt,
+            updatedAt: new Date(),
+          },
+        },
+        { returnDocument: 'after' }
+      );
+    if (!updated) return res.status(404).json({ error: 'Persona not found' });
+    res.json(serializePersonaCategory(updated));
+  } catch (err) {
+    res.status(503).json({ error: 'Persona service unavailable', detail: err.message });
+  }
+});
+
+app.delete('/api/personas/:categoryId/personas/:personaId', requireAuth, async (req, res) => {
+  try {
+    const updated = await getDb()
+      .collection('persona_categories')
+      .findOneAndUpdate(
+        { id: req.params.categoryId },
+        { $pull: { personas: { id: req.params.personaId } }, $set: { updatedAt: new Date() } },
+        { returnDocument: 'after' }
+      );
+    if (!updated) return res.status(404).json({ error: 'Persona category not found' });
+    res.json(serializePersonaCategory(updated));
+  } catch (err) {
+    res.status(503).json({ error: 'Persona service unavailable', detail: err.message });
+  }
+});
+
 // --- Health checks --------------------------------------------------------
 
 app.get('/api/health', async (req, res) => {
@@ -774,6 +962,35 @@ function serializeSkill(row) {
     visibility: row.visibility ?? 'private',
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  };
+}
+
+function serializeBuiltinSkill(doc) {
+  return {
+    id: doc.id,
+    label: doc.label,
+    color: doc.color,
+    description: doc.description || '',
+    instruction: doc.instruction,
+    createdAt: doc.createdAt,
+    updatedAt: doc.updatedAt,
+  };
+}
+
+function serializePersonaCategory(doc) {
+  return {
+    id: doc.id,
+    label: doc.label,
+    color: doc.color,
+    personas: (doc.personas || []).map((p) => ({
+      id: p.id,
+      name: p.name,
+      tagline: p.tagline || '',
+      persona: p.persona || '',
+      systemPrompt: p.systemPrompt || '',
+    })),
+    createdAt: doc.createdAt,
+    updatedAt: doc.updatedAt,
   };
 }
 
