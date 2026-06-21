@@ -324,6 +324,147 @@ app.delete('/api/agents/:id', requireAuth, async (req, res) => {
   }
 });
 
+// --- Agent version history ------------------------------------------------
+
+app.get('/api/agents/:id/versions', requireAuth, async (req, res) => {
+  const agentId = req.params.id;
+  try {
+    const { rows: agentRows } = await db.query(
+      'SELECT owner_id FROM agents WHERE id = $1',
+      [agentId]
+    );
+    if (!agentRows[0]) return res.status(404).json({ error: 'Agent not found' });
+    if (agentRows[0].owner_id !== req.user.userId) return res.status(403).json({ error: 'Forbidden' });
+
+    const { rows } = await db.query(
+      `SELECT version_no, change_summary, created_by, created_at
+       FROM agent_versions
+       WHERE agent_id = $1
+       ORDER BY version_no DESC`,
+      [agentId]
+    );
+    res.json(rows.map((r) => ({
+      versionNo: r.version_no,
+      changeSummary: r.change_summary ?? '',
+      createdBy: r.created_by ?? null,
+      createdAt: r.created_at,
+    })));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/agents/:id/versions/:versionNo', requireAuth, async (req, res) => {
+  const agentId = req.params.id;
+  const versionNo = parseInt(req.params.versionNo, 10);
+  if (!Number.isInteger(versionNo) || versionNo < 1) {
+    return res.status(400).json({ error: 'versionNo must be a positive integer' });
+  }
+  try {
+    const { rows: agentRows } = await db.query(
+      'SELECT owner_id FROM agents WHERE id = $1',
+      [agentId]
+    );
+    if (!agentRows[0]) return res.status(404).json({ error: 'Agent not found' });
+    if (agentRows[0].owner_id !== req.user.userId) return res.status(403).json({ error: 'Forbidden' });
+
+    const { rows } = await db.query(
+      `SELECT version_no, snapshot, change_summary, created_by, created_at
+       FROM agent_versions
+       WHERE agent_id = $1 AND version_no = $2`,
+      [agentId, versionNo]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Version not found' });
+
+    res.json({
+      versionNo: rows[0].version_no,
+      snapshot: rows[0].snapshot,
+      changeSummary: rows[0].change_summary ?? '',
+      createdBy: rows[0].created_by ?? null,
+      createdAt: rows[0].created_at,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/agents/:id/versions/:versionNo/restore', requireAuth, async (req, res) => {
+  const agentId = req.params.id;
+  const versionNo = parseInt(req.params.versionNo, 10);
+  if (!Number.isInteger(versionNo) || versionNo < 1) {
+    return res.status(400).json({ error: 'versionNo must be a positive integer' });
+  }
+  try {
+    const updatedRow = await withClient(async (client) => {
+      const { rows: agentRows } = await client.query(
+        'SELECT owner_id FROM agents WHERE id = $1',
+        [agentId]
+      );
+      if (!agentRows[0]) { const e = new Error('Agent not found'); e.statusCode = 404; throw e; }
+      if (agentRows[0].owner_id !== req.user.userId) { const e = new Error('Forbidden'); e.statusCode = 403; throw e; }
+
+      const { rows: versionRows } = await client.query(
+        'SELECT snapshot FROM agent_versions WHERE agent_id = $1 AND version_no = $2',
+        [agentId, versionNo]
+      );
+      if (!versionRows[0]) { const e = new Error('Version not found'); e.statusCode = 404; throw e; }
+
+      const snap = versionRows[0].snapshot;
+
+      const { rows } = await client.query(
+        `UPDATE agents
+         SET name = $1, persona = $2, system_prompt = $3, model = $4,
+             tools = $5, positions = $6, skills = $7, instructions = $8,
+             updated_at = NOW()
+         WHERE id = $9
+         RETURNING *`,
+        [
+          snap.name,
+          snap.persona,
+          snap.systemPrompt,
+          snap.model,
+          JSON.stringify(snap.tools ?? []),
+          JSON.stringify(snap.positions ?? {}),
+          JSON.stringify(snap.skills ?? []),
+          JSON.stringify(snap.instructions ?? []),
+          agentId,
+        ]
+      );
+      const row = rows[0];
+
+      const canonical = toCanonical(row);
+      const hash = crypto.createHash('sha256').update(JSON.stringify(canonical)).digest('hex');
+
+      const { rows: latest } = await client.query(
+        'SELECT version_no FROM agent_versions WHERE agent_id = $1 ORDER BY version_no DESC LIMIT 1',
+        [agentId]
+      );
+      const nextNo = latest[0] ? latest[0].version_no + 1 : 1;
+
+      await client.query(
+        `INSERT INTO agent_versions (agent_id, version_no, canonical_hash, snapshot, change_summary, created_by)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [
+          agentId,
+          nextNo,
+          hash,
+          JSON.stringify(canonical),
+          `Restored from v${versionNo}`,
+          req.user.userId,
+        ]
+      );
+
+      return row;
+    });
+
+    res.json(serializeAgent(updatedRow));
+  } catch (err) {
+    if (err.statusCode === 404) return res.status(404).json({ error: err.message });
+    if (err.statusCode === 403) return res.status(403).json({ error: err.message });
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // --- Agent subscribe / unsubscribe ----------------------------------------
 // REST sugar over the subscriptions table, scoped to an agent URL.
 // Only public agents are subscribable; subscribing to your own agent is allowed.
