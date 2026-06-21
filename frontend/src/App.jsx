@@ -465,7 +465,7 @@ export default function App() {
         onNew={onNew}
         onSave={onSave}
         saving={saving}
-        savedAgents={isAuthenticated ? myAgents : publicAgents}
+        savedAgents={myAgents}
         onLoad={onLoad}
         onDelete={onDelete}
         onDownload={onDownload}
