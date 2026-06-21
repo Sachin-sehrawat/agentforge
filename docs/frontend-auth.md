@@ -60,6 +60,8 @@ Users are logged out on every page reload. This is intentional. If persistence i
 ```
 User clicks "Save agent" (unauthenticated)
   → App.onSave() detects !isAuthenticated
+  → cancels any pending autosave debounce timer
+  → immediately calls api.saveWorkspaceData + api.saveDraftAgent (draft stash)
   → opens AuthModal with tab='login' and onSuccess=performSave
   → user fills form and submits
   → AuthContext.login() calls POST /api/auth/login, sets token + user
@@ -69,6 +71,19 @@ User clicks "Save agent" (unauthenticated)
 ```
 
 For direct Sign in / Sign up clicks from Topbar the flow is the same but `onSuccess` is `null` (no pending action).
+
+### Draft preservation
+
+When an unauthenticated user clicks Save, the agent state is preserved at two layers:
+
+| Layer | Mechanism | Survives page reload? |
+|---|---|---|
+| In-memory | React `agent` state in `App.jsx` | No — but the auth modal is an overlay, not a navigation, so the state is never lost during normal auth flow |
+| Server draft | `api.saveWorkspaceData` + `api.saveDraftAgent` | Yes — written immediately on the Save click, before the modal opens |
+
+The server write happens synchronously (fire-and-forget) in `onSave` before calling `setAuthModal`. Any debounced autosave timer is cancelled first so there's no double-write race.
+
+After the user logs in, `performSave` runs with the same in-memory `agent` state — no restore step is needed because the modal is an overlay and the state was never discarded.
 
 ### Originating view preservation
 

@@ -280,6 +280,14 @@ export default function App() {
 
   const onSave = () => {
     if (!isAuthenticated) {
+      // Flush any pending debounced autosave immediately so the draft is
+      // captured on the server before the auth modal opens.
+      if (autosaveTimerRef.current) {
+        clearTimeout(autosaveTimerRef.current);
+        autosaveTimerRef.current = null;
+      }
+      api.saveWorkspaceData(WORKSPACE_ID, { agent });
+      api.saveDraftAgent(WORKSPACE_ID, agent);
       setAuthModal({ tab: 'login', onSuccess: performSave });
       return;
     }
