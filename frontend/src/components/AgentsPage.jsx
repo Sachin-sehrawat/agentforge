@@ -22,6 +22,14 @@ function StatPill({ count, label, color }) {
   );
 }
 
+function Badge({ label, color }) {
+  return (
+    <span className="agent-card-stat" style={{ '--stat-color': color }}>
+      {label}
+    </span>
+  );
+}
+
 function AgentCard({ agent, onOpen, onDownload, onDelete }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
 
@@ -49,13 +57,17 @@ function AgentCard({ agent, onOpen, onDownload, onDelete }) {
         {agent.systemPrompt && (
           <div className="agent-card-prompt">{agent.systemPrompt}</div>
         )}
-        {hasStats && (
-          <div className="agent-card-stats">
-            <StatPill count={toolCount} label="tool" color="#6366f1" />
-            <StatPill count={skillCount} label="skill" color="#8b5cf6" />
-            <StatPill count={instrCount} label="instruction" color="#10b981" />
-          </div>
-        )}
+        <div className="agent-card-stats">
+          {agent.isOwned && <Badge label="Owned" color="#6366f1" />}
+          {agent.isSubscribed && !agent.isOwned && <Badge label="Subscribed" color="#8b5cf6" />}
+          {hasStats && (
+            <>
+              <StatPill count={toolCount} label="tool" color="#6366f1" />
+              <StatPill count={skillCount} label="skill" color="#8b5cf6" />
+              <StatPill count={instrCount} label="instruction" color="#10b981" />
+            </>
+          )}
+        </div>
         {toolCount > 0 && (
           <div className="agent-card-tools">
             {agent.tools.slice(0, 5).map((id) => {
@@ -90,13 +102,15 @@ function AgentCard({ agent, onOpen, onDownload, onDelete }) {
             </svg>
             MD
           </button>
-          <button
-            className={`btn${confirmDelete ? ' danger' : ' subtle'}`}
-            onClick={handleDelete}
-            title={confirmDelete ? 'Click again to confirm' : 'Delete agent'}
-          >
-            {confirmDelete ? 'Confirm?' : 'Delete'}
-          </button>
+          {onDelete && (
+            <button
+              className={`btn${confirmDelete ? ' danger' : ' subtle'}`}
+              onClick={handleDelete}
+              title={confirmDelete ? 'Click again to confirm' : 'Delete agent'}
+            >
+              {confirmDelete ? 'Confirm?' : 'Delete'}
+            </button>
+          )}
           <button className="btn primary" onClick={() => onOpen(agent.id)}>
             Open
           </button>
@@ -106,25 +120,94 @@ function AgentCard({ agent, onOpen, onDownload, onDelete }) {
   );
 }
 
-export default function AgentsPage({ savedAgents, onOpen, onDownload, onDelete, onNew }) {
-  const [search, setSearch] = useState('');
-
+function AgentsList({ agents, search, onOpen, onDownload, onDelete, canDelete, emptyNode }) {
   const q = search.trim().toLowerCase();
   const filtered = q
-    ? savedAgents.filter((a) =>
-        a.name.toLowerCase().includes(q) || (a.persona || '').toLowerCase().includes(q)
+    ? agents.filter((a) =>
+        (a.name || '').toLowerCase().includes(q) || (a.persona || '').toLowerCase().includes(q)
       )
-    : savedAgents;
+    : agents;
+
+  if (agents.length === 0) return emptyNode;
+  if (filtered.length === 0) return <p className="filter-empty">No agents match &ldquo;{search}&rdquo;</p>;
+
+  return (
+    <div className="agents-grid">
+      {filtered.map((agent) => (
+        <AgentCard
+          key={agent.id}
+          agent={agent}
+          onOpen={onOpen}
+          onDownload={onDownload}
+          onDelete={canDelete && canDelete(agent) ? onDelete : null}
+        />
+      ))}
+    </div>
+  );
+}
+
+function TabContent({ agents, loading, error, search, onOpen, onDownload, onDelete, canDelete, emptyNode }) {
+  if (loading) {
+    return <div className="agents-loading">Loading…</div>;
+  }
+  if (error) {
+    return <p className="agents-error">Failed to load agents: {error}</p>;
+  }
+  return (
+    <AgentsList
+      agents={agents}
+      search={search}
+      onOpen={onOpen}
+      onDownload={onDownload}
+      onDelete={onDelete}
+      canDelete={canDelete}
+      emptyNode={emptyNode}
+    />
+  );
+}
+
+export default function AgentsPage({
+  publicAgents = [],
+  myAgents = [],
+  loadingPublic = false,
+  loadingMine = false,
+  errorPublic = null,
+  errorMine = null,
+  isAuthenticated = false,
+  onOpen,
+  onDownload,
+  onDelete,
+  onNew,
+  onOpenAuth,
+}) {
+  const [activeTab, setActiveTab] = useState('agents');
+  const [search, setSearch] = useState('');
+
+  const isMyTab = activeTab === 'mine';
+
+  function handleMyAgentsTabClick() {
+    if (!isAuthenticated) {
+      onOpenAuth?.('login');
+    } else {
+      setActiveTab('mine');
+    }
+  }
+
+  const totalShown = isMyTab ? myAgents.length : publicAgents.length;
 
   return (
     <div className="agents-page">
       <div className="agents-page-header">
         <div>
-          <h1 className="agents-page-title">Saved Agents</h1>
+          <h1 className="agents-page-title">Agents</h1>
           <p className="agents-page-sub">
-            {savedAgents.length === 0
-              ? 'No agents yet. Build one in the editor.'
-              : `${savedAgents.length} agent${savedAgents.length !== 1 ? 's' : ''}`}
+            {isMyTab
+              ? myAgents.length === 0
+                ? 'Your saved and subscribed agents.'
+                : `${myAgents.length} agent${myAgents.length !== 1 ? 's' : ''}`
+              : publicAgents.length === 0
+              ? 'Publicly shared agents.'
+              : `${publicAgents.length} public agent${publicAgents.length !== 1 ? 's' : ''}`}
           </p>
         </div>
         <div className="agents-page-header-actions">
@@ -150,35 +233,87 @@ export default function AgentsPage({ savedAgents, onOpen, onDownload, onDelete, 
         </div>
       </div>
 
-      {savedAgents.length === 0 ? (
+      <div className="agents-tabs" role="tablist">
+        <button
+          role="tab"
+          aria-selected={!isMyTab}
+          className={`agents-tab${!isMyTab ? ' active' : ''}`}
+          onClick={() => setActiveTab('agents')}
+        >
+          Agents
+        </button>
+        <button
+          role="tab"
+          aria-selected={isMyTab}
+          className={`agents-tab${isMyTab ? ' active' : ''}`}
+          onClick={handleMyAgentsTabClick}
+        >
+          My Agents
+        </button>
+      </div>
+
+      {isMyTab && !isAuthenticated ? (
         <div className="agents-empty">
           <div className="agents-empty-icon">
             <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="8" y="8" width="32" height="32" rx="4" />
-              <line x1="24" y1="8" x2="24" y2="8" />
-              <line x1="24" y1="16" x2="24" y2="24" />
-              <line x1="16" y1="32" x2="32" y2="32" />
-              <circle cx="18" cy="24" r="2" fill="currentColor" stroke="none" />
-              <circle cx="30" cy="24" r="2" fill="currentColor" stroke="none" />
+              <circle cx="24" cy="16" r="8" />
+              <path d="M8 40c0-8.837 7.163-16 16-16s16 7.163 16 16" />
             </svg>
           </div>
-          <p className="agents-empty-text">No saved agents yet.</p>
-          <button className="btn primary" onClick={onNew}>Build your first agent</button>
+          <p className="agents-empty-text">Sign in to see your saved and subscribed agents.</p>
+          <button className="btn primary" onClick={() => onOpenAuth?.('login')}>Sign in</button>
         </div>
-      ) : filtered.length === 0 ? (
-        <p className="filter-empty">No agents match "{search}"</p>
+      ) : isMyTab ? (
+        <TabContent
+          agents={myAgents}
+          loading={loadingMine}
+          error={errorMine}
+          search={search}
+          onOpen={onOpen}
+          onDownload={onDownload}
+          onDelete={onDelete}
+          canDelete={(agent) => agent.isOwned}
+          emptyNode={
+            <div className="agents-empty">
+              <div className="agents-empty-icon">
+                <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="8" y="8" width="32" height="32" rx="4" />
+                  <line x1="24" y1="16" x2="24" y2="24" />
+                  <line x1="16" y1="32" x2="32" y2="32" />
+                  <circle cx="18" cy="24" r="2" fill="currentColor" stroke="none" />
+                  <circle cx="30" cy="24" r="2" fill="currentColor" stroke="none" />
+                </svg>
+              </div>
+              <p className="agents-empty-text">No agents yet.</p>
+              <button className="btn primary" onClick={onNew}>Build your first agent</button>
+            </div>
+          }
+        />
       ) : (
-        <div className="agents-grid">
-          {filtered.map((agent) => (
-            <AgentCard
-              key={agent.id}
-              agent={agent}
-              onOpen={onOpen}
-              onDownload={onDownload}
-              onDelete={onDelete}
-            />
-          ))}
-        </div>
+        <TabContent
+          agents={publicAgents}
+          loading={loadingPublic}
+          error={errorPublic}
+          search={search}
+          onOpen={onOpen}
+          onDownload={onDownload}
+          onDelete={null}
+          emptyNode={
+            <div className="agents-empty">
+              <div className="agents-empty-icon">
+                <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="8" y="8" width="32" height="32" rx="4" />
+                  <line x1="24" y1="16" x2="24" y2="24" />
+                  <line x1="16" y1="32" x2="32" y2="32" />
+                  <circle cx="18" cy="24" r="2" fill="currentColor" stroke="none" />
+                  <circle cx="30" cy="24" r="2" fill="currentColor" stroke="none" />
+                </svg>
+              </div>
+              <p className="agents-empty-text">No public agents yet.</p>
+              <button className="btn primary" onClick={onNew}>Build your first agent</button>
+            </div>
+          }
+        />
       )}
     </div>
   );

@@ -42,6 +42,7 @@ architecture rationale and migration history.
 - **Tool palette** — drag built-in tools (Calculator, Code Runner, API Request, Web Search) onto the canvas to wire them into the agent.
 - **Custom skills** — create reusable skill definitions (label, description, instruction) and attach them to any agent.
 - **Markdown export** — click **Export MD** in the top bar to download a Markdown spec of the agent's full configuration. The button is always visible (no login required) and enabled as soon as the agent has any content.
+- **Agents page** — browse all public agents in the **Agents** tab (no login required). Sign in to access **My Agents**, which shows agents you own plus any public agents you have subscribed to. Owned agents display an **Owned** badge; subscriptions show a **Subscribed** badge.
 - **Saved agents** — agents are stored in PostgreSQL; reload or download them from the top bar at any time.
 
 ## Requirements
