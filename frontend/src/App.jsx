@@ -6,13 +6,12 @@ import PersonaPanel from './components/PersonaPanel.jsx';
 import SkillsBar from './components/SkillsBar.jsx';
 import AgentsPage from './components/AgentsPage.jsx';
 import SkillsPage from './components/SkillsPage.jsx';
+import AdminPage from './components/AdminPage.jsx';
 import AuthModal from './components/AuthModal.jsx';
 import ErrorBoundary from './components/ErrorBoundary.jsx';
 import { api } from './api.js';
 import { useAuth } from './AuthContext.jsx';
 import { TOOL_META } from './toolMeta.jsx';
-import { SKILLS } from './data/skills.js';
-import { PERSONA_CATEGORIES } from './data/personas.js';
 
 const DEFAULT_AGENT = {
   id: null,
@@ -32,15 +31,11 @@ const USER_ID = 'default';
 // Auto-save workspace state this many ms after the last canvas change.
 const AUTOSAVE_DEBOUNCE_MS = 1500;
 
-const PERSONA_LOOKUP = Object.fromEntries(
-  PERSONA_CATEGORIES.flatMap((c) => c.personas.map((p) => [p.id, p]))
-);
-
 function defaultToolPosition(index) {
   return { x: 460, y: 30 + index * 150 };
 }
 
-function generateMarkdown(agent, allSkills) {
+function generateMarkdown(agent, allSkills, personaLookup) {
   const toolLines = agent.tools.length
     ? agent.tools.map((id) => {
         const meta = TOOL_META[id];
@@ -57,7 +52,7 @@ function generateMarkdown(agent, allSkills) {
     : '';
 
   const activeInstructions = (agent.instructions || [])
-    .map((id) => PERSONA_LOOKUP[id])
+    .map((id) => (personaLookup || {})[id])
     .filter(Boolean);
 
   const instructionLines = activeInstructions.length
@@ -92,6 +87,8 @@ export default function App() {
   const [errorMine, setErrorMine] = useState(null);
   const [saving, setSaving] = useState(false);
   const [view, setView] = useState('builder');
+  const [builtinSkills, setBuiltinSkills] = useState([]);
+  const [personaCategories, setPersonaCategories] = useState([]);
   const [customSkills, setCustomSkills] = useState([]);
   const [loadingWorkspace, setLoadingWorkspace] = useState(true);
   const [canvasView, setCanvasView] = useState({ zoom: 1, pan: { x: 0, y: 0 } });
@@ -103,14 +100,23 @@ export default function App() {
 
   const allSkills = useMemo(
     () => [
-      ...SKILLS.map((s) => ({ ...s, builtin: true })),
+      ...builtinSkills.map((s) => ({ ...s, builtin: true })),
       ...customSkills.map((s) => ({ ...s, builtin: false })),
     ],
-    [customSkills]
+    [builtinSkills, customSkills]
+  );
+
+  const personaLookup = useMemo(
+    () => Object.fromEntries(
+      personaCategories.flatMap((c) => c.personas.map((p) => [p.id, p]))
+    ),
+    [personaCategories]
   );
 
   // On mount: load public agents, custom skills, user preferences, and the last workspace state.
   useEffect(() => {
+    api.listBuiltinSkills().then(setBuiltinSkills).catch(() => {});
+    api.listPersonaCategories().then(setPersonaCategories).catch(() => {});
     refreshPublicAgents();
     refreshCustomSkills(false); // initial fetch is unauthenticated; auth effect re-fetches with ownership
 
@@ -118,7 +124,7 @@ export default function App() {
       api.getUserPreferences(USER_ID),
       api.getWorkspaceData(WORKSPACE_ID),
     ]).then(([prefs, wsData]) => {
-      if (prefs.view && ['builder', 'agents', 'skills'].includes(prefs.view)) {
+      if (prefs.view && ['builder', 'agents', 'skills', 'admin'].includes(prefs.view)) {
         setView(prefs.view);
       }
       if (typeof prefs.canvas_zoom === 'number' || prefs.canvas_pan) {
@@ -296,7 +302,7 @@ export default function App() {
   };
 
   const downloadMd = (agentData) => {
-    const md = generateMarkdown(agentData, allSkills);
+    const md = generateMarkdown(agentData, allSkills, personaLookup);
     const blob = new Blob([md], { type: 'text/markdown' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -469,6 +475,7 @@ export default function App() {
         user={user}
         onOpenAuth={(tab) => setAuthModal({ tab, onSuccess: null })}
         onLogout={logout}
+        isAuthenticated={isAuthenticated}
       />
 
       {authModal && (
@@ -509,6 +516,15 @@ export default function App() {
           isAuthenticated={isAuthenticated}
           onOpenAuth={(tab) => setAuthModal({ tab, onSuccess: null })}
         />
+      ) : view === 'admin' ? (
+        <AdminPage
+          builtinSkills={builtinSkills}
+          personaCategories={personaCategories}
+          onBuiltinSkillsChange={setBuiltinSkills}
+          onPersonaCategoriesChange={setPersonaCategories}
+          isAuthenticated={isAuthenticated}
+          onOpenAuth={(tab) => setAuthModal({ tab, onSuccess: null })}
+        />
       ) : (
         <>
           <SkillsBar skills={allSkills} activeSkills={agent.skills} onToggleSkill={onToggleSkill} />
@@ -534,6 +550,7 @@ export default function App() {
                 <PersonaPanel
                   activeInstructions={agent.instructions}
                   onToggleInstruction={onToggleInstruction}
+                  categories={personaCategories}
                 />
               </div>
             </ErrorBoundary>
