@@ -3,7 +3,8 @@ import cors from 'cors';
 import compression from 'compression';
 import crypto from 'node:crypto';
 import { ObjectId } from 'mongodb';
-import db, { pool } from './db.js';
+import db, { pool, withClient } from './db.js';
+import { toCanonical } from './serialization/agentSchema.js';
 import { getDb, healthCheck as mongoHealth } from './mongo.js';
 import { TOOL_CATALOG, TOOL_IDS } from './tools/toolDefinitions.js';
 import { validatePreferences, validateWorkspaceData, validateDraftInput, validateSignupInput, validateLoginInput, validateBuiltinSkillInput, validatePersonaCategoryInput, validatePersonaInput } from './validation.js';
@@ -177,28 +178,40 @@ app.post('/api/agents', requireAuth, async (req, res) => {
   const agent = validateAgentInput(req.body);
   if (agent.error) return res.status(400).json({ error: agent.error });
 
+  const changeSummary = typeof req.body?.changeSummary === 'string' ? req.body.changeSummary.trim() : '';
   const id = crypto.randomUUID();
   const owner_id = req.user.userId;
   try {
-    const { rows } = await db.query(
-      `INSERT INTO agents (id, name, persona, system_prompt, model, tools, positions, skills, instructions, visibility, owner_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-       RETURNING *`,
-      [
-        id,
-        agent.name,
-        agent.persona,
-        agent.systemPrompt,
-        agent.model,
-        JSON.stringify(agent.tools),
-        JSON.stringify(agent.positions),
-        JSON.stringify(agent.skills),
-        JSON.stringify(agent.instructions),
-        agent.visibility,
-        owner_id,
-      ]
-    );
-    res.status(201).json(serializeAgent(rows[0]));
+    const newRow = await withClient(async (client) => {
+      const { rows } = await client.query(
+        `INSERT INTO agents (id, name, persona, system_prompt, model, tools, positions, skills, instructions, visibility, owner_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+         RETURNING *`,
+        [
+          id,
+          agent.name,
+          agent.persona,
+          agent.systemPrompt,
+          agent.model,
+          JSON.stringify(agent.tools),
+          JSON.stringify(agent.positions),
+          JSON.stringify(agent.skills),
+          JSON.stringify(agent.instructions),
+          agent.visibility,
+          owner_id,
+        ]
+      );
+      const row = rows[0];
+      const canonical = toCanonical(row);
+      const hash = crypto.createHash('sha256').update(JSON.stringify(canonical)).digest('hex');
+      await client.query(
+        `INSERT INTO agent_versions (agent_id, version_no, canonical_hash, snapshot, change_summary)
+         VALUES ($1, 1, $2, $3, $4)`,
+        [row.id, hash, JSON.stringify(canonical), changeSummary]
+      );
+      return row;
+    });
+    res.status(201).json(serializeAgent(newRow));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -208,36 +221,64 @@ app.put('/api/agents/:id', requireAuth, async (req, res) => {
   const agent = validateAgentInput(req.body);
   if (agent.error) return res.status(400).json({ error: agent.error });
 
-  try {
-    const { rows: existing } = await db.query(
-      'SELECT owner_id FROM agents WHERE id = $1',
-      [req.params.id]
-    );
-    if (!existing[0]) return res.status(404).json({ error: 'Agent not found' });
-    if (existing[0].owner_id !== req.user.userId) return res.status(403).json({ error: 'Forbidden' });
+  const changeSummary = typeof req.body?.changeSummary === 'string' ? req.body.changeSummary.trim() : '';
 
-    const { rows } = await db.query(
-      `UPDATE agents
-       SET name = $1, persona = $2, system_prompt = $3, model = $4,
-           tools = $5, positions = $6, skills = $7, instructions = $8,
-           visibility = $9, updated_at = NOW()
-       WHERE id = $10
-       RETURNING *`,
-      [
-        agent.name,
-        agent.persona,
-        agent.systemPrompt,
-        agent.model,
-        JSON.stringify(agent.tools),
-        JSON.stringify(agent.positions),
-        JSON.stringify(agent.skills),
-        JSON.stringify(agent.instructions),
-        agent.visibility,
-        req.params.id,
-      ]
-    );
-    res.json(serializeAgent(rows[0]));
+  try {
+    const updatedRow = await withClient(async (client) => {
+      const { rows: existing } = await client.query(
+        'SELECT owner_id FROM agents WHERE id = $1',
+        [req.params.id]
+      );
+      if (!existing[0]) { const e = new Error('Agent not found'); e.statusCode = 404; throw e; }
+      if (existing[0].owner_id !== req.user.userId) { const e = new Error('Forbidden'); e.statusCode = 403; throw e; }
+
+      const { rows } = await client.query(
+        `UPDATE agents
+         SET name = $1, persona = $2, system_prompt = $3, model = $4,
+             tools = $5, positions = $6, skills = $7, instructions = $8,
+             visibility = $9, updated_at = NOW()
+         WHERE id = $10
+         RETURNING *`,
+        [
+          agent.name,
+          agent.persona,
+          agent.systemPrompt,
+          agent.model,
+          JSON.stringify(agent.tools),
+          JSON.stringify(agent.positions),
+          JSON.stringify(agent.skills),
+          JSON.stringify(agent.instructions),
+          agent.visibility,
+          req.params.id,
+        ]
+      );
+      const row = rows[0];
+
+      const canonical = toCanonical(row);
+      const hash = crypto.createHash('sha256').update(JSON.stringify(canonical)).digest('hex');
+
+      const { rows: latest } = await client.query(
+        `SELECT canonical_hash, version_no FROM agent_versions
+         WHERE agent_id = $1 ORDER BY version_no DESC LIMIT 1`,
+        [row.id]
+      );
+
+      if (!latest[0] || latest[0].canonical_hash !== hash) {
+        const nextNo = latest[0] ? latest[0].version_no + 1 : 1;
+        await client.query(
+          `INSERT INTO agent_versions (agent_id, version_no, canonical_hash, snapshot, change_summary)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [row.id, nextNo, hash, JSON.stringify(canonical), changeSummary]
+        );
+      }
+
+      return row;
+    });
+
+    res.json(serializeAgent(updatedRow));
   } catch (err) {
+    if (err.statusCode === 404) return res.status(404).json({ error: err.message });
+    if (err.statusCode === 403) return res.status(403).json({ error: err.message });
     res.status(500).json({ error: err.message });
   }
 });

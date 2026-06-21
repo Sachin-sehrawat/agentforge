@@ -88,7 +88,27 @@ CREATE TABLE IF NOT EXISTS subscriptions (
 CREATE INDEX IF NOT EXISTS idx_subscriptions_user_id  ON subscriptions (user_id);
 CREATE INDEX IF NOT EXISTS idx_subscriptions_agent_id ON subscriptions (agent_id);
 
+-- Agent versions -----------------------------------------------------------
+-- Immutable snapshots of the canonical agent state, one row per save.
+-- version_no is monotonically increasing per agent; gaps are not allowed.
+-- canonical_hash enables no-op detection: equal hash = skip insert.
+
+CREATE TABLE IF NOT EXISTS agent_versions (
+  id             BIGSERIAL   PRIMARY KEY,
+  agent_id       UUID        NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+  version_no     INT         NOT NULL,
+  canonical_hash TEXT        NOT NULL,
+  snapshot       JSONB       NOT NULL,
+  change_summary TEXT        NOT NULL DEFAULT '',
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (agent_id, version_no)
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_versions_agent_id
+  ON agent_versions (agent_id, version_no DESC);
+
 ANALYZE users;
 ANALYZE agents;
 ANALYZE custom_skills;
 ANALYZE subscriptions;
+ANALYZE agent_versions;
