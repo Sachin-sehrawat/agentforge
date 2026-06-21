@@ -30,14 +30,20 @@ function Badge({ label, color }) {
   );
 }
 
-function AgentCard({ agent, onOpen, onDownload, onDelete, onSubscribe }) {
+function AgentCard({ agent, onOpen, onDownload, onDelete, onSubscribe, onToggleVisibility }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [confirmPublish, setConfirmPublish] = useState(false);
   const [subscribed, setSubscribed] = useState(Boolean(agent.isSubscribed));
+  const [visibility, setVisibility] = useState(agent.visibility || 'private');
 
   // Keep local state in sync when parent refreshes the agent list
   useEffect(() => {
     setSubscribed(Boolean(agent.isSubscribed));
   }, [agent.isSubscribed]);
+
+  useEffect(() => {
+    setVisibility(agent.visibility || 'private');
+  }, [agent.visibility]);
 
   async function handleSubscribe() {
     const wasSubscribed = subscribed;
@@ -46,6 +52,24 @@ function AgentCard({ agent, onOpen, onDownload, onDelete, onSubscribe }) {
       await onSubscribe(agent);
     } catch {
       setSubscribed(wasSubscribed);
+    }
+  }
+
+  async function handleToggleVisibility() {
+    const isPrivate = visibility === 'private';
+    if (isPrivate && !confirmPublish) {
+      setConfirmPublish(true);
+      setTimeout(() => setConfirmPublish(false), 3000);
+      return;
+    }
+    setConfirmPublish(false);
+    const prevVis = visibility;
+    const nextVis = isPrivate ? 'public' : 'private';
+    setVisibility(nextVis);
+    try {
+      await onToggleVisibility({ ...agent, visibility: prevVis });
+    } catch {
+      setVisibility(prevVis);
     }
   }
 
@@ -75,6 +99,12 @@ function AgentCard({ agent, onOpen, onDownload, onDelete, onSubscribe }) {
         )}
         <div className="agent-card-stats">
           {agent.isOwned && <Badge label="Owned" color="#6366f1" />}
+          {agent.isOwned && (
+            <Badge
+              label={visibility === 'public' ? 'Public' : 'Private'}
+              color={visibility === 'public' ? '#10b981' : '#9ca3af'}
+            />
+          )}
           {agent.isSubscribed && !agent.isOwned && <Badge label="Subscribed" color="#8b5cf6" />}
           {hasStats && (
             <>
@@ -118,6 +148,25 @@ function AgentCard({ agent, onOpen, onDownload, onDelete, onSubscribe }) {
             </svg>
             MD
           </button>
+          {onToggleVisibility && (
+            <button
+              className={`btn${confirmPublish ? ' danger' : ' subtle'}`}
+              onClick={handleToggleVisibility}
+              title={
+                confirmPublish
+                  ? 'Click again — agent will be visible to everyone'
+                  : visibility === 'public'
+                  ? 'Make private'
+                  : 'Make public'
+              }
+            >
+              {confirmPublish
+                ? 'Publish?'
+                : visibility === 'public'
+                ? 'Make Private'
+                : 'Make Public'}
+            </button>
+          )}
           {onDelete && (
             <button
               className={`btn${confirmDelete ? ' danger' : ' subtle'}`}
@@ -145,7 +194,7 @@ function AgentCard({ agent, onOpen, onDownload, onDelete, onSubscribe }) {
   );
 }
 
-function AgentsList({ agents, search, onOpen, onDownload, onDelete, canDelete, onSubscribe, emptyNode }) {
+function AgentsList({ agents, search, onOpen, onDownload, onDelete, canDelete, onSubscribe, onToggleVisibility, emptyNode }) {
   const q = search.trim().toLowerCase();
   const filtered = q
     ? agents.filter((a) =>
@@ -166,13 +215,14 @@ function AgentsList({ agents, search, onOpen, onDownload, onDelete, canDelete, o
           onDownload={onDownload}
           onDelete={canDelete && canDelete(agent) ? onDelete : null}
           onSubscribe={onSubscribe || null}
+          onToggleVisibility={onToggleVisibility && agent.isOwned ? onToggleVisibility : null}
         />
       ))}
     </div>
   );
 }
 
-function TabContent({ agents, loading, error, search, onOpen, onDownload, onDelete, canDelete, onSubscribe, emptyNode }) {
+function TabContent({ agents, loading, error, search, onOpen, onDownload, onDelete, canDelete, onSubscribe, onToggleVisibility, emptyNode }) {
   if (loading) {
     return <div className="agents-loading">Loading…</div>;
   }
@@ -188,6 +238,7 @@ function TabContent({ agents, loading, error, search, onOpen, onDownload, onDele
       onDelete={onDelete}
       canDelete={canDelete}
       onSubscribe={onSubscribe}
+      onToggleVisibility={onToggleVisibility}
       emptyNode={emptyNode}
     />
   );
@@ -207,6 +258,7 @@ export default function AgentsPage({
   onNew,
   onOpenAuth,
   onSubscribe,
+  onToggleVisibility,
 }) {
   const [activeTab, setActiveTab] = useState('agents');
   const [search, setSearch] = useState('');
@@ -311,6 +363,7 @@ export default function AgentsPage({
           onDownload={onDownload}
           onDelete={onDelete}
           canDelete={(agent) => agent.isOwned}
+          onToggleVisibility={onToggleVisibility}
           emptyNode={
             <div className="agents-empty">
               <div className="agents-empty-icon">

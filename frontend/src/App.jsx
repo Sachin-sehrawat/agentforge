@@ -350,6 +350,30 @@ export default function App() {
     }
   };
 
+  const onToggleVisibility = async (agent) => {
+    const newVisibility = agent.visibility === 'public' ? 'private' : 'public';
+    try {
+      const updated = await api.updateAgentVisibility(agent.id, newVisibility);
+      setMyAgents((prev) =>
+        prev.map((a) => (a.id === agent.id ? { ...a, visibility: updated.visibility } : a))
+      );
+      if (newVisibility === 'public') {
+        setPublicAgents((prev) =>
+          prev.some((a) => a.id === agent.id)
+            ? prev.map((a) => (a.id === agent.id ? { ...a, visibility: 'public' } : a))
+            : [updated, ...prev]
+        );
+      } else {
+        // Went private — remove from public list; also drop any non-owner subscriptions
+        setPublicAgents((prev) => prev.filter((a) => a.id !== agent.id));
+        setMyAgents((prev) => prev.filter((a) => !(a.id === agent.id && !a.isOwned)));
+      }
+    } catch (err) {
+      console.error('Could not update visibility:', err.message);
+      throw err;
+    }
+  };
+
   const onSubscribe = async (agent) => {
     const agentId = agent.id;
     const subscribing = !agent.isSubscribed;
@@ -456,6 +480,7 @@ export default function App() {
           onNew={onNew}
           onOpenAuth={(tab) => setAuthModal({ tab, onSuccess: null })}
           onSubscribe={onSubscribe}
+          onToggleVisibility={onToggleVisibility}
         />
       ) : view === 'skills' ? (
         <SkillsPage

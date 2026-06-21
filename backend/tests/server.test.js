@@ -615,6 +615,90 @@ describe('PUT /api/agents/:id', () => {
 });
 
 // ---------------------------------------------------------------------------
+// PATCH /api/agents/:id  (visibility toggle)
+// ---------------------------------------------------------------------------
+
+describe('PATCH /api/agents/:id', () => {
+  it('returns 401 when no Authorization header', async () => {
+    const res = await req('PATCH', '/api/agents/some-id', { visibility: 'public' });
+    expect(res.status).toBe(401);
+  });
+
+  it('returns 200 with updated agent when owner makes it public', async () => {
+    const updated = agentRow({ owner_id: TEST_USER_ID, visibility: 'public' });
+    mockPoolQuery
+      .mockResolvedValueOnce({ rows: [{ owner_id: TEST_USER_ID }] })
+      .mockResolvedValueOnce({ rows: [updated] });
+
+    const res = await authReq('PATCH', `/api/agents/${updated.id}`, { visibility: 'public' });
+    expect(res.status).toBe(200);
+    const a = await res.json();
+    expect(a.visibility).toBe('public');
+  });
+
+  it('returns 200 with updated agent when owner makes it private', async () => {
+    const updated = agentRow({ owner_id: TEST_USER_ID, visibility: 'private' });
+    mockPoolQuery
+      .mockResolvedValueOnce({ rows: [{ owner_id: TEST_USER_ID }] })
+      .mockResolvedValueOnce({ rows: [updated] });
+
+    const res = await authReq('PATCH', `/api/agents/${updated.id}`, { visibility: 'private' });
+    expect(res.status).toBe(200);
+    const a = await res.json();
+    expect(a.visibility).toBe('private');
+  });
+
+  it('returns 400 when visibility is missing', async () => {
+    const res = await authReq('PATCH', '/api/agents/some-id', {});
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/visibility/i);
+  });
+
+  it('returns 400 when visibility is an invalid value', async () => {
+    const res = await authReq('PATCH', '/api/agents/some-id', { visibility: 'restricted' });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/visibility/i);
+  });
+
+  it('returns 403 when agent is owned by a different user', async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [{ owner_id: OTHER_USER_ID }] });
+    const res = await authReq('PATCH', '/api/agents/some-id', { visibility: 'public' });
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toBe('Forbidden');
+  });
+
+  it('returns 404 when agent does not exist', async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [] });
+    const res = await authReq('PATCH', '/api/agents/nonexistent', { visibility: 'public' });
+    expect(res.status).toBe(404);
+    expect((await res.json()).error).toBe('Agent not found');
+  });
+
+  it('returns 500 on db error during update', async () => {
+    mockPoolQuery
+      .mockResolvedValueOnce({ rows: [{ owner_id: TEST_USER_ID }] })
+      .mockRejectedValueOnce(new Error('update failed'));
+    const res = await authReq('PATCH', '/api/agents/some-id', { visibility: 'public' });
+    expect(res.status).toBe(500);
+  });
+
+  it('only updates visibility — does not require other agent fields', async () => {
+    const updated = agentRow({ owner_id: TEST_USER_ID, visibility: 'public' });
+    mockPoolQuery
+      .mockResolvedValueOnce({ rows: [{ owner_id: TEST_USER_ID }] })
+      .mockResolvedValueOnce({ rows: [updated] });
+
+    const res = await authReq('PATCH', `/api/agents/${updated.id}`, { visibility: 'public' });
+    expect(res.status).toBe(200);
+    // Verify the UPDATE query only contains visibility, not all fields
+    const updateCall = mockPoolQuery.mock.calls[1];
+    expect(updateCall[0]).toMatch(/SET visibility/i);
+    expect(updateCall[0]).not.toMatch(/name\s*=\s*\$\d/i);
+    expect(updateCall[1]).toEqual(['public', updated.id]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // DELETE /api/agents/:id
 // ---------------------------------------------------------------------------
 

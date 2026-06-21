@@ -152,6 +152,8 @@ export const api = {
   getAgent: (id) => request(`/agents/${id}`),
   createAgent: (agent) => request('/agents', { method: 'POST', body: JSON.stringify(agent) }),
   updateAgent: (id, agent) => request(`/agents/${id}`, { method: 'PUT', body: JSON.stringify(agent) }),
+  updateAgentVisibility: (id, visibility) =>
+    request(`/agents/${id}`, { method: 'PATCH', body: JSON.stringify({ visibility }) }),
   deleteAgent: (id) => request(`/agents/${id}`, { method: 'DELETE' }),
   subscribeAgent: (id) => request(`/agents/${id}/subscribe`, { method: 'POST' }),
   unsubscribeAgent: (id) => request(`/agents/${id}/subscribe`, { method: 'DELETE' }),

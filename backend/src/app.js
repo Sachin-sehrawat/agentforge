@@ -242,6 +242,31 @@ app.put('/api/agents/:id', requireAuth, async (req, res) => {
   }
 });
 
+app.patch('/api/agents/:id', requireAuth, async (req, res) => {
+  const VALID_VISIBILITY = ['public', 'private'];
+  const visibility = typeof req.body?.visibility === 'string' ? req.body.visibility : null;
+  if (!visibility || !VALID_VISIBILITY.includes(visibility)) {
+    return res.status(400).json({ error: 'visibility must be "public" or "private"' });
+  }
+
+  try {
+    const { rows: existing } = await db.query(
+      'SELECT owner_id FROM agents WHERE id = $1',
+      [req.params.id]
+    );
+    if (!existing[0]) return res.status(404).json({ error: 'Agent not found' });
+    if (existing[0].owner_id !== req.user.userId) return res.status(403).json({ error: 'Forbidden' });
+
+    const { rows } = await db.query(
+      `UPDATE agents SET visibility = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
+      [visibility, req.params.id]
+    );
+    res.json(serializeAgent(rows[0]));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.delete('/api/agents/:id', requireAuth, async (req, res) => {
   try {
     const { rows } = await db.query(
