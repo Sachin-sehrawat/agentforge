@@ -131,6 +131,44 @@ The migration script will not duplicate rows — it upserts by the derived UUID.
 
 ---
 
+## Adding `agent_versions` to an Existing Deployment
+
+`backend/db/init/06_agent_versions.sql` runs automatically on a **fresh** volume (`docker-compose up` with no prior data). For existing deployments the init directory is not re-executed, so you must apply the DDL manually:
+
+```sql
+-- Run against your PostgreSQL instance (psql, DBeaver, etc.)
+CREATE TABLE IF NOT EXISTS agent_versions (
+  id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  agent_id        UUID        NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+  version_no      INTEGER     NOT NULL,
+  snapshot        JSONB       NOT NULL,
+  change_summary  TEXT,
+  created_by      UUID        REFERENCES users(id) ON DELETE SET NULL,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (agent_id, version_no)
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_versions_agent
+  ON agent_versions (agent_id, version_no DESC);
+
+ANALYZE agent_versions;
+```
+
+**Cascade delete:** deleting an agent row automatically removes all of its `agent_versions` rows via `ON DELETE CASCADE` on the `agent_id` foreign key. No application-level cleanup is required.
+
+**Verify after applying:**
+
+```sql
+-- Confirm the table exists
+SELECT table_name FROM information_schema.tables
+WHERE table_schema = 'public' AND table_name = 'agent_versions';
+
+-- Confirm cascade: delete a test agent and check versions are gone
+-- (use a non-production agent or a throwaway row)
+```
+
+---
+
 ## Related Documents
 
 - [Database Schema](database-schema.md) — PostgreSQL tables and MongoDB collections
