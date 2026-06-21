@@ -1,7 +1,7 @@
 // MongoDB initialization script — runs once on first container start
-// Executed as the root user inside the agentforge database
+// Executed as the root user inside the agentbuilder database
 
-db = db.getSiblingDB(process.env.MONGO_INITDB_DATABASE || 'agentforge');
+db = db.getSiblingDB(process.env.MONGO_INITDB_DATABASE || 'agentbuilder');
 
 // user_preferences — one document per userId
 db.createCollection('user_preferences');

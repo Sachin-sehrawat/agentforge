@@ -54,8 +54,8 @@ Options:
 
 Environment variables (or .env file):
   MONGO_URI   Full MongoDB connection URI (required)
-              e.g. mongodb://admin:pass@localhost:27017/agentforge?authSource=admin
-  MONGO_DB    Database name (default: agentforge, overridden by URI db if present)
+              e.g. mongodb://admin:pass@localhost:27017/agentbuilder?authSource=admin
+  MONGO_DB    Database name (default: agentbuilder, overridden by URI db if present)
 `.trim());
   process.exit(0);
 }
@@ -85,7 +85,7 @@ async function main() {
     process.exit(1);
   }
 
-  const dbName = process.env.MONGO_DB ?? 'agentforge';
+  const dbName = process.env.MONGO_DB ?? 'agentbuilder';
 
   fs.mkdirSync(BACKUP_DIR, { recursive: true });
 

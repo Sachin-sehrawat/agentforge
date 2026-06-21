@@ -12,7 +12,7 @@
  *   --dry-run   Print what would be inserted without writing to MongoDB
  *
  * Environment variables:
- *   MONGO_URI   MongoDB connection string (default: mongodb://localhost:27017/agentforge)
+ *   MONGO_URI   MongoDB connection string (default: mongodb://username:password@localhost:27017/agentbuilder)
  *
  * Exit codes:
  *   0  success
@@ -31,7 +31,7 @@ const ROOT = resolve(__dirname, '..');
 dotenv.config({ path: join(ROOT, '.env') });
 
 const DRY_RUN = process.argv.includes('--dry-run');
-const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/agentforge';
+const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/agentbuilder';
 
 // ---------------------------------------------------------------------------
 // Static data (sourced from frontend/src/data/skills.js and personas.js)

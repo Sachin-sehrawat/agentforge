@@ -252,7 +252,7 @@ docker compose logs backend | grep "Slow query"
 
 # MongoDB — collection health
 docker compose exec mongodb mongosh \
-  -u admin -p "$MONGO_ROOT_PASSWORD" --authenticationDatabase admin agentforge \
+  -u admin -p "$MONGO_ROOT_PASSWORD" --authenticationDatabase admin agentbuilder \
   --eval "db.runCommand({serverStatus:1}).connections"
 ```
 
