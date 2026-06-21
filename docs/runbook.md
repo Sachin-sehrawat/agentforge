@@ -50,11 +50,11 @@ docker compose exec postgres psql -U agentforge -d agentforge \
 ```bash
 # Interactive mongosh shell
 docker compose exec mongodb mongosh \
-  -u admin -p adminpassword --authenticationDatabase admin agentforge
+  -u admin -p adminpassword --authenticationDatabase admin agentbuilder
 
 # One-off command
 docker compose exec mongodb mongosh \
-  -u admin -p adminpassword --authenticationDatabase admin agentforge \
+  -u admin -p adminpassword --authenticationDatabase admin agentbuilder \
   --eval "db.user_preferences.countDocuments()"
 ```
 
@@ -196,7 +196,7 @@ ORDER BY pg_total_relation_size(relid) DESC;"
 
 ```bash
 docker compose exec mongodb mongosh \
-  -u admin -p adminpassword --authenticationDatabase admin agentforge \
+  -u admin -p adminpassword --authenticationDatabase admin agentbuilder \
   --eval "db.user_preferences.aggregate([{\$indexStats:{}}]).toArray()"
 ```
 
@@ -204,7 +204,7 @@ docker compose exec mongodb mongosh \
 
 ```bash
 docker compose exec mongodb mongosh \
-  -u admin -p adminpassword --authenticationDatabase admin agentforge \
+  -u admin -p adminpassword --authenticationDatabase admin agentbuilder \
   --eval "
     ['user_preferences','workspace_state','draft_agents'].forEach(c => {
       print(c + ': ' + db[c].countDocuments())

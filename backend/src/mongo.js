@@ -1,7 +1,7 @@
 import { MongoClient } from 'mongodb';
 
-const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/agentforge';
-const DB_NAME = new URL(MONGO_URI).pathname.slice(1) || 'agentforge';
+const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/agentbuilder';
+const DB_NAME = new URL(MONGO_URI).pathname.slice(1) || 'agentbuilder';
 
 let client = null;
 let db = null;

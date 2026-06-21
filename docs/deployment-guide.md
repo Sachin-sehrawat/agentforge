@@ -34,7 +34,7 @@ cp .env.local.example .env
 | `POSTGRES_DB` | `agentforge` | Database name |
 | `POSTGRES_USER` | `agentforge` | Database user |
 | `POSTGRES_PASSWORD` | `agentforge` | Database password — **change in production** |
-| `MONGO_URI` | `mongodb://admin:adminpassword@mongodb:27017/agentforge?authSource=admin` | Full MongoDB connection string |
+| `MONGO_URI` | `mongodb://admin:adminpassword@mongodb:27017/agentbuilder?authSource=admin` | Full MongoDB connection string |
 | `MONGO_ROOT_USERNAME` | `admin` | MongoDB root username |
 | `MONGO_ROOT_PASSWORD` | `adminpassword` | MongoDB root password — **change in production** |
 

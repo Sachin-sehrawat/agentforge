@@ -20,22 +20,48 @@ Edit `.env.local` if you need non-default credentials or ports.
 ### 2. Start all services
 
 ```bash
-docker-compose --env-file .env.local up -d
+docker compose --env-file .env.local up -d --build
 ```
 
-This starts PostgreSQL, MongoDB, and the backend API. On first run, Docker builds the backend image and both databases are initialized automatically.
+This starts PostgreSQL, MongoDB, and the backend API. On first run, Docker builds the backend image and both databases are initialized automatically (schema + indexes via the init scripts).
 
-### 3. Verify
+> **Windows note:** Docker Desktop installs the CLI to `C:\Program Files\Docker\Docker\resources\bin\`. If `docker` is not found in your shell, either open a new terminal after Docker Desktop has started, or add that path to your `PATH` manually.
+
+### 3. Verify all containers are healthy
 
 ```bash
-# Backend health
-curl http://localhost:4000/api/health
-
-# MongoDB health
-curl http://localhost:4000/api/health/mongo
+docker compose ps
 ```
 
-Both endpoints return `{"ok": true}` when services are ready.
+All three services (`postgres`, `mongodb`, `backend`) should show `(healthy)` status. The backend waits for both databases to pass health checks before it starts — this can take ~30 seconds on the first run.
+
+```bash
+# Quick API check
+curl http://localhost:4000/api/health
+```
+
+Returns `{"ok": true}` when ready.
+
+### 4. Seed reference data into MongoDB
+
+Built-in skills and persona categories live in MongoDB and must be seeded once after the first start. The `scripts/` directory is not included in the Docker image, so run the seed script from the host:
+
+```bash
+# From the project root
+MONGO_URI="mongodb://admin:adminpassword@localhost:27017/agentbuilder?authSource=admin" \
+  node backend/scripts/migrate-skills-personas.js
+```
+
+On Windows (PowerShell):
+
+```powershell
+$env:MONGO_URI = "mongodb://admin:adminpassword@localhost:27017/agentbuilder?authSource=admin"
+node backend/scripts/migrate-skills-personas.js
+```
+
+Expected output: 15 built-in skills and 11 persona categories inserted. Re-running is safe — existing documents are skipped.
+
+> **When to re-run:** Only on first start, or after `docker compose down -v` wipes the MongoDB volume.
 
 ---
 
@@ -82,14 +108,18 @@ psql postgresql://agentforge:agentforge@localhost:5432/agentforge
 | Image | `mongo:7.0` |
 | Port | `27017` (host) → `27017` (container) |
 | Root user | `admin` / `adminpassword` |
-| Database | `agentforge` |
+| Database | `agentbuilder` |
 | Volume | `mongo_data` |
 
 **Init script:** [backend/db/mongo-init/01_init.js](../backend/db/mongo-init/01_init.js) — creates `user_preferences`, `workspace_state`, and `draft_agents` collections with indexes. Runs once on first container start.
 
+**Seeded collections** (populated via `migrate-skills-personas.js` — see Quick Start step 4):
+- `builtin_skills` — 15 built-in skill modifiers (Caveman, Formal Mode, ELI5, etc.)
+- `persona_categories` — 11 categories containing 35 agent personas (Technology, Writing, Business, etc.)
+
 Connect from the host:
 ```bash
-mongosh "mongodb://admin:adminpassword@localhost:27017/agentforge?authSource=admin"
+mongosh "mongodb://admin:adminpassword@localhost:27017/agentbuilder?authSource=admin"
 ```
 
 ### Backend (`backend`)
@@ -113,9 +143,11 @@ Named volumes keep data between `docker-compose down` / `up` cycles:
 
 To wipe all data and start fresh:
 ```bash
-docker-compose down -v
-docker-compose --env-file .env.local up -d
+docker compose down -v
+docker compose --env-file .env.local up -d --build
 ```
+
+After wiping, re-run the seed script (Quick Start step 4) — the MongoDB volume is empty so `builtin_skills` and `persona_categories` need to be repopulated.
 
 ---
 
@@ -171,7 +203,7 @@ All variables have sensible defaults in `docker-compose.yml`. Override any of th
 | `POSTGRES_POOL_MAX` | `10` | Max PG pool connections |
 | `POSTGRES_POOL_MIN` | `2` | Min PG pool connections |
 | `MONGO_PORT` | `27017` | MongoDB host port |
-| `MONGO_DB` | `agentforge` | MongoDB database name |
+| `MONGO_DB` | `agentbuilder` | MongoDB database name |
 | `MONGO_ROOT_USERNAME` | `admin` | MongoDB root username |
 | `MONGO_ROOT_PASSWORD` | `adminpassword` | MongoDB root password |
 | `QUERY_TIMEOUT_MS` | `5000` | PG query timeout |
@@ -200,3 +232,9 @@ Init scripts only execute when the data volume is empty (first start). Wipe the 
 
 **Permission denied on Linux**
 You may need to prefix commands with `sudo` or [add your user to the `docker` group](https://docs.docker.com/engine/install/linux-postinstall/).
+
+**`docker` not found on Windows**
+Docker Desktop installs the CLI to `C:\Program Files\Docker\Docker\resources\bin\`. Open a new terminal after Docker Desktop has fully started, or add that directory to your `PATH`. Alternatively, use the full path: `& "C:\Program Files\Docker\Docker\resources\bin\docker.exe" compose ...`
+
+**Seed script `Cannot find module` error**
+The `scripts/` directory is not copied into the Docker image. Run `migrate-skills-personas.js` from the host (not via `docker exec`), as shown in Quick Start step 4.

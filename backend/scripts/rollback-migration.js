@@ -295,7 +295,7 @@ async function restoreMongo(mongoBackup) {
   }
 
   const backup     = mongoBackup;
-  const dbName     = backup.metadata?.database ?? process.env.MONGO_DB ?? 'agentforge';
+  const dbName     = backup.metadata?.database ?? process.env.MONGO_DB ?? 'agentbuilder';
   const collections = backup.metadata?.collections ?? Object.keys(backup.data ?? {});
 
   log.info(`Backup timestamp : ${backup.metadata?.timestamp ?? 'unknown'}`);

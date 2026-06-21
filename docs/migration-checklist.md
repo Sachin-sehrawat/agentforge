@@ -132,7 +132,7 @@ Complete every item in order. Do **not** skip steps.
   ```bash
   docker-compose exec mongodb mongosh \
     -u admin -p adminpassword --authenticationDatabase admin \
-    agentforge --eval "db.getCollectionNames()"
+    agentbuilder --eval "db.getCollectionNames()"
   ```
 
 ---
