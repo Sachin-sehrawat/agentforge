@@ -167,13 +167,16 @@ export default function App() {
   }, []);
 
   // Load or clear the user's own agents/skills whenever authentication state changes.
+  // Also re-fetch public agents so isSubscribed flags reflect the current user.
   useEffect(() => {
     if (isAuthenticated) {
       refreshMyAgents();
+      refreshPublicAgents();
       refreshCustomSkills(true);
     } else {
       setMyAgents([]);
       setErrorMine(null);
+      refreshPublicAgents();
       refreshCustomSkills(false);
     }
   }, [isAuthenticated]); // eslint-disable-line react-hooks/exhaustive-deps

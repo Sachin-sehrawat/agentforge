@@ -53,9 +53,6 @@ export default function Topbar({
           onClick={() => onSetView('agents')}
         >
           Agents
-          {savedAgents.length > 0 && (
-            <span className="topbar-nav-badge">{savedAgents.length}</span>
-          )}
         </button>
         <button
           className={`topbar-nav-item${view === 'skills' ? ' active' : ''}`}
