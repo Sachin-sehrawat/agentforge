@@ -339,6 +339,36 @@ Replaces all fields of an existing agent. Requires authentication and ownership.
 
 ---
 
+### `PATCH /api/agents/:id`
+
+Updates the **visibility** of an existing agent. This is the lightweight visibility toggle — use `PUT` to update other fields. Requires authentication and ownership.
+
+**Headers**
+
+| Header | Value |
+|---|---|
+| `Authorization` | `Bearer <token>` |
+
+**Request body**
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `visibility` | string | Yes | `"public"` or `"private"` |
+
+**Response 200** — full agent object with updated `visibility` and `updatedAt`.
+
+**Response 400** — `{ "error": "visibility must be \"public\" or \"private\"" }`
+
+**Response 401** — missing or invalid token.
+
+**Response 403** — `{ "error": "Forbidden" }` (authenticated but not the owner).
+
+**Response 404** — `{ "error": "Agent not found" }`
+
+> **Note:** When an agent is made private, any existing subscriptions remain in the database but the agent is no longer returned from `GET /api/agents/public`. Subscribers lose access to the live agent until it is made public again.
+
+---
+
 ### `DELETE /api/agents/:id`
 
 Deletes an agent. Requires authentication and ownership.

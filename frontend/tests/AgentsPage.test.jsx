@@ -28,6 +28,13 @@ const ownedAgent = {
   updatedAt: '2024-01-02T00:00:00Z',
 };
 
+const ownedPublicAgent = {
+  ...ownedAgent,
+  id: 'mine-2',
+  name: 'My Public Agent',
+  visibility: 'public',
+};
+
 const subscribedAgent = {
   id: 'sub-1',
   name: 'Subscribed Agent',
@@ -57,6 +64,7 @@ function defaultProps(overrides = {}) {
     onNew: vi.fn(),
     onOpenAuth: vi.fn(),
     onSubscribe: vi.fn(),
+    onToggleVisibility: vi.fn(),
     ...overrides,
   };
 }
@@ -471,6 +479,142 @@ describe('Subscribe / Unsubscribe', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Unsubscribe' }));
       await waitFor(() =>
         expect(screen.getByRole('button', { name: 'Unsubscribe' })).toBeDefined()
+      );
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Visibility toggle
+// ---------------------------------------------------------------------------
+
+describe('Visibility toggle', () => {
+  function renderMyTab(overrides = {}) {
+    const props = defaultProps({ isAuthenticated: true, ...overrides });
+    render(<AgentsPage {...props} />);
+    fireEvent.click(screen.getByRole('tab', { name: 'My Agents' }));
+    return props;
+  }
+
+  describe('Badge display', () => {
+    it('shows Private badge on owned private agent', () => {
+      renderMyTab({ myAgents: [ownedAgent] });
+      expect(screen.getByText('Private')).toBeDefined();
+    });
+
+    it('shows Public badge on owned public agent', () => {
+      renderMyTab({ myAgents: [ownedPublicAgent] });
+      expect(screen.getByText('Public')).toBeDefined();
+    });
+
+    it('does not show visibility badge on subscribed (non-owned) agents', () => {
+      renderMyTab({ myAgents: [subscribedAgent] });
+      expect(screen.queryByText('Public')).toBeNull();
+      expect(screen.queryByText('Private')).toBeNull();
+    });
+  });
+
+  describe('Toggle button visibility', () => {
+    it('shows Make Public button on owned private agent', () => {
+      renderMyTab({ myAgents: [ownedAgent] });
+      expect(screen.getByRole('button', { name: 'Make Public' })).toBeDefined();
+    });
+
+    it('shows Make Private button on owned public agent', () => {
+      renderMyTab({ myAgents: [ownedPublicAgent] });
+      expect(screen.getByRole('button', { name: 'Make Private' })).toBeDefined();
+    });
+
+    it('does not show toggle button on subscribed (non-owned) agents', () => {
+      renderMyTab({ myAgents: [subscribedAgent] });
+      expect(screen.queryByRole('button', { name: /make public/i })).toBeNull();
+      expect(screen.queryByRole('button', { name: /make private/i })).toBeNull();
+    });
+
+    it('does not show toggle button on public tab cards', () => {
+      render(
+        <AgentsPage
+          {...defaultProps({
+            publicAgents: [publicAgent],
+            isAuthenticated: true,
+          })}
+        />
+      );
+      expect(screen.queryByRole('button', { name: /make public/i })).toBeNull();
+      expect(screen.queryByRole('button', { name: /make private/i })).toBeNull();
+    });
+  });
+
+  describe('Publishing flow (private → public)', () => {
+    it('first click shows Publish? confirmation button', () => {
+      renderMyTab({ myAgents: [ownedAgent] });
+      fireEvent.click(screen.getByRole('button', { name: 'Make Public' }));
+      expect(screen.getByRole('button', { name: 'Publish?' })).toBeDefined();
+    });
+
+    it('does not call onToggleVisibility on first click (confirmation pending)', () => {
+      const onToggleVisibility = vi.fn();
+      renderMyTab({ myAgents: [ownedAgent], onToggleVisibility });
+      fireEvent.click(screen.getByRole('button', { name: 'Make Public' }));
+      expect(onToggleVisibility).not.toHaveBeenCalled();
+    });
+
+    it('calls onToggleVisibility on second (confirm) click', async () => {
+      const onToggleVisibility = vi.fn().mockResolvedValue(undefined);
+      renderMyTab({ myAgents: [ownedAgent], onToggleVisibility });
+      fireEvent.click(screen.getByRole('button', { name: 'Make Public' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Publish?' }));
+      await waitFor(() => expect(onToggleVisibility).toHaveBeenCalledWith(
+        expect.objectContaining({ id: ownedAgent.id, visibility: 'private' })
+      ));
+    });
+
+    it('optimistically shows Make Private after confirming publish', async () => {
+      const onToggleVisibility = vi.fn().mockReturnValue(new Promise(() => {}));
+      renderMyTab({ myAgents: [ownedAgent], onToggleVisibility });
+      fireEvent.click(screen.getByRole('button', { name: 'Make Public' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Publish?' }));
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: 'Make Private' })).toBeDefined()
+      );
+    });
+
+    it('reverts to Make Public when onToggleVisibility rejects', async () => {
+      const onToggleVisibility = vi.fn().mockRejectedValue(new Error('server error'));
+      renderMyTab({ myAgents: [ownedAgent], onToggleVisibility });
+      fireEvent.click(screen.getByRole('button', { name: 'Make Public' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Publish?' }));
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: 'Make Public' })).toBeDefined()
+      );
+    });
+  });
+
+  describe('Unpublishing flow (public → private)', () => {
+    it('calls onToggleVisibility immediately (no confirmation needed)', async () => {
+      const onToggleVisibility = vi.fn().mockResolvedValue(undefined);
+      renderMyTab({ myAgents: [ownedPublicAgent], onToggleVisibility });
+      fireEvent.click(screen.getByRole('button', { name: 'Make Private' }));
+      await waitFor(() => expect(onToggleVisibility).toHaveBeenCalledWith(
+        expect.objectContaining({ id: ownedPublicAgent.id, visibility: 'public' })
+      ));
+    });
+
+    it('optimistically shows Make Public after clicking Make Private', async () => {
+      const onToggleVisibility = vi.fn().mockReturnValue(new Promise(() => {}));
+      renderMyTab({ myAgents: [ownedPublicAgent], onToggleVisibility });
+      fireEvent.click(screen.getByRole('button', { name: 'Make Private' }));
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: 'Make Public' })).toBeDefined()
+      );
+    });
+
+    it('reverts to Make Private when onToggleVisibility rejects', async () => {
+      const onToggleVisibility = vi.fn().mockRejectedValue(new Error('server error'));
+      renderMyTab({ myAgents: [ownedPublicAgent], onToggleVisibility });
+      fireEvent.click(screen.getByRole('button', { name: 'Make Private' }));
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: 'Make Private' })).toBeDefined()
       );
     });
   });
