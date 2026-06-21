@@ -14,6 +14,9 @@ export default function Topbar({
   view,
   onSetView,
   customSkillsCount,
+  user,
+  onOpenAuth,
+  onLogout,
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef(null);
@@ -125,27 +128,47 @@ export default function Topbar({
               </div>
             )}
           </div>
-
-          <div className="topbar-spacer" />
-
-          <div className="topbar-actions">
-            {agent.id && (
-              <button className="btn download" onClick={() => onDownload(agent)} title="Download agent as Markdown">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                  <polyline points="7 10 12 15 17 10" />
-                  <line x1="12" y1="15" x2="12" y2="3" />
-                </svg>
-                Export MD
-              </button>
-            )}
-            <button className="btn" onClick={onNew}>New</button>
-            <button className="btn primary" onClick={onSave} disabled={saving}>
-              {saving ? 'Saving…' : 'Save agent'}
-            </button>
-          </div>
         </>
       )}
+
+      <div className="topbar-spacer" />
+
+      {view === 'builder' && (
+        <div className="topbar-actions">
+          {agent.id && (
+            <button className="btn download" onClick={() => onDownload(agent)} title="Download agent as Markdown">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="7 10 12 15 17 10" />
+                <line x1="12" y1="15" x2="12" y2="3" />
+              </svg>
+              Export MD
+            </button>
+          )}
+          <button className="btn" onClick={onNew}>New</button>
+          <button className="btn primary" onClick={onSave} disabled={saving}>
+            {saving ? 'Saving…' : 'Save agent'}
+          </button>
+        </div>
+      )}
+
+      <div className="topbar-divider" />
+
+      <div className="topbar-auth">
+        {user ? (
+          <>
+            <span className="auth-user-name" title={user.email}>
+              {user.displayName || user.email}
+            </span>
+            <button className="btn subtle" onClick={onLogout}>Sign out</button>
+          </>
+        ) : (
+          <>
+            <button className="btn subtle" onClick={() => onOpenAuth('login')}>Sign in</button>
+            <button className="btn primary" onClick={() => onOpenAuth('signup')}>Sign up</button>
+          </>
+        )}
+      </div>
     </header>
   );
 }

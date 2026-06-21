@@ -35,6 +35,49 @@ Users are logged out on every page reload. This is intentional. If persistence i
 
 `AuthContext` registers its `clearAuth` function as the `onUnauthorized` handler on mount. `clearAuth` calls `setToken(null)` and `setUser(null)`, which causes any component reading `isAuthenticated` to re-render and redirect to the login flow.
 
+## Login / signup UI
+
+### Components
+
+**`AuthModal`** (`src/components/AuthModal.jsx`) — a modal dialog with two tabs: Sign in and Sign up.
+
+- **Login fields:** Email, Password
+- **Signup fields:** Display name, Email, Password (≥ 8 chars)
+- Client-side validation runs before the API call; errors are shown inline below the fields with `role="alert"`.
+- API errors (wrong credentials, duplicate email, etc.) surface the `{ error }` string from the response.
+- The submit button shows "Signing in…" / "Creating account…" and all inputs are disabled while the request is in flight.
+- Clicking the backdrop or the ✕ / Cancel buttons closes the modal without auth.
+
+**`Topbar`** — right-hand auth section (always visible):
+
+| State | Shown |
+|---|---|
+| Unauthenticated | Sign in (subtle) + Sign up (primary) buttons |
+| Authenticated | Display name or email + Sign out button |
+
+### Auth flow
+
+```
+User clicks "Save agent" (unauthenticated)
+  → App.onSave() detects !isAuthenticated
+  → opens AuthModal with tab='login' and onSuccess=performSave
+  → user fills form and submits
+  → AuthContext.login() calls POST /api/auth/login, sets token + user
+  → onSuccess() fires → performSave() runs with the now-valid token
+  → AuthModal closes
+  → user is back on the builder view, save completed
+```
+
+For direct Sign in / Sign up clicks from Topbar the flow is the same but `onSuccess` is `null` (no pending action).
+
+### Originating view preservation
+
+The auth modal is a layered overlay, not a view change — `view` state in `App.jsx` never changes while the modal is open. After auth, the user is exactly where they left off.
+
+### Navigation convention
+
+The app has no router. Views are a string state (`'builder' | 'agents' | 'skills'`) managed in `App.jsx` and rendered by `Topbar.jsx`. Auth follows the same pattern — auth state comes from `AuthContext`, modal visibility is a piece of state in `App`.
+
 ## AuthContext API
 
 Wrap the authenticated subtree with `<AuthProvider>` and consume via `useAuth()`.

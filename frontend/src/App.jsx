@@ -6,8 +6,10 @@ import PersonaPanel from './components/PersonaPanel.jsx';
 import SkillsBar from './components/SkillsBar.jsx';
 import AgentsPage from './components/AgentsPage.jsx';
 import SkillsPage from './components/SkillsPage.jsx';
+import AuthModal from './components/AuthModal.jsx';
 import ErrorBoundary from './components/ErrorBoundary.jsx';
 import { api } from './api.js';
+import { useAuth } from './AuthContext.jsx';
 import { TOOL_META } from './toolMeta.jsx';
 import { SKILLS } from './data/skills.js';
 import { PERSONA_CATEGORIES } from './data/personas.js';
@@ -80,6 +82,7 @@ _Created with AgentForge · ${date}_
 }
 
 export default function App() {
+  const { user, isAuthenticated, logout } = useAuth();
   const [agent, setAgent] = useState(DEFAULT_AGENT);
   const [savedAgents, setSavedAgents] = useState([]);
   const [saving, setSaving] = useState(false);
@@ -87,6 +90,7 @@ export default function App() {
   const [customSkills, setCustomSkills] = useState([]);
   const [loadingWorkspace, setLoadingWorkspace] = useState(true);
   const [canvasView, setCanvasView] = useState({ zoom: 1, pan: { x: 0, y: 0 } });
+  const [authModal, setAuthModal] = useState(null);
 
   const isRestoredRef = useRef(false);
   const autosaveTimerRef = useRef(null);
@@ -250,7 +254,7 @@ export default function App() {
     URL.revokeObjectURL(url);
   };
 
-  const onSave = async () => {
+  const performSave = async () => {
     setSaving(true);
     try {
       const payload = {
@@ -273,6 +277,14 @@ export default function App() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const onSave = () => {
+    if (!isAuthenticated) {
+      setAuthModal({ tab: 'login', onSuccess: performSave });
+      return;
+    }
+    performSave();
   };
 
   const onLoad = async (id) => {
@@ -349,7 +361,22 @@ export default function App() {
         view={view}
         onSetView={handleSetView}
         customSkillsCount={customSkills.length}
+        user={user}
+        onOpenAuth={(tab) => setAuthModal({ tab, onSuccess: null })}
+        onLogout={logout}
       />
+
+      {authModal && (
+        <AuthModal
+          initialTab={authModal.tab}
+          onClose={() => setAuthModal(null)}
+          onSuccess={() => {
+            const action = authModal.onSuccess;
+            setAuthModal(null);
+            action?.();
+          }}
+        />
+      )}
 
       {view === 'agents' ? (
         <AgentsPage
