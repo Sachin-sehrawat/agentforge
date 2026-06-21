@@ -73,5 +73,21 @@ async function withRetry(fn, retries = MAX_RETRIES) {
   }
 }
 
-export { pool, query, healthCheck, withRetry };
-export default { query, healthCheck, withRetry };
+// Runs fn(client) inside a BEGIN/COMMIT transaction, rolling back on error.
+async function withClient(fn) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await fn(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+export { pool, query, healthCheck, withRetry, withClient };
+export default { query, healthCheck, withRetry, withClient };
