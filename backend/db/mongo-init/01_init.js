@@ -21,4 +21,9 @@ db.draft_agents.createIndex({ workspaceId: 1, createdAt: -1 });
 // TTL index: auto-delete drafts older than 30 days to keep collection bounded
 db.draft_agents.createIndex({ createdAt: 1 }, { expireAfterSeconds: 30 * 24 * 60 * 60 });
 
+// agent_templates — starter templates seeded by 02_seed_templates.js
+db.createCollection('agent_templates');
+db.agent_templates.createIndex({ id: 1 }, { unique: true });
+db.agent_templates.createIndex({ category: 1 });
+
 print('[mongo-init] Collections and indexes created in database: ' + db.getName());

@@ -1,3 +1,5 @@
+import { TEMPLATES as STATIC_TEMPLATES } from './data/templates.js';
+
 const BASE = '/api';
 
 // --- Auth state --------------------------------------------------------------
@@ -195,6 +197,16 @@ export const api = {
   // --- Agent import (stateless) -------------------------------------------
   importAgent: (format, content) =>
     request('/agents/import', { method: 'POST', body: JSON.stringify({ format, content }) }),
+
+  // --- Agent Templates (MongoDB) -------------------------------------------
+  // Falls back to the static list when MongoDB is unavailable.
+  listTemplates: async () => {
+    try {
+      return await request('/templates');
+    } catch {
+      return STATIC_TEMPLATES;
+    }
+  },
 
   // --- Health ---------------------------------------------------------------
   health: () => request('/health'),

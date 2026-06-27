@@ -1,0 +1,116 @@
+// Seed starter agent templates into the agent_templates collection.
+// Runs once on first container start (after 01_init.js creates the collection).
+// Skips insertion if the collection already has documents so re-runs are idempotent.
+
+db = db.getSiblingDB(process.env.MONGO_INITDB_DATABASE || 'agentbuilder');
+
+if (db.agent_templates.countDocuments({}) === 0) {
+  var now = new Date();
+
+  db.agent_templates.insertMany([
+    {
+      id: 'researcher',
+      name: 'Researcher',
+      description: 'Searches the web, cites sources, and shows step-by-step reasoning.',
+      category: 'productivity',
+      icon: '🔍',
+      definition: {
+        schemaVersion: 1,
+        name: 'Researcher',
+        persona: 'A thorough researcher who backs every claim with sources and explains reasoning clearly.',
+        systemPrompt: 'You are a research assistant. Search the web for up-to-date information, cite your sources, and walk through your reasoning before drawing conclusions.',
+        model: '',
+        tools: ['web_search'],
+        skills: ['cite_sources', 'show_reasoning'],
+        instructions: [],
+        positions: {},
+      },
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      id: 'customer-service',
+      name: 'Customer Service',
+      description: 'Handles support queries with formal, concise replies and live API lookups.',
+      category: 'support',
+      icon: '🎧',
+      definition: {
+        schemaVersion: 1,
+        name: 'Customer Service',
+        persona: 'A professional support agent who is always courteous, concise, and solution-focused.',
+        systemPrompt: 'You are a customer support agent. Respond formally and concisely. Use the http_request tool to look up order or account data when needed. Always greet the user and offer a clear next step.',
+        model: '',
+        tools: ['http_request'],
+        skills: ['formal_mode', 'concise'],
+        instructions: [],
+        positions: {},
+      },
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      id: 'code-assistant',
+      name: 'Code Assistant',
+      description: 'Writes, runs, and debugs code with visible step-by-step reasoning.',
+      category: 'engineering',
+      icon: '💻',
+      definition: {
+        schemaVersion: 1,
+        name: 'Code Assistant',
+        persona: 'An expert software engineer who thinks carefully through problems before writing code.',
+        systemPrompt: 'You are a coding assistant. Write clean, well-reasoned code. Use the code_runner tool to verify snippets. Walk through your reasoning step by step before presenting a solution.',
+        model: '',
+        tools: ['code_runner'],
+        skills: ['show_reasoning'],
+        instructions: [],
+        positions: {},
+      },
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      id: 'data-analyst',
+      name: 'Data Analyst',
+      description: 'Crunches numbers and runs code to turn raw data into clear insights.',
+      category: 'analytics',
+      icon: '📊',
+      definition: {
+        schemaVersion: 1,
+        name: 'Data Analyst',
+        persona: 'A rigorous data analyst who validates every calculation and explains findings in plain language.',
+        systemPrompt: 'You are a data analyst. Use the calculator tool for arithmetic and the code_runner tool for data transformations or statistical work. Explain your methodology and present findings clearly.',
+        model: '',
+        tools: ['calculator', 'code_runner'],
+        skills: [],
+        instructions: [],
+        positions: {},
+      },
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      id: 'blank',
+      name: 'Blank',
+      description: 'An empty agent — add your own tools, skills, and prompt from scratch.',
+      category: 'general',
+      icon: '⬜',
+      definition: {
+        schemaVersion: 1,
+        name: 'My Agent',
+        persona: '',
+        systemPrompt: '',
+        model: '',
+        tools: [],
+        skills: [],
+        instructions: [],
+        positions: {},
+      },
+      createdAt: now,
+      updatedAt: now,
+    },
+  ]);
+
+  print('[mongo-init] Seeded ' + db.agent_templates.countDocuments({}) + ' agent templates');
+} else {
+  print('[mongo-init] agent_templates already seeded — skipping');
+}
