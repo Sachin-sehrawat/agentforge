@@ -157,6 +157,9 @@ export const api = {
   deleteAgent: (id) => request(`/agents/${id}`, { method: 'DELETE' }),
   subscribeAgent: (id) => request(`/agents/${id}/subscribe`, { method: 'POST' }),
   unsubscribeAgent: (id) => request(`/agents/${id}/subscribe`, { method: 'DELETE' }),
+  listAgentVersions: (id) => request(`/agents/${id}/versions`),
+  getAgentVersion: (id, versionNo) => request(`/agents/${id}/versions/${versionNo}`),
+  restoreAgentVersion: (id, versionNo) => request(`/agents/${id}/versions/${versionNo}/restore`, { method: 'POST' }),
 
   // --- Skills (PostgreSQL) -------------------------------------------------
   listSkills: () => request('/skills'),

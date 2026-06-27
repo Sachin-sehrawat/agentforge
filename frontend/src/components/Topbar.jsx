@@ -11,6 +11,7 @@ export default function Topbar({
   onLoad,
   onDelete,
   onDownload,
+  onOpenHistory,
   view,
   onSetView,
   customSkillsCount,
@@ -141,6 +142,11 @@ export default function Topbar({
 
       {view === 'builder' && (
         <div className="topbar-actions">
+          {isAuthenticated && agent.id && (
+            <button className="btn subtle" onClick={onOpenHistory} title="Browse version history">
+              History
+            </button>
+          )}
           <button
             className="btn download"
             onClick={() => onDownload(agent)}
