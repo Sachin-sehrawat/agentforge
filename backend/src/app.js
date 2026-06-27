@@ -8,7 +8,7 @@ import { toCanonical } from './serialization/agentSchema.js';
 import { parseJson, parseMarkdown } from './serialization/importAgent.js';
 import { getDb, healthCheck as mongoHealth } from './mongo.js';
 import { TOOL_CATALOG, TOOL_IDS } from './tools/toolDefinitions.js';
-import { validatePreferences, validateWorkspaceData, validateDraftInput, validateSignupInput, validateLoginInput, validateBuiltinSkillInput, validatePersonaCategoryInput, validatePersonaInput, validateAgentDefinition } from './validation.js';
+import { validatePreferences, validateWorkspaceData, validateDraftInput, validateSignupInput, validateLoginInput, validateBuiltinSkillInput, validatePersonaCategoryInput, validatePersonaInput, validateAgentDefinition, validateTemplateInput } from './validation.js';
 import { hashPassword, verifyPassword } from './auth/crypto.js';
 import { signAccessToken } from './auth/token.js';
 import { requireAuth, optionalAuth } from './middleware/auth.js';
@@ -707,6 +707,52 @@ app.get('/api/templates/:id', async (req, res) => {
       .findOne({ id: req.params.id });
     if (!doc) return res.status(404).json({ error: 'Template not found' });
     res.json(serializeTemplate(doc));
+  } catch (err) {
+    res.status(503).json({ error: 'Template service unavailable', detail: err.message });
+  }
+});
+
+app.post('/api/templates', requireAuth, async (req, res) => {
+  const validation = validateTemplateInput(req.body);
+  if (validation.error) return res.status(400).json({ error: validation.error });
+
+  const now = new Date();
+  const doc = { id: crypto.randomUUID(), ...validation.data, createdAt: now, updatedAt: now };
+  try {
+    const result = await getDb().collection('agent_templates').insertOne(doc);
+    const inserted = await getDb().collection('agent_templates').findOne({ _id: result.insertedId });
+    res.status(201).json(serializeTemplate(inserted));
+  } catch (err) {
+    res.status(503).json({ error: 'Template service unavailable', detail: err.message });
+  }
+});
+
+app.put('/api/templates/:id', requireAuth, async (req, res) => {
+  const validation = validateTemplateInput(req.body);
+  if (validation.error) return res.status(400).json({ error: validation.error });
+
+  try {
+    const updated = await getDb()
+      .collection('agent_templates')
+      .findOneAndUpdate(
+        { id: req.params.id },
+        { $set: { ...validation.data, updatedAt: new Date() } },
+        { returnDocument: 'after' }
+      );
+    if (!updated) return res.status(404).json({ error: 'Template not found' });
+    res.json(serializeTemplate(updated));
+  } catch (err) {
+    res.status(503).json({ error: 'Template service unavailable', detail: err.message });
+  }
+});
+
+app.delete('/api/templates/:id', requireAuth, async (req, res) => {
+  try {
+    const { deletedCount } = await getDb()
+      .collection('agent_templates')
+      .deleteOne({ id: req.params.id });
+    if (deletedCount === 0) return res.status(404).json({ error: 'Template not found' });
+    res.status(204).end();
   } catch (err) {
     res.status(503).json({ error: 'Template service unavailable', detail: err.message });
   }
