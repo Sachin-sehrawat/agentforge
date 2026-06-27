@@ -207,6 +207,10 @@ export const api = {
       return STATIC_TEMPLATES;
     }
   },
+  getTemplate: (id) => request(`/templates/${id}`),
+  createTemplate: (template) => request('/templates', { method: 'POST', body: JSON.stringify(template) }),
+  updateTemplate: (id, template) => request(`/templates/${id}`, { method: 'PUT', body: JSON.stringify(template) }),
+  deleteTemplate: (id) => request(`/templates/${id}`, { method: 'DELETE' }),
 
   // --- Health ---------------------------------------------------------------
   health: () => request('/health'),

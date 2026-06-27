@@ -214,6 +214,184 @@ function PersonaFormModal({ initial, onSave, onClose }) {
   );
 }
 
+// ── Template form modal ─────────────────────────────────────────────────────
+function TemplateFormModal({ initial, onSave, onClose }) {
+  const [name, setName] = useState(initial?.name || '');
+  const [description, setDescription] = useState(initial?.description || '');
+  const [category, setCategory] = useState(initial?.category || '');
+  const [icon, setIcon] = useState(initial?.icon || '');
+  const [definitionJson, setDefinitionJson] = useState(
+    initial?.definition ? JSON.stringify(initial.definition, null, 2) : '{}'
+  );
+  const [jsonError, setJsonError] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const isValid = name.trim().length > 0 && !jsonError;
+
+  function handleDefinitionChange(val) {
+    setDefinitionJson(val);
+    try {
+      JSON.parse(val);
+      setJsonError('');
+    } catch {
+      setJsonError('Invalid JSON');
+    }
+  }
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    if (!isValid || saving) return;
+    let definition;
+    try { definition = JSON.parse(definitionJson); } catch { return; }
+    setSaving(true);
+    try {
+      await onSave({ name: name.trim(), description: description.trim(), category: category.trim(), icon: icon.trim(), definition });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Modal title={initial?.id ? 'Edit Template' : 'Create Template'} onClose={onClose}>
+      <form className="modal-body" onSubmit={handleSubmit}>
+        <div className="field-group">
+          <label className="field-label">Name *</label>
+          <input className="field-input" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Code Assistant" autoFocus />
+        </div>
+        <div className="field-group">
+          <label className="field-label">Description</label>
+          <input className="field-input" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Short summary shown in the gallery" />
+        </div>
+        <div className="field-group">
+          <label className="field-label">Category</label>
+          <input className="field-input" value={category} onChange={(e) => setCategory(e.target.value)} placeholder="e.g. productivity" />
+        </div>
+        <div className="field-group">
+          <label className="field-label">Icon</label>
+          <input className="field-input" value={icon} onChange={(e) => setIcon(e.target.value)} placeholder="e.g. 💻" />
+        </div>
+        <div className="field-group">
+          <label className="field-label">Definition (JSON) *</label>
+          <textarea
+            className={`field-textarea skill-instruction-textarea${jsonError ? ' field-error' : ''}`}
+            value={definitionJson}
+            onChange={(e) => handleDefinitionChange(e.target.value)}
+            rows={8}
+            spellCheck={false}
+          />
+          {jsonError && <p className="field-error-msg">{jsonError}</p>}
+        </div>
+        <div className="modal-footer">
+          <button type="button" className="btn" onClick={onClose}>Cancel</button>
+          <button type="submit" className="btn primary" disabled={!isValid || saving}>
+            {saving ? 'Saving…' : initial?.id ? 'Update Template' : 'Create Template'}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+// ── Templates tab ────────────────────────────────────────────────────────────
+function TemplatesTab({ templates, onTemplatesChange, isAuthenticated, onOpenAuth }) {
+  const [search, setSearch] = useState('');
+  const [formState, setFormState] = useState(null);
+  const [confirmDelete, setConfirmDelete] = useState(null);
+
+  const q = search.trim().toLowerCase();
+  const filtered = q
+    ? templates.filter((t) => t.name.toLowerCase().includes(q) || (t.description || '').toLowerCase().includes(q))
+    : templates;
+
+  async function openEdit(template) {
+    if (!isAuthenticated) { onOpenAuth?.('login'); return; }
+    const full = await api.getTemplate(template.id);
+    setFormState(full);
+  }
+
+  async function handleSave(data) {
+    if (formState?.id) {
+      const updated = await api.updateTemplate(formState.id, data);
+      onTemplatesChange((prev) => prev.map((t) => (t.id === formState.id ? updated : t)));
+    } else {
+      const created = await api.createTemplate(data);
+      onTemplatesChange((prev) => [...prev, created]);
+    }
+    setFormState(null);
+  }
+
+  async function handleDelete(id) {
+    if (confirmDelete !== id) {
+      setConfirmDelete(id);
+      setTimeout(() => setConfirmDelete(null), 2500);
+      return;
+    }
+    await api.deleteTemplate(id);
+    onTemplatesChange((prev) => prev.filter((t) => t.id !== id));
+    setConfirmDelete(null);
+  }
+
+  return (
+    <div>
+      {formState !== null && (
+        <TemplateFormModal initial={formState} onSave={handleSave} onClose={() => setFormState(null)} />
+      )}
+
+      <div className="agents-page-header">
+        <div>
+          <h2 className="agents-page-title">Templates</h2>
+          <p className="agents-page-sub">{templates.length} template{templates.length !== 1 ? 's' : ''}</p>
+        </div>
+        <div className="agents-page-header-actions">
+          <div className="filter-wrap" style={{ width: 220 }}>
+            <svg className="filter-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="11" cy="11" r="7" />
+              <line x1="21" y1="21" x2="16.65" y2="16.65" />
+            </svg>
+            <input className="filter-input" type="text" placeholder="Search…" value={search} onChange={(e) => setSearch(e.target.value)} />
+            {search && <button className="filter-clear" onClick={() => setSearch('')}>✕</button>}
+          </div>
+          <button
+            className="btn primary"
+            onClick={() => isAuthenticated ? setFormState({}) : onOpenAuth?.('login')}
+          >
+            + Create Template
+          </button>
+        </div>
+      </div>
+
+      {filtered.length === 0 ? (
+        <p className="filter-empty">{search ? `No templates match "${search}"` : 'No templates yet.'}</p>
+      ) : (
+        <div className="agents-grid skills-grid">
+          {filtered.map((tmpl) => (
+            <div key={tmpl.id} className="skill-card">
+              <div className="skill-card-strip" style={{ background: '#6366f1' }} />
+              <div className="skill-card-body">
+                <div className="skill-card-header-row">
+                  {tmpl.icon && <span style={{ marginRight: 6 }}>{tmpl.icon}</span>}
+                  <span className="skill-card-label">{tmpl.name}</span>
+                  {tmpl.category && <span className="skill-badge builtin">{tmpl.category}</span>}
+                </div>
+                {tmpl.description && <p className="skill-card-description">{tmpl.description}</p>}
+              </div>
+              <div className="skill-card-footer">
+                <button
+                  className={`btn${confirmDelete === tmpl.id ? ' danger' : ' subtle'}`}
+                  onClick={() => handleDelete(tmpl.id)}
+                >
+                  {confirmDelete === tmpl.id ? 'Confirm?' : 'Delete'}
+                </button>
+                <button className="btn subtle" onClick={() => openEdit(tmpl)}>Edit</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Builtin Skills tab ──────────────────────────────────────────────────────
 function BuiltinSkillsTab({ skills, onSkillsChange, isAuthenticated, onOpenAuth }) {
   const [search, setSearch] = useState('');
@@ -456,7 +634,7 @@ function PersonasTab({ categories, onCategoriesChange, isAuthenticated, onOpenAu
 }
 
 // ── AdminPage root ───────────────────────────────────────────────────────────
-export default function AdminPage({ builtinSkills, personaCategories, onBuiltinSkillsChange, onPersonaCategoriesChange, isAuthenticated, onOpenAuth }) {
+export default function AdminPage({ builtinSkills, personaCategories, templates, onBuiltinSkillsChange, onPersonaCategoriesChange, onTemplatesChange, isAuthenticated, onOpenAuth }) {
   const [tab, setTab] = useState('skills');
 
   return (
@@ -464,7 +642,7 @@ export default function AdminPage({ builtinSkills, personaCategories, onBuiltinS
       <div className="agents-page-header">
         <div>
           <h1 className="agents-page-title">Admin</h1>
-          <p className="agents-page-sub">Manage builtin skills and persona libraries</p>
+          <p className="agents-page-sub">Manage builtin skills, persona libraries, and templates</p>
         </div>
       </div>
 
@@ -474,6 +652,9 @@ export default function AdminPage({ builtinSkills, personaCategories, onBuiltinS
         </button>
         <button className={`admin-tab${tab === 'personas' ? ' active' : ''}`} onClick={() => setTab('personas')}>
           Personas
+        </button>
+        <button className={`admin-tab${tab === 'templates' ? ' active' : ''}`} onClick={() => setTab('templates')}>
+          Templates
         </button>
       </div>
 
@@ -485,10 +666,17 @@ export default function AdminPage({ builtinSkills, personaCategories, onBuiltinS
             isAuthenticated={isAuthenticated}
             onOpenAuth={onOpenAuth}
           />
-        ) : (
+        ) : tab === 'personas' ? (
           <PersonasTab
             categories={personaCategories}
             onCategoriesChange={onPersonaCategoriesChange}
+            isAuthenticated={isAuthenticated}
+            onOpenAuth={onOpenAuth}
+          />
+        ) : (
+          <TemplatesTab
+            templates={templates}
+            onTemplatesChange={onTemplatesChange}
             isAuthenticated={isAuthenticated}
             onOpenAuth={onOpenAuth}
           />

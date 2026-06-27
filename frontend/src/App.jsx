@@ -94,6 +94,7 @@ export default function App() {
   const [view, setView] = useState('builder');
   const [builtinSkills, setBuiltinSkills] = useState([]);
   const [personaCategories, setPersonaCategories] = useState([]);
+  const [templates, setTemplates] = useState([]);
   const [customSkills, setCustomSkills] = useState([]);
   const [loadingWorkspace, setLoadingWorkspace] = useState(true);
   const [canvasView, setCanvasView] = useState({ zoom: 1, pan: { x: 0, y: 0 } });
@@ -128,6 +129,7 @@ export default function App() {
   useEffect(() => {
     api.listBuiltinSkills().then(setBuiltinSkills).catch(() => {});
     api.listPersonaCategories().then(setPersonaCategories).catch(() => {});
+    api.listTemplates().then(setTemplates).catch(() => {});
     refreshPublicAgents();
     refreshCustomSkills(false); // initial fetch is unauthenticated; auth effect re-fetches with ownership
 
@@ -644,8 +646,10 @@ export default function App() {
         <AdminPage
           builtinSkills={builtinSkills}
           personaCategories={personaCategories}
+          templates={templates}
           onBuiltinSkillsChange={setBuiltinSkills}
           onPersonaCategoriesChange={setPersonaCategories}
+          onTemplatesChange={setTemplates}
           isAuthenticated={isAuthenticated}
           onOpenAuth={(tab) => setAuthModal({ tab, onSuccess: null })}
         />

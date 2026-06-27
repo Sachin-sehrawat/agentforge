@@ -227,6 +227,32 @@ export function validatePersonaInput(body) {
 }
 
 /**
+ * Validates a template payload (POST/PUT /api/templates).
+ * Required: name, definition (object). Optional: description, category, icon.
+ */
+export function validateTemplateInput(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return { error: 'Request body must be a JSON object' };
+  }
+  const name = typeof body.name === 'string' ? body.name.trim() : '';
+  if (!name) return { error: 'name is required' };
+
+  if (!body.definition || typeof body.definition !== 'object' || Array.isArray(body.definition)) {
+    return { error: 'definition must be an object' };
+  }
+
+  return {
+    data: {
+      name,
+      description: typeof body.description === 'string' ? body.description.trim() : '',
+      category: typeof body.category === 'string' ? body.category.trim() : '',
+      icon: typeof body.icon === 'string' ? body.icon.trim() : '',
+      definition: body.definition,
+    },
+  };
+}
+
+/**
  * Validates a draft agent payload sent to POST /api/drafts/:workspaceId.
  */
 export function validateDraftInput(body) {
