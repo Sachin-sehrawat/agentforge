@@ -5,6 +5,7 @@ import crypto from 'node:crypto';
 import { ObjectId } from 'mongodb';
 import db, { pool, withClient } from './db.js';
 import { toCanonical } from './serialization/agentSchema.js';
+import { parseJson, parseMarkdown } from './serialization/importAgent.js';
 import { getDb, healthCheck as mongoHealth } from './mongo.js';
 import { TOOL_CATALOG, TOOL_IDS } from './tools/toolDefinitions.js';
 import { validatePreferences, validateWorkspaceData, validateDraftInput, validateSignupInput, validateLoginInput, validateBuiltinSkillInput, validatePersonaCategoryInput, validatePersonaInput } from './validation.js';
@@ -94,6 +95,32 @@ app.get('/api/tools', (req, res) => {
     description: TOOL_CATALOG[id].anthropicTool?.description || 'Built-in tool.',
   }));
   res.json(tools);
+});
+
+// --- Agent import (stateless) ---------------------------------------------
+
+const IMPORT_SIZE_LIMIT = 256 * 1024; // 256 KB
+
+app.post('/api/agents/import', optionalAuth, (req, res) => {
+  const { format, content } = req.body ?? {};
+
+  if (format !== 'json' && format !== 'markdown') {
+    return res.status(400).json({ error: 'format must be "json" or "markdown"' });
+  }
+  if (typeof content !== 'string') {
+    return res.status(400).json({ error: 'content must be a string' });
+  }
+  if (Buffer.byteLength(content, 'utf8') > IMPORT_SIZE_LIMIT) {
+    return res.status(400).json({ error: 'Content exceeds the 256 KB size limit' });
+  }
+
+  const result = format === 'json' ? parseJson(content) : parseMarkdown(content);
+
+  if (result.error) {
+    return res.status(400).json({ error: result.error });
+  }
+
+  res.json({ agent: result.agent, warnings: result.warnings });
 });
 
 // --- Agent CRUD ------------------------------------------------------------
