@@ -192,6 +192,10 @@ export const api = {
   me: () => request('/auth/me'),
   logout: () => { _token = null; },
 
+  // --- Agent import (stateless) -------------------------------------------
+  importAgent: (format, content) =>
+    request('/agents/import', { method: 'POST', body: JSON.stringify({ format, content }) }),
+
   // --- Health ---------------------------------------------------------------
   health: () => request('/health'),
 
