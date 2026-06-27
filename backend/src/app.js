@@ -8,7 +8,7 @@ import { toCanonical } from './serialization/agentSchema.js';
 import { parseJson, parseMarkdown } from './serialization/importAgent.js';
 import { getDb, healthCheck as mongoHealth } from './mongo.js';
 import { TOOL_CATALOG, TOOL_IDS } from './tools/toolDefinitions.js';
-import { validatePreferences, validateWorkspaceData, validateDraftInput, validateSignupInput, validateLoginInput, validateBuiltinSkillInput, validatePersonaCategoryInput, validatePersonaInput } from './validation.js';
+import { validatePreferences, validateWorkspaceData, validateDraftInput, validateSignupInput, validateLoginInput, validateBuiltinSkillInput, validatePersonaCategoryInput, validatePersonaInput, validateAgentDefinition } from './validation.js';
 import { hashPassword, verifyPassword } from './auth/crypto.js';
 import { signAccessToken } from './auth/token.js';
 import { requireAuth, optionalAuth } from './middleware/auth.js';
@@ -201,14 +201,47 @@ app.get('/api/agents/:id', optionalAuth, async (req, res) => {
   }
 });
 
+// Pre-flight validation — stateless, no persistence.
+app.post('/api/agents/validate', optionalAuth, async (req, res) => {
+  const parsed = validateAgentInput(req.body);
+  if (parsed.error) {
+    return res.json({ errors: [{ code: 'INVALID_INPUT', field: null, message: parsed.error }], warnings: [] });
+  }
+
+  let existingNames = [];
+  if (req.user) {
+    try {
+      const { rows } = await db.query('SELECT name FROM agents WHERE owner_id = $1', [req.user.userId]);
+      existingNames = rows.map((r) => r.name);
+    } catch {
+      // non-fatal — skip duplicate-name check
+    }
+  }
+
+  const { errors, warnings } = validateAgentDefinition(parsed, { existingNames });
+  res.json({ errors, warnings });
+});
+
 app.post('/api/agents', requireAuth, async (req, res) => {
   const agent = validateAgentInput(req.body);
   if (agent.error) return res.status(400).json({ error: agent.error });
+
+  // Structural validation (no DB context needed).
+  const { errors } = validateAgentDefinition(agent);
+  if (errors.length > 0) return res.status(400).json({ errors });
 
   const changeSummary = typeof req.body?.changeSummary === 'string' ? req.body.changeSummary.trim() : '';
   const id = crypto.randomUUID();
   const owner_id = req.user.userId;
   try {
+    // Fetch peer names for the duplicate-name warning.
+    const { rows: nameRows } = await db.query(
+      'SELECT name FROM agents WHERE owner_id = $1',
+      [owner_id]
+    );
+    const existingNames = nameRows.map((r) => r.name);
+    const { warnings } = validateAgentDefinition(agent, { existingNames });
+
     const newRow = await withClient(async (client) => {
       const { rows } = await client.query(
         `INSERT INTO agents (id, name, persona, system_prompt, model, tools, positions, skills, instructions, visibility, owner_id)
@@ -238,7 +271,7 @@ app.post('/api/agents', requireAuth, async (req, res) => {
       );
       return row;
     });
-    res.status(201).json(serializeAgent(newRow));
+    res.status(201).json({ ...serializeAgent(newRow), warnings });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -248,9 +281,20 @@ app.put('/api/agents/:id', requireAuth, async (req, res) => {
   const agent = validateAgentInput(req.body);
   if (agent.error) return res.status(400).json({ error: agent.error });
 
+  const { errors } = validateAgentDefinition(agent);
+  if (errors.length > 0) return res.status(400).json({ errors });
+
   const changeSummary = typeof req.body?.changeSummary === 'string' ? req.body.changeSummary.trim() : '';
 
   try {
+    // Fetch peer names for the duplicate-name warning (exclude this agent's current name).
+    const { rows: nameRows } = await db.query(
+      'SELECT name FROM agents WHERE owner_id = $1 AND id != $2',
+      [req.user.userId, req.params.id]
+    );
+    const existingNames = nameRows.map((r) => r.name);
+    const { warnings } = validateAgentDefinition(agent, { existingNames });
+
     const updatedRow = await withClient(async (client) => {
       const { rows: existing } = await client.query(
         'SELECT owner_id FROM agents WHERE id = $1',
@@ -302,7 +346,7 @@ app.put('/api/agents/:id', requireAuth, async (req, res) => {
       return row;
     });
 
-    res.json(serializeAgent(updatedRow));
+    res.json({ ...serializeAgent(updatedRow), warnings });
   } catch (err) {
     if (err.statusCode === 404) return res.status(404).json({ error: err.message });
     if (err.statusCode === 403) return res.status(403).json({ error: err.message });
