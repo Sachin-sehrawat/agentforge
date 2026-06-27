@@ -8,6 +8,7 @@ import AgentsPage from './components/AgentsPage.jsx';
 import SkillsPage from './components/SkillsPage.jsx';
 import AdminPage from './components/AdminPage.jsx';
 import AuthModal from './components/AuthModal.jsx';
+import VersionHistoryPanel from './components/VersionHistoryPanel.jsx';
 import ErrorBoundary from './components/ErrorBoundary.jsx';
 import { api } from './api.js';
 import { useAuth } from './AuthContext.jsx';
@@ -93,6 +94,7 @@ export default function App() {
   const [loadingWorkspace, setLoadingWorkspace] = useState(true);
   const [canvasView, setCanvasView] = useState({ zoom: 1, pan: { x: 0, y: 0 } });
   const [authModal, setAuthModal] = useState(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   const isRestoredRef = useRef(false);
   const autosaveTimerRef = useRef(null);
@@ -424,6 +426,13 @@ export default function App() {
     downloadMd(agentData || agent);
   };
 
+  const onRestoreVersion = useCallback((restoredAgent) => {
+    const loaded = { ...DEFAULT_AGENT, ...restoredAgent };
+    setAgent(loaded);
+    api.saveWorkspaceData(WORKSPACE_ID, { agent: loaded });
+    refreshSavedAgents();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   const onCreateSkill = async (data) => {
     try {
       const created = await api.createSkill(data);
@@ -469,6 +478,7 @@ export default function App() {
         onLoad={onLoad}
         onDelete={onDelete}
         onDownload={onDownload}
+        onOpenHistory={() => setHistoryOpen(true)}
         view={view}
         onSetView={handleSetView}
         customSkillsCount={customSkills.length}
@@ -477,6 +487,16 @@ export default function App() {
         onLogout={logout}
         isAuthenticated={isAuthenticated}
       />
+
+      {historyOpen && agent.id && isAuthenticated && (
+        <VersionHistoryPanel
+          agentId={agent.id}
+          currentAgent={agent}
+          allSkills={allSkills}
+          onClose={() => setHistoryOpen(false)}
+          onRestore={onRestoreVersion}
+        />
+      )}
 
       {authModal && (
         <AuthModal
