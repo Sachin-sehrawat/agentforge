@@ -694,7 +694,19 @@ app.get('/api/templates', async (req, res) => {
       .find({})
       .sort({ createdAt: 1 })
       .toArray();
-    res.json(templates.map(serializeTemplate));
+    res.json(templates.map(serializeTemplateList));
+  } catch (err) {
+    res.status(503).json({ error: 'Template service unavailable', detail: err.message });
+  }
+});
+
+app.get('/api/templates/:id', async (req, res) => {
+  try {
+    const doc = await getDb()
+      .collection('agent_templates')
+      .findOne({ id: req.params.id });
+    if (!doc) return res.status(404).json({ error: 'Template not found' });
+    res.json(serializeTemplate(doc));
   } catch (err) {
     res.status(503).json({ error: 'Template service unavailable', detail: err.message });
   }
@@ -1277,16 +1289,22 @@ function serializeDraft(doc) {
   };
 }
 
-function serializeTemplate(doc) {
+function serializeTemplateList(doc) {
   return {
     id: doc.id,
     name: doc.name,
     description: doc.description || '',
     category: doc.category || '',
     icon: doc.icon || '',
-    definition: doc.definition || {},
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
+  };
+}
+
+function serializeTemplate(doc) {
+  return {
+    ...serializeTemplateList(doc),
+    definition: doc.definition || {},
   };
 }
 
