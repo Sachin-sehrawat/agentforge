@@ -456,6 +456,8 @@ describe('POST /api/agents', () => {
 
   it('returns 201 with created agent and sets ownerId from token', async () => {
     const created = agentRow({ name: 'New Bot', system_prompt: 'Be helpful', owner_id: TEST_USER_ID });
+    // Pool query: SELECT name (existing names for duplicate-name warning)
+    mockPoolQuery.mockResolvedValueOnce({ rows: [] });
     // withClient: BEGIN, INSERT INTO agents, INSERT INTO agent_versions, COMMIT
     mockClientQuery
       .mockResolvedValueOnce({}) // BEGIN
@@ -473,18 +475,20 @@ describe('POST /api/agents', () => {
     expect(a.name).toBe('New Bot');
     expect(a.id).toBeDefined();
     expect(a.ownerId).toBe(TEST_USER_ID);
+    expect(Array.isArray(a.warnings)).toBe(true);
     // Verify owner_id was passed to the INSERT (call[1] = INSERT INTO agents, after BEGIN)
     const insertCall = mockClientQuery.mock.calls[1];
     expect(insertCall[1][10]).toBe(TEST_USER_ID);
   });
 
   it('defaults visibility to private', async () => {
-    const created = agentRow({ owner_id: TEST_USER_ID, visibility: 'private' });
+    const created = agentRow({ owner_id: TEST_USER_ID, visibility: 'private', system_prompt: 'Be helpful' });
+    mockPoolQuery.mockResolvedValueOnce({ rows: [] }); // SELECT name (existing names)
     mockClientQuery
       .mockResolvedValueOnce({}) // BEGIN
       .mockResolvedValueOnce({ rows: [created] }); // INSERT INTO agents
 
-    await authReq('POST', '/api/agents', { name: 'Bot' });
+    await authReq('POST', '/api/agents', { name: 'Bot', systemPrompt: 'Be helpful' });
 
     const insertCall = mockClientQuery.mock.calls[1];
     expect(insertCall[1][9]).toBe('private');
@@ -512,14 +516,24 @@ describe('POST /api/agents', () => {
     expect(res.status).toBe(400);
   });
 
+  it('returns 400 when agent has no system prompt, persona, or skills (AGENT_DOES_NOTHING)', async () => {
+    const res = await authReq('POST', '/api/agents', { name: 'Empty Bot' });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(Array.isArray(body.errors)).toBe(true);
+    expect(body.errors.some((e) => e.code === 'AGENT_DOES_NOTHING')).toBe(true);
+  });
+
   it('filters invalid tool IDs from tools array', async () => {
-    const created = agentRow({ tools: ['calculator'], owner_id: TEST_USER_ID });
+    const created = agentRow({ tools: ['calculator'], owner_id: TEST_USER_ID, system_prompt: 'Use calculator for math' });
+    mockPoolQuery.mockResolvedValueOnce({ rows: [] }); // SELECT name (existing names)
     mockClientQuery
       .mockResolvedValueOnce({}) // BEGIN
       .mockResolvedValueOnce({ rows: [created] }); // INSERT INTO agents
 
     const res = await authReq('POST', '/api/agents', {
       name: 'Bot',
+      systemPrompt: 'Use calculator for math',
       tools: ['calculator', 'invalid_tool_xyz'],
     });
 
@@ -531,23 +545,45 @@ describe('POST /api/agents', () => {
   });
 
   it('generates a UUID for the new agent', async () => {
-    const created = agentRow({ owner_id: TEST_USER_ID });
+    const created = agentRow({ owner_id: TEST_USER_ID, system_prompt: 'Be helpful' });
+    mockPoolQuery.mockResolvedValueOnce({ rows: [] }); // SELECT name (existing names)
     mockClientQuery
       .mockResolvedValueOnce({}) // BEGIN
       .mockResolvedValueOnce({ rows: [created] }); // INSERT INTO agents
 
-    await authReq('POST', '/api/agents', { name: 'Bot' });
+    await authReq('POST', '/api/agents', { name: 'Bot', systemPrompt: 'Be helpful' });
 
     const insertCall = mockClientQuery.mock.calls[1];
     const uuid = insertCall[1][0];
     expect(uuid).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
   });
 
+  it('returns warnings in the 201 response when agent has an unused tool', async () => {
+    // 'calculator' is valid but not mentioned in systemPrompt → UNUSED_TOOL warning
+    const created = agentRow({ name: 'Bot', owner_id: TEST_USER_ID, system_prompt: 'Be helpful', tools: ['calculator'] });
+    mockPoolQuery.mockResolvedValueOnce({ rows: [] }); // SELECT name (existing names)
+    mockClientQuery
+      .mockResolvedValueOnce({}) // BEGIN
+      .mockResolvedValueOnce({ rows: [created] }); // INSERT INTO agents
+
+    const res = await authReq('POST', '/api/agents', {
+      name: 'Bot',
+      systemPrompt: 'Be helpful',
+      tools: ['calculator'],
+    });
+
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(Array.isArray(body.warnings)).toBe(true);
+    expect(body.warnings.some((w) => w.code === 'UNUSED_TOOL')).toBe(true);
+  });
+
   it('returns 500 on db error', async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [] }); // SELECT name (existing names)
     mockClientQuery
       .mockResolvedValueOnce({}) // BEGIN
       .mockRejectedValueOnce(new Error('insert failed')); // INSERT INTO agents
-    const res = await authReq('POST', '/api/agents', { name: 'Bot' });
+    const res = await authReq('POST', '/api/agents', { name: 'Bot', systemPrompt: 'Be helpful' });
     expect(res.status).toBe(500);
   });
 });
@@ -563,7 +599,9 @@ describe('PUT /api/agents/:id', () => {
   });
 
   it('returns 200 with updated agent when caller is owner', async () => {
-    const updated = agentRow({ name: 'Updated Bot', owner_id: TEST_USER_ID });
+    const updated = agentRow({ name: 'Updated Bot', system_prompt: 'Be helpful', owner_id: TEST_USER_ID });
+    // Pool query: SELECT name (existing names for duplicate-name warning, excludes current agent)
+    mockPoolQuery.mockResolvedValueOnce({ rows: [] });
     // withClient: BEGIN, SELECT owner, UPDATE agents, SELECT latest version, INSERT version, COMMIT
     mockClientQuery
       .mockResolvedValueOnce({}) // BEGIN
@@ -573,52 +611,66 @@ describe('PUT /api/agents/:id', () => {
 
     const res = await authReq('PUT', `/api/agents/${updated.id}`, {
       name: 'Updated Bot',
+      systemPrompt: 'Be helpful',
       model: 'claude-sonnet-4-6',
     });
 
     expect(res.status).toBe(200);
     const a = await res.json();
     expect(a.name).toBe('Updated Bot');
+    expect(Array.isArray(a.warnings)).toBe(true);
   });
 
   it('returns 403 when agent is owned by a different user', async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [] }); // SELECT name (existing names)
     mockClientQuery
       .mockResolvedValueOnce({}) // BEGIN
       .mockResolvedValueOnce({ rows: [{ owner_id: OTHER_USER_ID }] }); // SELECT owner
 
-    const res = await authReq('PUT', '/api/agents/some-id', { name: 'Bot' });
+    const res = await authReq('PUT', '/api/agents/some-id', { name: 'Bot', systemPrompt: 'Be helpful' });
 
     expect(res.status).toBe(403);
     expect((await res.json()).error).toBe('Forbidden');
   });
 
   it('returns 404 when agent does not exist', async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [] }); // SELECT name (existing names)
     mockClientQuery
       .mockResolvedValueOnce({}) // BEGIN
       .mockResolvedValueOnce({ rows: [] }); // SELECT owner → not found
-    const res = await authReq('PUT', '/api/agents/nonexistent', { name: 'Bot' });
+    const res = await authReq('PUT', '/api/agents/nonexistent', { name: 'Bot', systemPrompt: 'Be helpful' });
     expect(res.status).toBe(404);
     expect((await res.json()).error).toBe('Agent not found');
   });
 
-  it('returns 400 on validation error', async () => {
-    // Validation runs before the DB call
+  it('returns 400 on validation error (missing name)', async () => {
+    // validateAgentInput catches missing name before any DB call
     const res = await authReq('PUT', '/api/agents/some-id', { persona: 'no name' });
     expect(res.status).toBe(400);
   });
 
+  it('returns 400 when agent has no system prompt, persona, or skills (AGENT_DOES_NOTHING)', async () => {
+    const res = await authReq('PUT', '/api/agents/some-id', { name: 'Bot' });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(Array.isArray(body.errors)).toBe(true);
+    expect(body.errors.some((e) => e.code === 'AGENT_DOES_NOTHING')).toBe(true);
+  });
+
   it('returns 500 on db error during update', async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [] }); // SELECT name (existing names)
     mockClientQuery
       .mockResolvedValueOnce({}) // BEGIN
       .mockResolvedValueOnce({ rows: [{ owner_id: TEST_USER_ID }] }) // SELECT owner
       .mockRejectedValueOnce(new Error('update failed')); // UPDATE agents
-    const res = await authReq('PUT', '/api/agents/some-id', { name: 'Bot' });
+    const res = await authReq('PUT', '/api/agents/some-id', { name: 'Bot', systemPrompt: 'Be helpful' });
     expect(res.status).toBe(500);
   });
 
   it('preserves existing fields when partial update is sent', async () => {
     const afterUpdate = agentRow({ name: 'New Name', system_prompt: 'Old prompt', owner_id: TEST_USER_ID });
 
+    mockPoolQuery.mockResolvedValueOnce({ rows: [] }); // SELECT name (existing names)
     mockClientQuery
       .mockResolvedValueOnce({}) // BEGIN
       .mockResolvedValueOnce({ rows: [{ owner_id: TEST_USER_ID }] }) // SELECT owner
@@ -633,6 +685,26 @@ describe('PUT /api/agents/:id', () => {
     expect(res.status).toBe(200);
     const a = await res.json();
     expect(a.systemPrompt).toBe('Old prompt');
+  });
+
+  it('returns warnings in 200 response when tool is unused', async () => {
+    const afterUpdate = agentRow({ name: 'Bot', system_prompt: 'Be helpful', owner_id: TEST_USER_ID, tools: ['calculator'] });
+    mockPoolQuery.mockResolvedValueOnce({ rows: [] }); // SELECT name (existing names)
+    mockClientQuery
+      .mockResolvedValueOnce({}) // BEGIN
+      .mockResolvedValueOnce({ rows: [{ owner_id: TEST_USER_ID }] }) // SELECT owner
+      .mockResolvedValueOnce({ rows: [afterUpdate] }) // UPDATE agents RETURNING *
+      .mockResolvedValueOnce({ rows: [{ canonical_hash: 'oldhash', version_no: 1 }] }); // SELECT latest
+
+    const res = await authReq('PUT', `/api/agents/${afterUpdate.id}`, {
+      name: 'Bot',
+      systemPrompt: 'Be helpful',
+      tools: ['calculator'],
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.warnings.some((w) => w.code === 'UNUSED_TOOL')).toBe(true);
   });
 });
 
@@ -2060,5 +2132,105 @@ describe('GET /api/auth/me', () => {
       headers: { Authorization: 'Bearer valid-token' },
     });
     expect(res.status).toBe(500);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/agents/validate
+// ---------------------------------------------------------------------------
+
+describe('POST /api/agents/validate', () => {
+  it('returns 200 with errors array when agent name is missing', async () => {
+    const res = await req('POST', '/api/agents/validate', { systemPrompt: 'Be helpful' });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(Array.isArray(body.errors)).toBe(true);
+    expect(body.errors.some((e) => e.code === 'INVALID_INPUT')).toBe(true);
+    expect(Array.isArray(body.warnings)).toBe(true);
+  });
+
+  it('returns errors for AGENT_DOES_NOTHING when agent has no prompt, persona, or skills', async () => {
+    const res = await req('POST', '/api/agents/validate', { name: 'Empty Bot' });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.errors.some((e) => e.code === 'AGENT_DOES_NOTHING')).toBe(true);
+  });
+
+  it('returns no errors for a valid agent', async () => {
+    const res = await req('POST', '/api/agents/validate', {
+      name: 'Good Bot',
+      systemPrompt: 'You are a helpful assistant.',
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.errors).toHaveLength(0);
+  });
+
+  it('returns UNUSED_TOOL warning for a tool not referenced in the system prompt', async () => {
+    const res = await req('POST', '/api/agents/validate', {
+      name: 'Tool Bot',
+      systemPrompt: 'You are a helpful assistant.',
+      tools: ['calculator'],
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.errors).toHaveLength(0);
+    expect(body.warnings.some((w) => w.code === 'UNUSED_TOOL')).toBe(true);
+  });
+
+  it('does not check for DUPLICATE_NAME when unauthenticated', async () => {
+    const res = await req('POST', '/api/agents/validate', {
+      name: 'Existing Bot',
+      systemPrompt: 'You are a helpful assistant.',
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.warnings.some((w) => w.code === 'DUPLICATE_NAME')).toBe(false);
+  });
+
+  it('returns DUPLICATE_NAME warning when authenticated and name collides', async () => {
+    // Authenticated user has an agent named 'Existing Bot'
+    mockPoolQuery.mockResolvedValueOnce({ rows: [{ name: 'Existing Bot' }] });
+
+    const res = await authReq('POST', '/api/agents/validate', {
+      name: 'Existing Bot',
+      systemPrompt: 'You are a helpful assistant.',
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.warnings.some((w) => w.code === 'DUPLICATE_NAME')).toBe(true);
+  });
+
+  it('returns no DUPLICATE_NAME warning when authenticated and name is unique', async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [{ name: 'Other Bot' }] });
+
+    const res = await authReq('POST', '/api/agents/validate', {
+      name: 'My Bot',
+      systemPrompt: 'You are a helpful assistant.',
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.warnings.some((w) => w.code === 'DUPLICATE_NAME')).toBe(false);
+  });
+
+  it('returns errors array for INVALID_MODEL', async () => {
+    const res = await req('POST', '/api/agents/validate', {
+      name: 'Bot',
+      systemPrompt: 'Be helpful.',
+      model: 'gpt-9000',
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.errors.some((e) => e.code === 'INVALID_MODEL')).toBe(true);
+  });
+
+  it('returns 400 when body is not a JSON object (Express strict parser rejects bare strings)', async () => {
+    const res = await fetch(`${baseUrl}/api/agents/validate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '"just a string"',
+    });
+    // express.json strict mode rejects non-object/array JSON before the handler runs
+    expect(res.status).toBe(400);
   });
 });
