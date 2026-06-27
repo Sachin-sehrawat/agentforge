@@ -8,6 +8,7 @@ import AgentsPage from './components/AgentsPage.jsx';
 import SkillsPage from './components/SkillsPage.jsx';
 import AdminPage from './components/AdminPage.jsx';
 import AuthModal from './components/AuthModal.jsx';
+import ImportModal from './components/ImportModal.jsx';
 import VersionHistoryPanel from './components/VersionHistoryPanel.jsx';
 import ErrorBoundary from './components/ErrorBoundary.jsx';
 import { api } from './api.js';
@@ -95,6 +96,7 @@ export default function App() {
   const [canvasView, setCanvasView] = useState({ zoom: 1, pan: { x: 0, y: 0 } });
   const [authModal, setAuthModal] = useState(null);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
 
   const isRestoredRef = useRef(false);
   const autosaveTimerRef = useRef(null);
@@ -433,6 +435,19 @@ export default function App() {
     refreshSavedAgents();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const onImportCommit = useCallback((parsedAgent) => {
+    const positions = { ...parsedAgent.positions };
+    if (!positions.agent) positions.agent = { x: 36, y: 36 };
+    parsedAgent.tools.forEach((toolId, index) => {
+      if (!positions[toolId]) positions[toolId] = defaultToolPosition(index);
+    });
+    const draft = { ...DEFAULT_AGENT, ...parsedAgent, positions, id: null };
+    setAgent(draft);
+    setView('builder');
+    setImportOpen(false);
+    api.saveWorkspaceData(WORKSPACE_ID, { agent: draft });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   const onCreateSkill = async (data) => {
     try {
       const created = await api.createSkill(data);
@@ -478,6 +493,7 @@ export default function App() {
         onLoad={onLoad}
         onDelete={onDelete}
         onDownload={onDownload}
+        onOpenImport={() => setImportOpen(true)}
         onOpenHistory={() => setHistoryOpen(true)}
         view={view}
         onSetView={handleSetView}
@@ -487,6 +503,13 @@ export default function App() {
         onLogout={logout}
         isAuthenticated={isAuthenticated}
       />
+
+      {importOpen && (
+        <ImportModal
+          onClose={() => setImportOpen(false)}
+          onCommit={onImportCommit}
+        />
+      )}
 
       {historyOpen && agent.id && isAuthenticated && (
         <VersionHistoryPanel
