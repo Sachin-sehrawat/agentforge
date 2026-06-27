@@ -684,6 +684,22 @@ app.delete('/api/skills/:id', requireAuth, async (req, res) => {
   }
 });
 
+// --- Agent Templates (MongoDB) --------------------------------------------
+// Read-only public endpoint; templates are admin-managed via the DB directly.
+
+app.get('/api/templates', async (req, res) => {
+  try {
+    const templates = await getDb()
+      .collection('agent_templates')
+      .find({})
+      .sort({ createdAt: 1 })
+      .toArray();
+    res.json(templates.map(serializeTemplate));
+  } catch (err) {
+    res.status(503).json({ error: 'Template service unavailable', detail: err.message });
+  }
+});
+
 // --- Builtin Skills (MongoDB) ---------------------------------------------
 // GET is public; write operations require authentication.
 
@@ -1256,6 +1272,19 @@ function serializeDraft(doc) {
     id: doc._id.toString(),
     workspaceId: doc.workspaceId,
     agentData: doc.agentData,
+    createdAt: doc.createdAt,
+    updatedAt: doc.updatedAt,
+  };
+}
+
+function serializeTemplate(doc) {
+  return {
+    id: doc.id,
+    name: doc.name,
+    description: doc.description || '',
+    category: doc.category || '',
+    icon: doc.icon || '',
+    definition: doc.definition || {},
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
   };
