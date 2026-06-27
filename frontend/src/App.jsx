@@ -10,10 +10,12 @@ import AdminPage from './components/AdminPage.jsx';
 import AuthModal from './components/AuthModal.jsx';
 import ImportModal from './components/ImportModal.jsx';
 import VersionHistoryPanel from './components/VersionHistoryPanel.jsx';
+import ValidationPanel from './components/ValidationPanel.jsx';
 import ErrorBoundary from './components/ErrorBoundary.jsx';
 import { api } from './api.js';
 import { useAuth } from './AuthContext.jsx';
 import { TOOL_META } from './toolMeta.jsx';
+import { validateAgentDefinition } from './serialization/agentValidation.js';
 
 const DEFAULT_AGENT = {
   id: null,
@@ -97,6 +99,8 @@ export default function App() {
   const [authModal, setAuthModal] = useState(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+
+  const [validationState, setValidationState] = useState(null);
 
   const isRestoredRef = useRef(false);
   const autosaveTimerRef = useRef(null);
@@ -340,6 +344,12 @@ export default function App() {
     }
   };
 
+  const buildValidationOpts = useCallback(() => ({
+    existingNames: myAgents.filter((a) => a.id !== agent.id).map((a) => a.name),
+    resolvableSkillIds: allSkills.map((s) => s.id),
+    availablePersonaIds: personaCategories.flatMap((c) => c.personas.map((p) => p.id)),
+  }), [myAgents, agent.id, allSkills, personaCategories]);
+
   const onSave = () => {
     if (!isAuthenticated) {
       // Flush any pending debounced autosave immediately so the draft is
@@ -351,6 +361,12 @@ export default function App() {
       api.saveWorkspaceData(WORKSPACE_ID, { agent });
       api.saveDraftAgent(WORKSPACE_ID, agent);
       setAuthModal({ tab: 'login', onSuccess: performSave });
+      return;
+    }
+
+    const { errors, warnings } = validateAgentDefinition(agent, buildValidationOpts());
+    if (errors.length > 0 || warnings.length > 0) {
+      setValidationState({ errors, warnings, action: 'save', onConfirm: performSave });
       return;
     }
     performSave();
@@ -425,8 +441,25 @@ export default function App() {
   };
 
   const onDownload = (agentData) => {
-    downloadMd(agentData || agent);
+    const target = agentData || agent;
+    // Only validate the current canvas agent, not saved agents opened from the list
+    if (!agentData || agentData === agent) {
+      const { errors, warnings } = validateAgentDefinition(target, buildValidationOpts());
+      if (errors.length > 0 || warnings.length > 0) {
+        setValidationState({ errors, warnings, action: 'export', onConfirm: () => downloadMd(target) });
+        return;
+      }
+    }
+    downloadMd(target);
   };
+
+  const handleValidationItemClick = useCallback((issue) => {
+    const fieldToId = { name: 'agent-name', persona: 'agent-persona', systemPrompt: 'agent-prompt' };
+    if (issue.field && fieldToId[issue.field]) {
+      const el = document.getElementById(fieldToId[issue.field]);
+      if (el) { el.focus(); el.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
+    }
+  }, []);
 
   const onRestoreVersion = useCallback((restoredAgent) => {
     const loaded = { ...DEFAULT_AGENT, ...restoredAgent };
@@ -533,6 +566,21 @@ export default function App() {
         />
       )}
 
+      {validationState && (
+        <ValidationPanel
+          errors={validationState.errors}
+          warnings={validationState.warnings}
+          action={validationState.action}
+          onClose={() => setValidationState(null)}
+          onOverride={() => {
+            const confirm = validationState.onConfirm;
+            setValidationState(null);
+            confirm?.();
+          }}
+          onItemClick={handleValidationItemClick}
+        />
+      )}
+
       {view === 'agents' ? (
         <AgentsPage
           publicAgents={publicAgents}
@@ -589,6 +637,7 @@ export default function App() {
                   zoom={canvasView.zoom}
                   pan={canvasView.pan}
                   onZoomPanChange={handleCanvasViewChange}
+                  validationState={validationState}
                 />
                 <PersonaPanel
                   activeInstructions={agent.instructions}

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import AgentNode from './AgentNode.jsx';
 import ToolNode from './ToolNode.jsx';
 import { TOOL_META } from '../toolMeta.jsx';
@@ -21,12 +21,39 @@ export default function Canvas({
   zoom = 1,
   pan = { x: 0, y: 0 },
   onZoomPanChange,
+  validationState,
 }) {
   const wrapRef = useRef(null);
   const canvasRef = useRef(null);
   const agentRef = useRef(null);
   const toolRefs = useRef(new Map());
   const [wires, setWires] = useState([]);
+
+  const taggedIssues = useMemo(() => {
+    if (!validationState) return [];
+    return [
+      ...validationState.errors.map((e) => ({ ...e, severity: 'error' })),
+      ...validationState.warnings.map((w) => ({ ...w, severity: 'warning' })),
+    ];
+  }, [validationState]);
+
+  const agentFieldIssues = useMemo(() => ({
+    name: taggedIssues.filter((i) => i.field === 'name'),
+    persona: taggedIssues.filter((i) => i.field === 'persona'),
+    systemPrompt: taggedIssues.filter((i) => i.field === 'systemPrompt'),
+    node: taggedIssues.filter((i) => !i.field),
+  }), [taggedIssues]);
+
+  const toolIssuesMap = useMemo(() => {
+    const map = {};
+    for (const issue of taggedIssues) {
+      if (issue.nodeId) {
+        if (!map[issue.nodeId]) map[issue.nodeId] = [];
+        map[issue.nodeId].push(issue);
+      }
+    }
+    return map;
+  }, [taggedIssues]);
 
   // Wire positions: getBoundingClientRect returns screen-space coords.
   // With scale(zoom) applied to the canvas element, screen deltas / zoom = canvas-space (SVG) coords.
@@ -176,6 +203,7 @@ export default function Canvas({
           onToggleSkill={onToggleSkill}
           onToggleInstruction={onToggleInstruction}
           allSkills={allSkills}
+          fieldIssues={validationState ? agentFieldIssues : null}
         />
 
         {agent.tools.map((toolId) => {
@@ -193,6 +221,7 @@ export default function Canvas({
               onRemove={onRemoveTool}
               pulsing={false}
               zoom={zoom}
+              issues={toolIssuesMap[toolId] || []}
             />
           );
         })}

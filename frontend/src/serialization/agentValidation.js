@@ -58,7 +58,7 @@ export function validateAgentDefinition(agent, {
 
   for (const toolId of tools) {
     if (!catalogIds.includes(toolId)) {
-      errors.push({ code: 'UNKNOWN_TOOL', field: 'tools', message: `Tool "${toolId}" is not in the catalog.` });
+      errors.push({ code: 'UNKNOWN_TOOL', field: 'tools', nodeId: toolId, message: `Tool "${toolId}" is not in the catalog.` });
     }
   }
 
@@ -71,7 +71,7 @@ export function validateAgentDefinition(agent, {
 
   for (const toolId of tools) {
     if (catalogIds.includes(toolId) && !systemPrompt.includes(toolId)) {
-      warnings.push({ code: 'UNUSED_TOOL', field: 'tools', message: `Tool "${toolId}" is on the canvas but not referenced in the system prompt.` });
+      warnings.push({ code: 'UNUSED_TOOL', field: 'tools', nodeId: toolId, message: `Tool "${toolId}" is on the canvas but not referenced in the system prompt.` });
     }
   }
 

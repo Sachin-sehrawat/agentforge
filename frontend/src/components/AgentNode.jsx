@@ -7,11 +7,23 @@ const PERSONA_LOOKUP = Object.fromEntries(
 );
 
 const AgentNode = React.forwardRef(function AgentNode(
-  { position, agent, onChange, onHeaderPointerDown, onToggleSkill, onToggleInstruction, allSkills },
+  { position, agent, onChange, onHeaderPointerDown, onToggleSkill, onToggleInstruction, allSkills, fieldIssues },
   ref
 ) {
   const [expandedSkill, setExpandedSkill] = useState(null);
   const [expandedInstruction, setExpandedInstruction] = useState(null);
+
+  function fieldSeverity(field) {
+    if (!fieldIssues) return null;
+    const issues = fieldIssues[field] || [];
+    if (issues.some((i) => i.severity === 'error')) return 'error';
+    if (issues.length > 0) return 'warning';
+    return null;
+  }
+
+  const nodeLevel = fieldIssues?.node || [];
+  const nodeSeverity = nodeLevel.some((i) => i.severity === 'error') ? 'error'
+    : nodeLevel.length > 0 ? 'warning' : null;
 
   const activeSkills = (agent.skills || [])
     .map((id) => (allSkills || []).find((s) => s.id === id))
@@ -24,7 +36,7 @@ const AgentNode = React.forwardRef(function AgentNode(
   return (
     <div
       ref={ref}
-      className="node agent-node"
+      className={`node agent-node${nodeSeverity ? ` node-has-${nodeSeverity}` : ''}`}
       style={{ left: position.x, top: position.y }}
     >
       <div className="node-header" onPointerDown={onHeaderPointerDown}>
@@ -32,33 +44,36 @@ const AgentNode = React.forwardRef(function AgentNode(
           <AGENT_ICON />
         </span>
         <span className="node-title">Agent core</span>
+        {nodeSeverity && (
+          <span className={`node-issue-dot node-issue-dot--${nodeSeverity}`} title="This node has validation issues" />
+        )}
       </div>
       <div className="node-body">
         <div>
-          <label className="field-label" htmlFor="agent-name">Name</label>
+          <label className={`field-label${fieldSeverity('name') ? ` field-label--${fieldSeverity('name')}` : ''}`} htmlFor="agent-name">Name</label>
           <input
             id="agent-name"
-            className="field-input"
+            className={`field-input${fieldSeverity('name') ? ` field-input--${fieldSeverity('name')}` : ''}`}
             value={agent.name}
             onChange={(e) => onChange('name', e.target.value)}
             placeholder="e.g. Research Buddy"
           />
         </div>
         <div>
-          <label className="field-label" htmlFor="agent-persona">Persona</label>
+          <label className={`field-label${fieldSeverity('persona') ? ` field-label--${fieldSeverity('persona')}` : ''}`} htmlFor="agent-persona">Persona</label>
           <input
             id="agent-persona"
-            className="field-input"
+            className={`field-input${fieldSeverity('persona') ? ` field-input--${fieldSeverity('persona')}` : ''}`}
             value={agent.persona}
             onChange={(e) => onChange('persona', e.target.value)}
             placeholder="e.g. A cheerful research assistant who cites sources."
           />
         </div>
         <div>
-          <label className="field-label" htmlFor="agent-prompt">System prompt</label>
+          <label className={`field-label${fieldSeverity('systemPrompt') ? ` field-label--${fieldSeverity('systemPrompt')}` : ''}`} htmlFor="agent-prompt">System prompt</label>
           <textarea
             id="agent-prompt"
-            className="field-textarea"
+            className={`field-textarea${fieldSeverity('systemPrompt') ? ` field-input--${fieldSeverity('systemPrompt')}` : ''}`}
             value={agent.systemPrompt}
             onChange={(e) => onChange('systemPrompt', e.target.value)}
             placeholder="Extra instructions for how the agent should behave and when to use its tools..."
