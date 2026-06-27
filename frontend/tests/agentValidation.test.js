@@ -1,187 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { validatePreferences, validateWorkspaceData, validateDraftInput, validateAgentDefinition, VALID_MODELS, NAME_MAX_LENGTH } from '../src/validation.js';
-import { TOOL_IDS } from '../src/tools/toolDefinitions.js';
+import { validateAgentDefinition, VALID_MODELS, NAME_MAX_LENGTH } from '../src/serialization/agentValidation.js';
+import { TOOL_ORDER } from '../src/toolMeta.jsx';
 
-// ---------------------------------------------------------------------------
-// validatePreferences
-// ---------------------------------------------------------------------------
-
-describe('validatePreferences', () => {
-  it('rejects null body', () => {
-    expect(validatePreferences(null).error).toBeDefined();
-  });
-
-  it('rejects array body', () => {
-    expect(validatePreferences([]).error).toBeDefined();
-  });
-
-  it('rejects empty object', () => {
-    expect(validatePreferences({}).error).toMatch(/at least one/i);
-  });
-
-  it('accepts valid theme values', () => {
-    for (const theme of ['light', 'dark', 'system']) {
-      expect(validatePreferences({ theme }).error).toBeUndefined();
-    }
-  });
-
-  it('rejects invalid theme', () => {
-    expect(validatePreferences({ theme: 'blue' }).error).toMatch(/theme/);
-  });
-
-  it('accepts canvas_zoom within range', () => {
-    expect(validatePreferences({ canvas_zoom: 1.5 }).error).toBeUndefined();
-    expect(validatePreferences({ canvas_zoom: 0.1 }).error).toBeUndefined();
-    expect(validatePreferences({ canvas_zoom: 5 }).error).toBeUndefined();
-  });
-
-  it('rejects canvas_zoom out of range', () => {
-    expect(validatePreferences({ canvas_zoom: 0 }).error).toMatch(/canvas_zoom/);
-    expect(validatePreferences({ canvas_zoom: 6 }).error).toMatch(/canvas_zoom/);
-  });
-
-  it('rejects canvas_zoom non-numeric string', () => {
-    expect(validatePreferences({ canvas_zoom: 'big' }).error).toMatch(/canvas_zoom/);
-  });
-
-  it('accepts valid canvas_pan', () => {
-    expect(validatePreferences({ canvas_pan: { x: 0, y: -50 } }).error).toBeUndefined();
-  });
-
-  it('rejects canvas_pan missing x or y', () => {
-    expect(validatePreferences({ canvas_pan: { x: 0 } }).error).toMatch(/canvas_pan/);
-    expect(validatePreferences({ canvas_pan: { y: 0 } }).error).toMatch(/canvas_pan/);
-  });
-
-  it('rejects canvas_pan as array', () => {
-    expect(validatePreferences({ canvas_pan: [0, 0] }).error).toMatch(/canvas_pan/);
-  });
-
-  it('accepts sidebar_width within range', () => {
-    expect(validatePreferences({ sidebar_width: 280 }).error).toBeUndefined();
-    expect(validatePreferences({ sidebar_width: 0 }).error).toBeUndefined();
-    expect(validatePreferences({ sidebar_width: 2000 }).error).toBeUndefined();
-  });
-
-  it('rejects sidebar_width out of range', () => {
-    expect(validatePreferences({ sidebar_width: -1 }).error).toMatch(/sidebar_width/);
-    expect(validatePreferences({ sidebar_width: 2001 }).error).toMatch(/sidebar_width/);
-  });
-
-  it('accepts all fields together', () => {
-    const result = validatePreferences({
-      theme: 'dark',
-      canvas_zoom: 1.2,
-      canvas_pan: { x: 10, y: -20 },
-      sidebar_width: 300,
-    });
-    expect(result.error).toBeUndefined();
-    expect(result.data).toBeDefined();
-  });
-
-  it('returns body as data when valid', () => {
-    const body = { theme: 'light' };
-    const { data } = validatePreferences(body);
-    expect(data).toEqual(body);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// validateWorkspaceData
-// ---------------------------------------------------------------------------
-
-describe('validateWorkspaceData', () => {
-  it('rejects null body', () => {
-    expect(validateWorkspaceData(null).error).toBeDefined();
-  });
-
-  it('rejects empty object', () => {
-    expect(validateWorkspaceData({}).error).toMatch(/at least one/i);
-  });
-
-  it('accepts valid selected_agent string', () => {
-    expect(validateWorkspaceData({ selected_agent: 'agent-123' }).error).toBeUndefined();
-  });
-
-  it('accepts selected_agent null', () => {
-    expect(validateWorkspaceData({ selected_agent: null }).error).toBeUndefined();
-  });
-
-  it('rejects selected_agent as number', () => {
-    expect(validateWorkspaceData({ selected_agent: 42 }).error).toMatch(/selected_agent/);
-  });
-
-  it('accepts agent_positions as object', () => {
-    const pos = { 'agent-1': { x: 100, y: 200 } };
-    expect(validateWorkspaceData({ agent_positions: pos }).error).toBeUndefined();
-  });
-
-  it('rejects agent_positions as array', () => {
-    expect(validateWorkspaceData({ agent_positions: [] }).error).toMatch(/agent_positions/);
-  });
-
-  it('rejects agent_positions as null', () => {
-    expect(validateWorkspaceData({ agent_positions: null }).error).toMatch(/agent_positions/);
-  });
-
-  it('accepts active_tab as string', () => {
-    expect(validateWorkspaceData({ active_tab: 'canvas' }).error).toBeUndefined();
-  });
-
-  it('rejects active_tab as number', () => {
-    expect(validateWorkspaceData({ active_tab: 1 }).error).toMatch(/active_tab/);
-  });
-
-  it('accepts all fields together', () => {
-    const result = validateWorkspaceData({
-      selected_agent: 'agent-abc',
-      agent_positions: { 'agent-abc': { x: 0, y: 0 } },
-      active_tab: 'canvas',
-    });
-    expect(result.error).toBeUndefined();
-    expect(result.data).toBeDefined();
-  });
-});
-
-// ---------------------------------------------------------------------------
-// validateDraftInput
-// ---------------------------------------------------------------------------
-
-describe('validateDraftInput', () => {
-  it('rejects null body', () => {
-    expect(validateDraftInput(null).error).toBeDefined();
-  });
-
-  it('rejects missing agentData', () => {
-    expect(validateDraftInput({}).error).toMatch(/agentData/);
-  });
-
-  it('rejects agentData as string', () => {
-    expect(validateDraftInput({ agentData: 'not-an-object' }).error).toMatch(/agentData/);
-  });
-
-  it('rejects agentData as array', () => {
-    expect(validateDraftInput({ agentData: [] }).error).toMatch(/agentData/);
-  });
-
-  it('accepts valid agentData object', () => {
-    const result = validateDraftInput({ agentData: { name: 'Draft', tools: [] } });
-    expect(result.error).toBeUndefined();
-    expect(result.data.agentData).toEqual({ name: 'Draft', tools: [] });
-  });
-
-  it('strips keys other than agentData', () => {
-    const result = validateDraftInput({ agentData: { name: 'x' }, extra: 'ignored' });
-    expect(result.data).not.toHaveProperty('extra');
-  });
-});
-
-// ---------------------------------------------------------------------------
-// validateAgentDefinition
-// ---------------------------------------------------------------------------
-
-const VALID_TOOL = TOOL_IDS[0]; // e.g. 'web_search'
-const CATALOG = TOOL_IDS;
+const CATALOG = TOOL_ORDER;
+const VALID_TOOL = TOOL_ORDER[0]; // first tool in the visual catalog
 
 function baseAgent(overrides = {}) {
   return {
@@ -196,7 +18,11 @@ function baseAgent(overrides = {}) {
   };
 }
 
-describe('validateAgentDefinition — errors', () => {
+// ---------------------------------------------------------------------------
+// Errors
+// ---------------------------------------------------------------------------
+
+describe('validateAgentDefinition (frontend) — errors', () => {
   it('returns empty errors and warnings for a valid agent', () => {
     const { errors, warnings } = validateAgentDefinition(baseAgent());
     expect(errors).toHaveLength(0);
@@ -259,24 +85,23 @@ describe('validateAgentDefinition — errors', () => {
     }
   });
 
-  it('INVALID_MODEL: empty model is not an error (backend falls back to default)', () => {
+  it('INVALID_MODEL: empty model is not an error', () => {
     const { errors } = validateAgentDefinition(baseAgent({ model: '' }));
     expect(errors.map((e) => e.code)).not.toContain('INVALID_MODEL');
   });
 
   // UNKNOWN_TOOL
-  it('UNKNOWN_TOOL: rejects a tool not in the catalog', () => {
+  it('UNKNOWN_TOOL: rejects a tool not in the visual catalog', () => {
     const { errors } = validateAgentDefinition(baseAgent({ tools: ['ghost_tool'] }), { catalogIds: CATALOG });
     expect(errors).toContainEqual(expect.objectContaining({ code: 'UNKNOWN_TOOL', field: 'tools' }));
   });
 
   it('UNKNOWN_TOOL: reports each bad tool id separately', () => {
     const { errors } = validateAgentDefinition(baseAgent({ tools: ['bad_a', 'bad_b'] }), { catalogIds: CATALOG });
-    const codes = errors.filter((e) => e.code === 'UNKNOWN_TOOL');
-    expect(codes).toHaveLength(2);
+    expect(errors.filter((e) => e.code === 'UNKNOWN_TOOL')).toHaveLength(2);
   });
 
-  it('UNKNOWN_TOOL: does not fire for a known tool', () => {
+  it('UNKNOWN_TOOL: does not fire for a known visual tool', () => {
     const { errors } = validateAgentDefinition(
       baseAgent({ tools: [VALID_TOOL], systemPrompt: `use ${VALID_TOOL}` }),
       { catalogIds: CATALOG },
@@ -285,7 +110,11 @@ describe('validateAgentDefinition — errors', () => {
   });
 });
 
-describe('validateAgentDefinition — warnings', () => {
+// ---------------------------------------------------------------------------
+// Warnings
+// ---------------------------------------------------------------------------
+
+describe('validateAgentDefinition (frontend) — warnings', () => {
   // DUPLICATE_NAME
   it('DUPLICATE_NAME: warns when name matches an existing agent (case-insensitive)', () => {
     const { warnings } = validateAgentDefinition(baseAgent({ name: 'Helper Bot' }), {
@@ -294,7 +123,7 @@ describe('validateAgentDefinition — warnings', () => {
     expect(warnings).toContainEqual(expect.objectContaining({ code: 'DUPLICATE_NAME', field: 'name' }));
   });
 
-  it('DUPLICATE_NAME: does not warn when no existing agents share the name', () => {
+  it('DUPLICATE_NAME: does not warn when no existing agent shares the name', () => {
     const { warnings } = validateAgentDefinition(baseAgent({ name: 'Unique' }), {
       existingNames: ['Other Agent'],
     });
@@ -386,14 +215,18 @@ describe('validateAgentDefinition — warnings', () => {
     expect(warnings.map((w) => w.code)).not.toContain('SHORT_PROMPT');
   });
 
-  it('SHORT_PROMPT: does not fire when system prompt is empty (AGENT_DOES_NOTHING covers that)', () => {
+  it('SHORT_PROMPT: does not fire when system prompt is empty', () => {
     const { warnings } = validateAgentDefinition(baseAgent({ systemPrompt: '', persona: 'Helpful.' }));
     expect(warnings.map((w) => w.code)).not.toContain('SHORT_PROMPT');
   });
 });
 
-describe('validateAgentDefinition — result shape', () => {
-  it('always returns { errors, warnings } arrays', () => {
+// ---------------------------------------------------------------------------
+// Result shape
+// ---------------------------------------------------------------------------
+
+describe('validateAgentDefinition (frontend) — result shape', () => {
+  it('always returns { errors, warnings } arrays even for null input', () => {
     const result = validateAgentDefinition(null);
     expect(Array.isArray(result.errors)).toBe(true);
     expect(Array.isArray(result.warnings)).toBe(true);
