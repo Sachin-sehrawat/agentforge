@@ -179,6 +179,43 @@ cd backend && npm run dev
 
 The default `backend/.env.example` uses `localhost` for both database hosts, which works when the backend is running directly on the host.
 
+### Restarting the backend without Docker
+
+If Docker is not available, stop the existing Node process and restart the backend directly:
+
+**Find and kill the process on port 4000 (PowerShell):**
+```powershell
+# Find the PID holding port 4000
+Get-NetTCPConnection -LocalPort 4000 | Select-Object -ExpandProperty OwningProcess
+
+# Kill it (replace <PID> with the value above)
+Stop-Process -Id <PID> -Force
+```
+
+**Start the backend (PowerShell — from `backend/`):**
+```powershell
+# With hot-reload (recommended for development)
+node --watch src/server.js
+
+# Or via npm
+npm run dev
+```
+
+**Smoke-test after restart:**
+```powershell
+# Tool catalog (no DB required)
+Invoke-RestMethod -Uri "http://localhost:4000/api/tools"
+
+# DB-backed health (returns {"ok":false} if PostgreSQL is not running)
+Invoke-RestMethod -Uri "http://localhost:4000/api/health"
+
+# Import endpoint (stateless — no DB required)
+$body = '{"format":"json","content":"{\"name\":\"Test\",\"tools\":[\"web_search\"]}"}'
+Invoke-RestMethod -Uri "http://localhost:4000/api/agents/import" -Method POST -Body $body -ContentType "application/json"
+```
+
+The server starts and serves requests even without PostgreSQL/MongoDB — DB-backed endpoints return `503` until the databases are reachable, but stateless endpoints (`/api/tools`, `/api/agents/import`) work immediately.
+
 ### Rebuilding the backend image
 
 After changing `package.json` or any source file:
