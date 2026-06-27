@@ -14,7 +14,7 @@ function IssueItem({ issue, onClick }) {
 export default function ValidationPanel({ errors, warnings, action, onClose, onOverride, onItemClick }) {
   const hasErrors = errors.length > 0;
   const hasWarnings = warnings.length > 0;
-  const actionLabel = action === 'save' ? 'Save anyway' : 'Export anyway';
+  const actionLabel = action === 'save' ? 'Save anyway' : action === 'export' ? 'Export anyway' : null;
 
   return (
     <div className="validation-panel">
@@ -27,7 +27,7 @@ export default function ValidationPanel({ errors, warnings, action, onClose, onO
                 <line x1="12" y1="8" x2="12" y2="12" />
                 <line x1="12" y1="16" x2="12.01" y2="16" />
               </svg>
-              Fix errors to {action === 'save' ? 'save' : 'export'}
+              {action === 'template' ? 'Template loaded with issues' : `Fix errors to ${action === 'save' ? 'save' : 'export'}`}
             </>
           ) : (
             <>
@@ -57,7 +57,7 @@ export default function ValidationPanel({ errors, warnings, action, onClose, onO
                 <line x1="12" y1="8" x2="12" y2="12" />
                 <line x1="12" y1="16" x2="12.01" y2="16" />
               </svg>
-              Errors — {action === 'save' ? 'save' : 'export'} blocked ({errors.length})
+              Errors{action !== 'template' && ` — ${action === 'save' ? 'save' : 'export'} blocked`} ({errors.length})
             </div>
             {errors.map((e, i) => (
               <IssueItem key={i} issue={e} onClick={onItemClick} />
@@ -83,7 +83,7 @@ export default function ValidationPanel({ errors, warnings, action, onClose, onO
 
       <div className="validation-panel-footer">
         <button className="btn subtle" onClick={onClose}>Dismiss</button>
-        {!hasErrors && (
+        {!hasErrors && actionLabel && (
           <button className="btn primary" onClick={onOverride}>
             {actionLabel}
           </button>

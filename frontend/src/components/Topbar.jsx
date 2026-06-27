@@ -12,6 +12,7 @@ export default function Topbar({
   onDelete,
   onDownload,
   onOpenImport,
+  onOpenTemplates,
   onOpenHistory,
   view,
   onSetView,
@@ -148,6 +149,13 @@ export default function Topbar({
               History
             </button>
           )}
+          <button
+            className="btn subtle"
+            onClick={onOpenTemplates}
+            title="Start from a pre-built template"
+          >
+            Templates
+          </button>
           <button
             className="btn subtle"
             onClick={onOpenImport}

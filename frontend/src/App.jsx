@@ -9,6 +9,7 @@ import SkillsPage from './components/SkillsPage.jsx';
 import AdminPage from './components/AdminPage.jsx';
 import AuthModal from './components/AuthModal.jsx';
 import ImportModal from './components/ImportModal.jsx';
+import TemplateGallery from './components/TemplateGallery.jsx';
 import VersionHistoryPanel from './components/VersionHistoryPanel.jsx';
 import ValidationPanel from './components/ValidationPanel.jsx';
 import ErrorBoundary from './components/ErrorBoundary.jsx';
@@ -99,6 +100,8 @@ export default function App() {
   const [authModal, setAuthModal] = useState(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [templateGalleryOpen, setTemplateGalleryOpen] = useState(false);
+  const [emptyStateDismissed, setEmptyStateDismissed] = useState(false);
 
   const [validationState, setValidationState] = useState(null);
 
@@ -144,8 +147,12 @@ export default function App() {
         });
       }
       if (wsData.agent && typeof wsData.agent === 'object') {
-        setAgent({ ...DEFAULT_AGENT, ...wsData.agent });
+        const restored = { ...DEFAULT_AGENT, ...wsData.agent };
+        setAgent(restored);
         isRestoredRef.current = true;
+        if (restored.persona || restored.systemPrompt || restored.tools?.length > 0) {
+          setEmptyStateDismissed(true);
+        }
       }
     }).finally(() => {
       setLoadingWorkspace(false);
@@ -306,6 +313,7 @@ export default function App() {
   const onNew = () => {
     setAgent(DEFAULT_AGENT);
     setView('builder');
+    setEmptyStateDismissed(false);
     api.saveWorkspaceData(WORKSPACE_ID, { agent: DEFAULT_AGENT });
   };
 
@@ -481,6 +489,22 @@ export default function App() {
     api.saveWorkspaceData(WORKSPACE_ID, { agent: draft });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const onFromTemplate = useCallback((template) => {
+    setTemplateGalleryOpen(false);
+    if (template.id === 'blank') {
+      onNew();
+      return;
+    }
+    onImportCommit(template.definition);
+    const { errors, warnings } = validateAgentDefinition(
+      { ...DEFAULT_AGENT, ...template.definition },
+      buildValidationOpts()
+    );
+    if (errors.length > 0 || warnings.length > 0) {
+      setValidationState({ errors, warnings, action: 'template', onConfirm: null });
+    }
+  }, [onImportCommit, onNew, buildValidationOpts]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const onCreateSkill = async (data) => {
     try {
       const created = await api.createSkill(data);
@@ -527,6 +551,7 @@ export default function App() {
         onDelete={onDelete}
         onDownload={onDownload}
         onOpenImport={() => setImportOpen(true)}
+        onOpenTemplates={() => setTemplateGalleryOpen(true)}
         onOpenHistory={() => setHistoryOpen(true)}
         view={view}
         onSetView={handleSetView}
@@ -541,6 +566,14 @@ export default function App() {
         <ImportModal
           onClose={() => setImportOpen(false)}
           onCommit={onImportCommit}
+        />
+      )}
+
+      {templateGalleryOpen && (
+        <TemplateGallery
+          allSkills={allSkills}
+          onSelect={onFromTemplate}
+          onClose={() => setTemplateGalleryOpen(false)}
         />
       )}
 
@@ -625,6 +658,28 @@ export default function App() {
             <ErrorBoundary message="The canvas encountered an error. Your work is safe — click Try again to reload.">
               <div className="workbench">
                 <Sidebar addedTools={agent.tools} onAddTool={onAddTool} />
+                {!emptyStateDismissed && !agent.id && !agent.persona && !agent.systemPrompt && agent.tools.length === 0 && (
+                  <div className="canvas-empty-state">
+                    <div className="ces-card">
+                      <div className="ces-icon">
+                        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                          <rect x="3" y="3" width="7" height="7" rx="1" />
+                          <rect x="14" y="3" width="7" height="7" rx="1" />
+                          <rect x="3" y="14" width="7" height="7" rx="1" />
+                          <rect x="14" y="14" width="7" height="7" rx="1" />
+                        </svg>
+                      </div>
+                      <h2 className="ces-title">Start building your agent</h2>
+                      <p className="ces-desc">Choose a template to get started quickly, or build from scratch on the canvas.</p>
+                      <button className="btn primary ces-btn" onClick={() => setTemplateGalleryOpen(true)}>
+                        Browse templates
+                      </button>
+                      <button className="btn subtle ces-btn-secondary" onClick={() => setEmptyStateDismissed(true)}>
+                        Start blank
+                      </button>
+                    </div>
+                  </div>
+                )}
                 <Canvas
                   agent={agent}
                   onChangeAgentField={onChangeAgentField}
