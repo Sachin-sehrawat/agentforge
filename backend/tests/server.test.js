@@ -1181,6 +1181,100 @@ describe('DELETE /api/agents/:id/subscribe', () => {
 });
 
 // ---------------------------------------------------------------------------
+// GET /api/templates
+// ---------------------------------------------------------------------------
+
+function templateDoc(overrides = {}) {
+  return {
+    id: 'tpl-001',
+    name: 'Researcher',
+    description: 'A research assistant',
+    category: 'research',
+    icon: '🔍',
+    definition: {
+      schemaVersion: 1,
+      name: 'Researcher',
+      persona: '',
+      systemPrompt: 'You are a researcher.',
+      model: 'claude-sonnet-4-6',
+      tools: [],
+      skills: [],
+      instructions: [],
+      positions: {},
+    },
+    createdAt: new Date('2024-01-01T00:00:00Z'),
+    updatedAt: new Date('2024-01-01T00:00:00Z'),
+    ...overrides,
+  };
+}
+
+describe('GET /api/templates', () => {
+  it('returns 200 with empty array when no templates', async () => {
+    const res = await req('GET', '/api/templates');
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual([]);
+  });
+
+  it('returns serialized templates without definition field', async () => {
+    mockFind.mockReturnValueOnce({
+      sort: vi.fn().mockReturnValue({ toArray: vi.fn().mockResolvedValue([templateDoc()]) }),
+    });
+    const res = await req('GET', '/api/templates');
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toHaveLength(1);
+    expect(body[0].id).toBe('tpl-001');
+    expect(body[0].name).toBe('Researcher');
+    expect(body[0].category).toBe('research');
+    expect(body[0]).not.toHaveProperty('definition');
+  });
+
+  it('returns 503 when MongoDB is unavailable', async () => {
+    mockFind.mockReturnValueOnce({
+      sort: vi.fn().mockReturnValue({
+        toArray: vi.fn().mockRejectedValue(new Error('connection refused')),
+      }),
+    });
+    const res = await req('GET', '/api/templates');
+    expect(res.status).toBe(503);
+    const body = await res.json();
+    expect(body.error).toBe('Template service unavailable');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/templates/:id
+// ---------------------------------------------------------------------------
+
+describe('GET /api/templates/:id', () => {
+  it('returns full template including definition', async () => {
+    mockFindOne.mockResolvedValueOnce(templateDoc());
+    const res = await req('GET', '/api/templates/tpl-001');
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.id).toBe('tpl-001');
+    expect(body.definition).toBeDefined();
+    expect(body.definition.systemPrompt).toBe('You are a researcher.');
+  });
+
+  it('returns 404 when template does not exist', async () => {
+    mockFindOne.mockResolvedValueOnce(null);
+    const res = await req('GET', '/api/templates/does-not-exist');
+    expect(res.status).toBe(404);
+    const body = await res.json();
+    expect(body.error).toBe('Template not found');
+  });
+
+  it('returns 503 when MongoDB is unavailable', async () => {
+    mockFindOne.mockRejectedValueOnce(new Error('connection refused'));
+    const res = await req('GET', '/api/templates/tpl-001');
+    expect(res.status).toBe(503);
+    const body = await res.json();
+    expect(body.error).toBe('Template service unavailable');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // GET /api/skills (legacy — public only)
 // ---------------------------------------------------------------------------
 
