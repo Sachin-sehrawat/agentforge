@@ -3642,6 +3642,23 @@ button {
   color: #991b1b;
 }
 
+.toast--success {
+  background: #f0fdf4;
+  border: 1px solid #86efac;
+  color: #166534;
+}
+
+.toast-link {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: inherit;
+  text-decoration: underline;
+  font: inherit;
+  font-size: inherit;
+}
+
 .toast-msg {
   flex: 1;
 }

@@ -448,6 +448,42 @@ export default function App() {
     return result;
   };
 
+  const onDuplicate = async (sourceAgent) => {
+    const optimisticId = `optimistic-${Date.now()}`;
+    const optimistic = {
+      ...sourceAgent,
+      id: optimisticId,
+      name: sourceAgent.name + ' (copy)',
+      isOwned: true,
+      isSubscribed: false,
+      updatedAt: new Date().toISOString(),
+    };
+    setMyAgents((prev) => [optimistic, ...prev]);
+    try {
+      const created = await api.duplicateAgent(sourceAgent.id);
+      setMyAgents((prev) =>
+        prev.map((a) => (a.id === optimisticId ? { ...created, isOwned: true } : a))
+      );
+      const agentId = created.id;
+      showToast(
+        <span>
+          Created &ldquo;{created.name}&rdquo;.{' '}
+          <button
+            className="toast-link"
+            onClick={() => { onLoad(agentId); handleSetView('builder'); }}
+          >
+            Open in builder
+          </button>
+        </span>,
+        'success'
+      );
+    } catch (err) {
+      setMyAgents((prev) => prev.filter((a) => a.id !== optimisticId));
+      showToast(`Failed to duplicate agent: ${err.message}`, 'error');
+      throw err;
+    }
+  };
+
   const onToggleVisibility = async (agent) => {
     const newVisibility = agent.visibility === 'public' ? 'private' : 'public';
     try {
@@ -708,6 +744,7 @@ export default function App() {
           onToggleVisibility={onToggleVisibility}
           onFork={onFork}
           onUnfavorite={onUnfavorite}
+          onDuplicate={onDuplicate}
           onAnalytics={(agent) => setAnalyticsAgent({ id: agent.id, name: agent.name })}
         />
       ) : view === 'skills' ? (
