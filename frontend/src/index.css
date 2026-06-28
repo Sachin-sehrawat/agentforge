@@ -1113,6 +1113,17 @@ button {
   line-height: 1.5;
 }
 
+.filter-empty-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.my-agents-filters {
+  margin-top: 4px;
+}
+
 /* ---------- Agents page tabs ---------- */
 
 .agents-tabs {
