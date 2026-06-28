@@ -5,6 +5,7 @@ import Canvas from './components/Canvas.jsx';
 import PersonaPanel from './components/PersonaPanel.jsx';
 import SkillsBar from './components/SkillsBar.jsx';
 import AgentsPage from './components/AgentsPage.jsx';
+import AgentAnalytics from './components/AgentAnalytics.jsx';
 import SkillsPage from './components/SkillsPage.jsx';
 import AdminPage from './components/AdminPage.jsx';
 import MarketplacePage from './components/MarketplacePage.jsx';
@@ -108,6 +109,8 @@ export default function App() {
   const [templateGalleryOpen, setTemplateGalleryOpen] = useState(false);
   const [emptyStateDismissed, setEmptyStateDismissed] = useState(false);
 
+  const [analyticsAgent, setAnalyticsAgent] = useState(null);
+
   const [validationState, setValidationState] = useState(null);
   const [toasts, setToasts] = useState([]);
 
@@ -191,6 +194,7 @@ export default function App() {
 
   const handleSetView = useCallback((nextView) => {
     setView(nextView);
+    setAnalyticsAgent(null);
     api.saveUserPreferences(USER_ID, { view: nextView });
   }, []);
 
@@ -677,7 +681,13 @@ export default function App() {
         />
       )}
 
-      {view === 'agents' ? (
+      {view === 'agents' && analyticsAgent ? (
+        <AgentAnalytics
+          agentId={analyticsAgent.id}
+          agentName={analyticsAgent.name}
+          onBack={() => setAnalyticsAgent(null)}
+        />
+      ) : view === 'agents' ? (
         <AgentsPage
           publicAgents={publicAgents}
           myAgents={myAgents}
@@ -698,6 +708,7 @@ export default function App() {
           onToggleVisibility={onToggleVisibility}
           onFork={onFork}
           onUnfavorite={onUnfavorite}
+          onAnalytics={(agent) => setAnalyticsAgent({ id: agent.id, name: agent.name })}
         />
       ) : view === 'skills' ? (
         <SkillsPage

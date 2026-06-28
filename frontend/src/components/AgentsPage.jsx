@@ -31,7 +31,7 @@ function Badge({ label, color }) {
   );
 }
 
-function AgentCard({ agent, onOpen, onDownload, onDelete, onSubscribe, onToggleVisibility }) {
+function AgentCard({ agent, onOpen, onDownload, onDelete, onSubscribe, onToggleVisibility, onAnalytics }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [confirmPublish, setConfirmPublish] = useState(false);
   const [subscribed, setSubscribed] = useState(Boolean(agent.isSubscribed));
@@ -177,6 +177,15 @@ function AgentCard({ agent, onOpen, onDownload, onDelete, onSubscribe, onToggleV
               {confirmDelete ? 'Confirm?' : 'Delete'}
             </button>
           )}
+          {onAnalytics && (
+            <button
+              className="btn subtle"
+              onClick={() => onAnalytics(agent)}
+              title="View analytics"
+            >
+              Analytics
+            </button>
+          )}
           {onSubscribe && (
             <button
               className="btn subtle"
@@ -195,7 +204,7 @@ function AgentCard({ agent, onOpen, onDownload, onDelete, onSubscribe, onToggleV
   );
 }
 
-function AgentsList({ agents, search, onOpen, onDownload, onDelete, canDelete, onSubscribe, onToggleVisibility, emptyNode }) {
+function AgentsList({ agents, search, onOpen, onDownload, onDelete, canDelete, onSubscribe, onToggleVisibility, onAnalytics, emptyNode }) {
   const q = search.trim().toLowerCase();
   const filtered = q
     ? agents.filter((a) =>
@@ -217,13 +226,14 @@ function AgentsList({ agents, search, onOpen, onDownload, onDelete, canDelete, o
           onDelete={canDelete && canDelete(agent) ? onDelete : null}
           onSubscribe={onSubscribe || null}
           onToggleVisibility={onToggleVisibility && agent.isOwned ? onToggleVisibility : null}
+          onAnalytics={onAnalytics && agent.isOwned ? onAnalytics : null}
         />
       ))}
     </div>
   );
 }
 
-function TabContent({ agents, loading, error, search, onOpen, onDownload, onDelete, canDelete, onSubscribe, onToggleVisibility, emptyNode }) {
+function TabContent({ agents, loading, error, search, onOpen, onDownload, onDelete, canDelete, onSubscribe, onToggleVisibility, onAnalytics, emptyNode }) {
   if (loading) {
     return <div className="agents-loading">Loading…</div>;
   }
@@ -240,6 +250,7 @@ function TabContent({ agents, loading, error, search, onOpen, onDownload, onDele
       canDelete={canDelete}
       onSubscribe={onSubscribe}
       onToggleVisibility={onToggleVisibility}
+      onAnalytics={onAnalytics}
       emptyNode={emptyNode}
     />
   );
@@ -434,6 +445,7 @@ export default function AgentsPage({
   onToggleVisibility,
   onFork,
   onUnfavorite,
+  onAnalytics,
 }) {
   const [activeTab, setActiveTab] = useState('agents');
   const [search, setSearch] = useState('');
@@ -593,6 +605,7 @@ export default function AgentsPage({
           onDelete={onDelete}
           canDelete={(agent) => agent.isOwned}
           onToggleVisibility={onToggleVisibility}
+          onAnalytics={onAnalytics}
           emptyNode={
             <div className="agents-empty">
               <div className="agents-empty-icon">
