@@ -85,6 +85,18 @@ app.use('/api/workspace', rateLimit);
 app.use('/api/drafts', rateLimit);
 app.use('/api/subscriptions', rateLimit);
 
+// --- Event log helper -------------------------------------------------------
+// Fire-and-forget: failures are logged but never bubble up to callers.
+
+function emitEvent(agentId, actorId, type, meta) {
+  db.query(
+    'INSERT INTO agent_events (agent_id, actor_id, type, meta) VALUES ($1, $2, $3, $4)',
+    [agentId, actorId ?? null, type, meta ? JSON.stringify(meta) : null]
+  ).catch((err) => {
+    console.error(`[event] failed to emit ${type} for agent ${agentId}:`, err.message);
+  });
+}
+
 // --- Tool catalog ---------------------------------------------------------
 
 app.get('/api/tools', (req, res) => {
@@ -746,6 +758,7 @@ app.post('/api/agents/:id/subscribe', requireAuth, async (req, res) => {
       'INSERT INTO subscriptions (user_id, agent_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
       [userId, agentId]
     );
+    emitEvent(agentId, userId, 'subscribe', null);
     res.status(200).json({ userId, agentId });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -761,6 +774,7 @@ app.delete('/api/agents/:id/subscribe', requireAuth, async (req, res) => {
       [userId, agentId]
     );
     if (rowCount === 0) return res.status(404).json({ error: 'Subscription not found' });
+    emitEvent(agentId, userId, 'unsubscribe', null);
     res.status(204).end();
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -798,6 +812,7 @@ app.post('/api/agents/:id/favorite', requireAuth, rateLimit, async (req, res) =>
         [agentId]
       );
     });
+    emitEvent(agentId, userId, 'favorite', null);
     res.status(200).json({ userId, agentId });
   } catch (err) {
     if (err.statusCode === 404) return res.status(404).json({ error: err.message });
@@ -826,6 +841,7 @@ app.delete('/api/agents/:id/favorite', requireAuth, rateLimit, async (req, res) 
         [agentId]
       );
     });
+    emitEvent(agentId, userId, 'unfavorite', null);
     res.status(204).end();
   } catch (err) {
     if (err.statusCode === 404) return res.status(404).json({ error: err.message });
@@ -879,6 +895,7 @@ app.put('/api/agents/:id/rating', requireAuth, async (req, res) => {
       );
     });
 
+    emitEvent(agentId, userId, 'rate', { rating });
     res.json({ agentId, userId, rating });
   } catch (err) {
     if (err.statusCode === 404) return res.status(404).json({ error: err.message });
@@ -912,6 +929,7 @@ app.delete('/api/agents/:id/rating', requireAuth, async (req, res) => {
       );
     });
 
+    emitEvent(agentId, userId, 'rate', null);
     res.status(204).end();
   } catch (err) {
     if (err.statusCode === 404) return res.status(404).json({ error: err.message });
@@ -993,10 +1011,28 @@ app.post('/api/agents/:id/fork', requireAuth, async (req, res) => {
       return { newAgent: agent, skillWarnings: warnings, sourceName: source.name };
     });
 
+    emitEvent(sourceId, callerId, 'fork', null);
     res.status(201).json({ ...serializeAgent({ ...newAgent, forked_from_name: sourceName }), skillWarnings });
   } catch (err) {
     if (err.statusCode === 404) return res.status(404).json({ error: err.message });
     if (err.statusCode === 403) return res.status(403).json({ error: err.message });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --- Export event ---------------------------------------------------------
+// Called client-side when a user downloads a Markdown export.
+// Increments the export count for the agent; anonymous exports are recorded with actor_id = null.
+
+app.post('/api/agents/:id/export-event', optionalAuth, async (req, res) => {
+  const agentId = req.params.id;
+  const actorId = req.user?.userId ?? null;
+  try {
+    const { rows } = await db.query('SELECT id FROM agents WHERE id = $1', [agentId]);
+    if (!rows[0]) return res.status(404).json({ error: 'Agent not found' });
+    emitEvent(agentId, actorId, 'export', { format: 'markdown' });
+    res.status(204).end();
+  } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
