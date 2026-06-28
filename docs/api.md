@@ -447,7 +447,7 @@ Deletes an agent. Requires authentication and ownership.
 
 ### `POST /api/agents/:id/subscribe`
 
-Subscribes the authenticated user to a public agent. Idempotent — subscribing again returns 200 instead of an error.
+Subscribes the authenticated user to a public agent. Idempotent — subscribing again returns 200 instead of an error. Emits a `subscribe` event to the activity log (best-effort; never blocks the response).
 
 **Rules:**
 - Only `visibility: "public"` agents are subscribable; private agents return 403.
@@ -479,7 +479,7 @@ Subscribes the authenticated user to a public agent. Idempotent — subscribing 
 
 ### `DELETE /api/agents/:id/subscribe`
 
-Unsubscribes the authenticated user from an agent. Returns 404 when the subscription did not exist.
+Unsubscribes the authenticated user from an agent. Returns 404 when the subscription did not exist. Emits an `unsubscribe` event (best-effort).
 
 **Headers**
 
@@ -497,7 +497,7 @@ Unsubscribes the authenticated user from an agent. Returns 404 when the subscrip
 
 ### `PUT /api/agents/:id/rating`
 
-Submits or replaces the authenticated user's star rating for a public agent. Ratings are 1–5 integers; submitting again overwrites the previous value. Aggregates (`rating_sum`, `rating_count`) are updated on the `agents` row in the same transaction.
+Submits or replaces the authenticated user's star rating for a public agent. Ratings are 1–5 integers; submitting again overwrites the previous value. Aggregates (`rating_sum`, `rating_count`) are updated on the `agents` row in the same transaction. Emits a `rate` event with `{ "rating": <value> }` in meta (best-effort).
 
 **Headers**
 
@@ -535,7 +535,7 @@ Submits or replaces the authenticated user's star rating for a public agent. Rat
 
 ### `DELETE /api/agents/:id/rating`
 
-Removes the authenticated user's rating for an agent. Aggregates are recomputed in the same transaction.
+Removes the authenticated user's rating for an agent. Aggregates are recomputed in the same transaction. Emits a `rate` event with null meta to signal removal (best-effort).
 
 **Headers** — `Authorization: Bearer <token>`
 
@@ -547,9 +547,9 @@ Removes the authenticated user's rating for an agent. Aggregates are recomputed 
 
 ---
 
-### `POST /api/agents/:id/favorite` _(issue #93)_
+### `POST /api/agents/:id/favorite`
 
-Adds a public agent to the authenticated user's favorites. Idempotent.
+Adds a public (or caller-owned) agent to the authenticated user's favorites. Idempotent — a duplicate returns 409. Increments `favorite_count` atomically. Emits a `favorite` event (best-effort).
 
 **Headers** — `Authorization: Bearer <token>`
 
@@ -557,13 +557,17 @@ Adds a public agent to the authenticated user's favorites. Idempotent.
 
 **Response 401** — missing or invalid token.
 
+**Response 403** — `{ "error": "Cannot favorite a private unowned agent" }`
+
 **Response 404** — `{ "error": "Agent not found" }`
+
+**Response 409** — `{ "error": "Already favorited" }`
 
 ---
 
-### `DELETE /api/agents/:id/favorite` _(issue #93)_
+### `DELETE /api/agents/:id/favorite`
 
-Removes a public agent from the authenticated user's favorites.
+Removes an agent from the authenticated user's favorites. Decrements `favorite_count` atomically (floor 0). Emits an `unfavorite` event (best-effort).
 
 **Headers** — `Authorization: Bearer <token>`
 
@@ -571,15 +575,58 @@ Removes a public agent from the authenticated user's favorites.
 
 **Response 401** — missing or invalid token.
 
-**Response 404** — `{ "error": "Favorite not found" }`
+**Response 404** — `{ "error": "Agent not found" }` or `{ "error": "Not favorited" }`
 
-> **Status:** backend implementation tracked in issue #93.
+---
+
+### `GET /api/agents/favorites`
+
+Returns a paginated list of agents the authenticated user has favorited, ordered by recency. Each item includes `isFavorited: true`, `isOwner`, `isSubscribed`, and `ownerDisplayName`.
+
+**Headers** — `Authorization: Bearer <token>`
+
+**Query parameters**
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `page` | integer | `1` | 1-based page number |
+| `pageSize` | integer | `20` | Items per page (max 50) |
+
+**Response 200**
+
+```json
+{
+  "items": [{ "id": "...", "name": "...", "isFavorited": true, "isOwner": false, "isSubscribed": true }],
+  "page": 1,
+  "pageSize": 20,
+  "total": 5,
+  "hasMore": false
+}
+```
+
+**Response 401** — missing or invalid token.
+
+---
+
+### `POST /api/agents/:id/export-event`
+
+Records that a Markdown export was downloaded. Called client-side after the file is generated. Auth is optional — anonymous exports are recorded with `actor_id = null`. The response is always 204; failures in the event write are swallowed server-side and never returned to the caller.
+
+**Headers (optional)**
+
+| Header | Value |
+|---|---|
+| `Authorization` | `Bearer <token>` |
+
+**Response 204** — no body.
+
+**Response 404** — `{ "error": "Agent not found" }`
 
 ---
 
 ### `POST /api/agents/:id/fork`
 
-Creates an independent private copy of a public agent (or any agent owned by the caller) into the authenticated user's workspace. The source agent's `fork_count` is incremented atomically in the same transaction. The fork is a full snapshot — later edits to the source never affect the fork.
+Creates an independent private copy of a public agent (or any agent owned by the caller) into the authenticated user's workspace. The source agent's `fork_count` is incremented atomically in the same transaction. The fork is a full snapshot — later edits to the source never affect the fork. Emits a `fork` event on the source agent (best-effort).
 
 **Headers**
 

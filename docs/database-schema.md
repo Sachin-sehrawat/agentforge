@@ -22,6 +22,8 @@ AgentForge uses **PostgreSQL 14+** as its primary data store. The schema is init
 | `06_agent_versions.sql` | Version history table |
 | `07_marketplace.sql` | Marketplace columns: `search_tsv`, `fork_count`, `favorite_count`, `rating_sum`, `rating_count`, `forked_from`; full-text search trigger |
 | `08_ratings.sql` | `agent_ratings` table |
+| `09_favorites.sql` | `agent_favorites` table |
+| `10_agent_events.sql` | `agent_events` append-only event log |
 
 ## Tables
 
@@ -186,6 +188,62 @@ One row per `(user_id, agent_id)` pair. Rating aggregates (`rating_sum`, `rating
 
 - `PRIMARY KEY (user_id, agent_id)` — one rating per user per agent; upsert via `ON CONFLICT DO UPDATE`.
 - Self-rating is blocked at the API layer (`PUT /api/agents/:id/rating` returns 400 when caller owns the agent).
+
+---
+
+### `agent_favorites`
+
+Lightweight bookmark table — distinct from subscriptions. Favorite = "save for later"; subscription = "follow the live agent".
+
+| Column | Type | Constraints | Description |
+|---|---|---|---|
+| `user_id` | `UUID` | `NOT NULL`, FK → `users.id` ON DELETE CASCADE, part of PK | User who favorited |
+| `agent_id` | `UUID` | `NOT NULL`, FK → `agents.id` ON DELETE CASCADE, part of PK | Favorited agent |
+| `created_at` | `TIMESTAMPTZ` | `NOT NULL DEFAULT NOW()` | When the favorite was added |
+
+`favorite_count` on the `agents` table is maintained by atomic increment/decrement in the same transaction as the insert/delete.
+
+**Indexes**
+
+| Name | Column | Rationale |
+|---|---|---|
+| `idx_favorites_user` | `(user_id, created_at DESC)` | "All agents favorited by this user, newest first" |
+
+---
+
+### `agent_events`
+
+Append-only event log. Every tracked user action writes one row. Rows are never updated or deleted (agent deletion cascades).
+
+| Column | Type | Constraints | Description |
+|---|---|---|---|
+| `id` | `BIGSERIAL` | PK | Auto-incrementing surrogate key |
+| `agent_id` | `UUID` | `NOT NULL`, FK → `agents.id` ON DELETE CASCADE | Agent the event is about |
+| `actor_id` | `UUID` | nullable, FK → `users.id` ON DELETE SET NULL | User who triggered the action; `NULL` for anonymous actions (e.g. unauthenticated exports) |
+| `type` | `TEXT` | `NOT NULL` | Event type: `subscribe` \| `unsubscribe` \| `favorite` \| `unfavorite` \| `fork` \| `rate` \| `export` |
+| `meta` | `JSONB` | nullable | Type-specific payload, e.g. `{ "rating": 4 }` or `{ "format": "markdown" }` |
+| `created_at` | `TIMESTAMPTZ` | `NOT NULL DEFAULT NOW()` | When the event occurred |
+
+**Event types**
+
+| Type | Emitted by | `meta` |
+|---|---|---|
+| `subscribe` | `POST /api/agents/:id/subscribe` | — |
+| `unsubscribe` | `DELETE /api/agents/:id/subscribe` | — |
+| `favorite` | `POST /api/agents/:id/favorite` | — |
+| `unfavorite` | `DELETE /api/agents/:id/favorite` | — |
+| `fork` | `POST /api/agents/:id/fork` | — |
+| `rate` | `PUT /api/agents/:id/rating` | `{ "rating": <1–5> }` |
+| `rate` | `DELETE /api/agents/:id/rating` | `null` (indicates removal) |
+| `export` | `POST /api/agents/:id/export-event` | `{ "format": "markdown" }` |
+
+**Failure semantics** — event inserts are fire-and-forget (try/catch with console logging). A failed insert never blocks or rolls back the primary action.
+
+**Indexes**
+
+| Name | Column | Rationale |
+|---|---|---|
+| `idx_agent_events_agent` | `(agent_id, created_at DESC)` | Agent activity timeline (owner analytics) |
 
 ---
 
