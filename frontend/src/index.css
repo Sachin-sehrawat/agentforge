@@ -1309,6 +1309,41 @@ button {
   box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
 }
 
+/* Agent node — provenance */
+
+.agent-provenance {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: 6px 8px;
+  background: var(--border-soft);
+  border-radius: 6px;
+  border-left: 3px solid var(--accent-cyan);
+}
+
+.provenance-link {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 11px;
+  color: var(--accent-cyan);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  font-weight: 500;
+}
+
+.provenance-link:hover {
+  color: #4f52e0;
+}
+
+.provenance-deleted {
+  color: var(--text-dim);
+  font-style: italic;
+}
+
 /* Agent node — active skills section */
 
 .node-skills-section {
@@ -3258,3 +3293,70 @@ button {
   margin-top: 28px;
 }
 
+
+/* Toast notifications */
+
+.toast-container {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 9999;
+  max-width: 380px;
+}
+
+.toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.4;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  animation: toast-in 0.2s ease;
+}
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.toast--info {
+  background: #fff;
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+
+.toast--warning {
+  background: #fffbeb;
+  border: 1px solid #fcd34d;
+  color: #92400e;
+}
+
+.toast--error {
+  background: #fef2f2;
+  border: 1px solid #fca5a5;
+  color: #991b1b;
+}
+
+.toast-msg {
+  flex: 1;
+}
+
+.toast-dismiss {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: inherit;
+  opacity: 0.5;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.toast-dismiss:hover {
+  opacity: 1;
+}

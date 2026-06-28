@@ -106,6 +106,7 @@ export default function App() {
   const [emptyStateDismissed, setEmptyStateDismissed] = useState(false);
 
   const [validationState, setValidationState] = useState(null);
+  const [toasts, setToasts] = useState([]);
 
   const isRestoredRef = useRef(false);
   const autosaveTimerRef = useRef(null);
@@ -405,6 +406,29 @@ export default function App() {
     }
   };
 
+  function showToast(msg, type = 'info') {
+    const id = Date.now() + Math.random();
+    setToasts((prev) => [...prev, { id, msg, type }]);
+    setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 6000);
+  }
+
+  const onFork = async (id) => {
+    const result = await api.forkAgent(id);
+    api.bustMarketplaceCache();
+    const loaded = { ...DEFAULT_AGENT, ...result };
+    setAgent(loaded);
+    setView('builder');
+    setEmptyStateDismissed(true);
+    api.saveWorkspaceData(WORKSPACE_ID, { agent: loaded });
+    if (result.skillWarnings?.length > 0) {
+      result.skillWarnings.forEach((w) =>
+        showToast(`Skill not accessible and was removed: ${w}`, 'warning')
+      );
+    }
+    if (isAuthenticated) refreshMyAgents();
+    return result;
+  };
+
   const onToggleVisibility = async (agent) => {
     const newVisibility = agent.visibility === 'public' ? 'private' : 'public';
     try {
@@ -657,6 +681,7 @@ export default function App() {
         <MarketplacePage
           isAuthenticated={isAuthenticated}
           onView={onLoad}
+          onFork={onFork}
           onOpenAuth={(tab) => setAuthModal({ tab, onSuccess: null })}
         />
       ) : view === 'admin' ? (
@@ -714,6 +739,7 @@ export default function App() {
                   pan={canvasView.pan}
                   onZoomPanChange={handleCanvasViewChange}
                   validationState={validationState}
+                  onViewSource={onLoad}
                 />
                 <PersonaPanel
                   activeInstructions={agent.instructions}
@@ -724,6 +750,22 @@ export default function App() {
             </ErrorBoundary>
           )}
         </>
+      )}
+      {toasts.length > 0 && (
+        <div className="toast-container" aria-live="polite">
+          {toasts.map((t) => (
+            <div key={t.id} className={`toast toast--${t.type}`}>
+              <span className="toast-msg">{t.msg}</span>
+              <button
+                className="toast-dismiss"
+                onClick={() => setToasts((prev) => prev.filter((x) => x.id !== t.id))}
+                aria-label="Dismiss"
+              >
+                ✕
+              </button>
+            </div>
+          ))}
+        </div>
       )}
     </div>
   );
