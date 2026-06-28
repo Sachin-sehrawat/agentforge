@@ -10,8 +10,8 @@ Step-by-step instructions for deploying AgentForge in a production environment.
 |---|---|---|
 | Docker | 24.x | Docker Compose v2 bundled |
 | Docker Compose | v2.x | `docker compose` (no hyphen) |
-| Node.js | 18 LTS | Only needed if running backend outside Docker |
-| Available ports | 4000, 5432, 27017 | Adjust in `docker-compose.yml` if occupied |
+| Node.js | 18 LTS | Only needed if running services outside Docker |
+| Available ports | 3000, 4000, 5432, 27017 | Adjust in `docker-compose.yml` if occupied |
 | Disk space | 2 GB free | For images, volumes, and backups |
 
 ---
@@ -28,6 +28,7 @@ cp .env.local.example .env
 
 | Variable | Default | Description |
 |---|---|---|
+| `FRONTEND_PORT` | `3000` | Host port for the frontend (nginx) |
 | `PORT` | `4000` | Backend HTTP port |
 | `POSTGRES_HOST` | `postgres` | Hostname of the PostgreSQL container |
 | `POSTGRES_PORT` | `5432` | PostgreSQL port |
@@ -70,10 +71,11 @@ docker compose up -d --build
 ```
 
 This will:
-- Pull `postgres:14-alpine` and `mongo:7.0` images
+- Pull `postgres:14-alpine`, `mongo:7.0`, and `nginx:alpine` images
 - Build the backend image from `backend/Dockerfile`
+- Build the frontend image from `frontend/Dockerfile` (multi-stage: Vite build → nginx)
 - Run `backend/db/init/01_schema.sql` on PostgreSQL (first start only)
-- Start all three services with health checks
+- Start all four services with health checks
 
 ### 3. Verify services are healthy
 
@@ -81,17 +83,23 @@ This will:
 docker compose ps
 ```
 
-All three services (`postgres`, `mongodb`, `backend`) should show `healthy` status. If any is `starting`, wait 15–30 seconds and re-check.
+All four services (`postgres`, `mongodb`, `backend`, `frontend`) should show `healthy` or `running` status. If any is `starting`, wait 15–60 seconds and re-check.
 
 ```bash
-# Verify PostgreSQL
+# Verify backend (PostgreSQL)
 curl http://localhost:4000/api/health
 # → {"ok":true}
 
 # Verify MongoDB
 curl http://localhost:4000/api/health/mongo
 # → {"ok":true}
+
+# Verify frontend is serving the app
+curl -s -o /dev/null -w "%{http_code}" http://localhost:3000
+# → 200
 ```
+
+The application is accessible at **`http://localhost:3000`** (or the IP/domain of your host).
 
 ### 4. (Optional) Seed MongoDB fixture data
 
@@ -145,7 +153,13 @@ Collections created:
 
 ```bash
 git pull
-docker compose up -d --build backend   # rebuild only the backend image
+
+# Rebuild only what changed
+docker compose up -d --build backend   # backend source changes
+docker compose up -d --build frontend  # frontend source changes
+
+# Or rebuild everything
+docker compose up -d --build
 ```
 
 PostgreSQL and MongoDB data volumes are persisted across restarts and rebuilds. Schema changes require running a migration script (none are needed as of the current release).
@@ -172,8 +186,9 @@ Each service has a health check configured in `docker-compose.yml`:
 | `postgres` | `pg_isready -U agentforge` | 10 s | 5 s | 5 |
 | `mongodb` | `mongosh --eval "db.adminCommand('ping')"` | 10 s | 5 s | 5 |
 | `backend` | `curl -f /api/health` | 30 s | 10 s | 3 |
+| `frontend` | _(none — nginx exits on startup failure)_ | — | — | — |
 
-The backend service waits for both databases to become healthy before starting (`depends_on: condition: service_healthy`).
+The backend waits for both databases to become healthy before starting. The frontend waits for the backend to become healthy before starting (`depends_on: condition: service_healthy`).
 
 ### Application logs
 

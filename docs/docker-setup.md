@@ -1,6 +1,6 @@
 # Docker Setup
 
-Local development environment using Docker Compose — PostgreSQL 14, MongoDB 7.0, and the AgentForge backend API.
+Local development environment using Docker Compose — PostgreSQL 14, MongoDB 7.0, the AgentForge backend API, and the React frontend served by nginx.
 
 ## Prerequisites
 
@@ -23,7 +23,7 @@ Edit `.env.local` if you need non-default credentials or ports.
 docker compose --env-file .env.local up -d --build
 ```
 
-This starts PostgreSQL, MongoDB, and the backend API. On first run, Docker builds the backend image and both databases are initialized automatically (schema + indexes via the init scripts).
+This starts PostgreSQL, MongoDB, the backend API, and the React frontend. On first run, Docker builds both application images and both databases are initialized automatically (schema + indexes via the init scripts).
 
 > **Windows note:** Docker Desktop installs the CLI to `C:\Program Files\Docker\Docker\resources\bin\`. If `docker` is not found in your shell, either open a new terminal after Docker Desktop has started, or add that path to your `PATH` manually.
 
@@ -33,14 +33,17 @@ This starts PostgreSQL, MongoDB, and the backend API. On first run, Docker build
 docker compose ps
 ```
 
-All three services (`postgres`, `mongodb`, `backend`) should show `(healthy)` status. The backend waits for both databases to pass health checks before it starts — this can take ~30 seconds on the first run.
+All four services (`postgres`, `mongodb`, `backend`, `frontend`) should show `(healthy)` or `running` status. The backend waits for both databases to pass health checks before it starts, and the frontend waits for the backend — this can take ~30–60 seconds on the first run.
 
 ```bash
 # Quick API check
 curl http://localhost:4000/api/health
-```
+# → {"ok": true}
 
-Returns `{"ok": true}` when ready.
+# Open the app in a browser
+open http://localhost:3000   # macOS
+start http://localhost:3000  # Windows
+```
 
 ### 4. Seed reference data into MongoDB
 
@@ -69,15 +72,18 @@ Expected output: 15 built-in skills and 11 persona categories inserted. Re-runni
 
 | Command | Description |
 |---------|-------------|
-| `docker-compose --env-file .env.local up -d` | Start all services in the background |
-| `docker-compose --env-file .env.local up` | Start with logs attached |
-| `docker-compose down` | Stop and remove containers (data volumes preserved) |
-| `docker-compose down -v` | Stop containers **and delete data volumes** |
-| `docker-compose logs -f` | Stream logs from all services |
-| `docker-compose logs -f backend` | Stream backend logs only |
-| `docker-compose ps` | Show running service status |
-| `docker-compose build backend` | Rebuild the backend image after code changes |
-| `docker-compose restart backend` | Restart only the backend service |
+| `docker compose --env-file .env.local up -d` | Start all services in the background |
+| `docker compose --env-file .env.local up` | Start with logs attached |
+| `docker compose down` | Stop and remove containers (data volumes preserved) |
+| `docker compose down -v` | Stop containers **and delete data volumes** |
+| `docker compose logs -f` | Stream logs from all services |
+| `docker compose logs -f backend` | Stream backend logs only |
+| `docker compose logs -f frontend` | Stream frontend (nginx) logs only |
+| `docker compose ps` | Show running service status |
+| `docker compose build backend` | Rebuild the backend image after code changes |
+| `docker compose build frontend` | Rebuild the frontend image after UI changes |
+| `docker compose restart backend` | Restart only the backend service |
+| `docker compose restart frontend` | Restart only the frontend service |
 
 ---
 
@@ -132,6 +138,19 @@ mongosh "mongodb://admin:adminpassword@localhost:27017/agentbuilder?authSource=a
 
 The backend waits for both databases to pass their health checks before starting. Inside the Docker network, it connects to `postgres:5432` and `mongodb:27017`.
 
+### Frontend (`frontend`)
+
+| Setting | Default |
+|---------|---------|
+| Build context | `./frontend` |
+| Port | `3000` (host) → `80` (container) |
+| Served by | `nginx:alpine` |
+| Config | `frontend/nginx.conf` |
+
+The frontend is built from source during `docker compose build` (multi-stage build: Node 20 compiles the Vite app, nginx serves the `dist/` output). nginx proxies all `/api/*` requests to `http://backend:4000/api/` and falls back all other routes to `index.html` for React client-side routing.
+
+The frontend waits for the backend health check before starting.
+
 ---
 
 ## Data Persistence
@@ -158,26 +177,30 @@ All services share the internal bridge network `agentforge-net`. Service names a
 - `postgres` — PostgreSQL
 - `mongodb` — MongoDB
 - `backend` — Express API
+- `frontend` — nginx serving the React build
 
-Only the ports listed above are exposed to the host machine.
+Only the ports listed above are exposed to the host machine. The frontend talks to the backend via the internal network (`http://backend:4000`), not through the host.
 
 ---
 
 ## Development Workflow
 
-### Running databases only (backend on the host)
+### Running databases only (backend + frontend on the host)
 
-If you want to run the backend with `npm run dev` for hot-reload while keeping databases in Docker:
+If you want hot-reload for both the backend and frontend while keeping databases in Docker:
 
 ```bash
 # Start only the databases
-docker-compose --env-file .env.local up -d postgres mongodb
+docker compose --env-file .env.local up -d postgres mongodb
 
-# Run backend locally (make sure backend/.env points to localhost)
+# Terminal 1 — backend with hot-reload (uses localhost for DB hosts)
 cd backend && npm run dev
+
+# Terminal 2 — frontend dev server with Vite proxy to localhost:4000
+cd frontend && npm run dev
 ```
 
-The default `backend/.env.example` uses `localhost` for both database hosts, which works when the backend is running directly on the host.
+The default `backend/.env.example` uses `localhost` for both database hosts, which works when the backend is running directly on the host. Vite's dev proxy (configured in `vite.config.js`) forwards `/api/*` to `http://localhost:4000`.
 
 ### Restarting the backend without Docker
 
@@ -216,12 +239,23 @@ Invoke-RestMethod -Uri "http://localhost:4000/api/agents/import" -Method POST -B
 
 The server starts and serves requests even without PostgreSQL/MongoDB — DB-backed endpoints return `503` until the databases are reachable, but stateless endpoints (`/api/tools`, `/api/agents/import`) work immediately.
 
-### Rebuilding the backend image
+### Rebuilding images after code changes
 
-After changing `package.json` or any source file:
+After changing backend source files or `package.json`:
 ```bash
-docker-compose build backend
-docker-compose --env-file .env.local up -d backend
+docker compose build backend
+docker compose --env-file .env.local up -d backend
+```
+
+After changing frontend source files:
+```bash
+docker compose build frontend
+docker compose --env-file .env.local up -d frontend
+```
+
+To rebuild everything at once:
+```bash
+docker compose --env-file .env.local up -d --build
 ```
 
 ---
@@ -232,6 +266,7 @@ All variables have sensible defaults in `docker-compose.yml`. Override any of th
 
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `FRONTEND_PORT` | `3000` | Host port for the frontend (nginx) |
 | `PORT` | `4000` | Backend port |
 | `POSTGRES_PORT` | `5432` | PostgreSQL host port |
 | `POSTGRES_DB` | `agentforge` | Database name |
@@ -259,7 +294,7 @@ All variables have sensible defaults in `docker-compose.yml`. Override any of th
 ## Troubleshooting
 
 **Port already in use**
-Change the host port in `.env.local` (e.g. `POSTGRES_PORT=5433`) and restart.
+Change the host port in `.env.local` (e.g. `POSTGRES_PORT=5433`, `FRONTEND_PORT=3001`) and restart.
 
 **Backend fails to connect on first run**
 The backend waits for database health checks, but on very slow machines the `start_period` may need to be increased in `docker-compose.yml`. Check logs with `docker-compose logs backend`.
