@@ -106,19 +106,11 @@ The application is accessible at **`http://localhost:3000`** (or the IP/domain o
 
 Built-in skills and persona categories live in MongoDB and must be seeded once after the first start. The `scripts/` directory is not included in the Docker image, so run this from the host:
 
-**Linux / macOS:**
 ```bash
-MONGO_URI="mongodb://admin:adminpassword@localhost:27017/agentbuilder?authSource=admin" \
-  node backend/scripts/migrate-skills-personas.js
+docker compose --env-file .env.local exec backend node scripts/migrate-skills-personas.js
 ```
 
-**Windows (PowerShell):**
-```powershell
-$env:MONGO_URI = "mongodb://admin:adminpassword@localhost:27017/agentbuilder?authSource=admin"
-node backend/scripts/migrate-skills-personas.js
-```
-
-This inserts 15 built-in skills and 11 persona categories (35 personas). Re-running is safe — existing documents are skipped.
+This inserts 15 built-in skills and 11 persona categories (35 personas). Re-running is safe — existing documents are skipped. The container already has the correct `MONGO_URI` and all dependencies; no local Node.js install required.
 
 > The 20 public seed agents (research, security, testing, efficiency, etc.) are seeded automatically into PostgreSQL by `12_seed_agents.sql` on first start — no extra step needed.
 

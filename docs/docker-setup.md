@@ -15,13 +15,7 @@ cp .env.local.example .env.local
 docker compose --env-file .env.local up -d --build
 
 # 3. Seed MongoDB reference data (skills + persona categories)
-# macOS / Linux
-MONGO_URI="mongodb://admin:adminpassword@localhost:27017/agentbuilder?authSource=admin" \
-  node backend/scripts/migrate-skills-personas.js
-
-# Windows (PowerShell)
-$env:MONGO_URI = "mongodb://admin:adminpassword@localhost:27017/agentbuilder?authSource=admin"
-node backend/scripts/migrate-skills-personas.js
+docker compose --env-file .env.local exec backend node scripts/migrate-skills-personas.js
 
 # 4. Open the app
 # http://localhost:3000  — sign up for a new account to get started
@@ -87,19 +81,11 @@ Invoke-RestMethod -Uri http://localhost:4000/api/health
 
 ### 3. Seed MongoDB reference data
 
-The `scripts/` directory is not copied into the Docker image, so this one step runs from the host:
-
-**macOS / Linux:**
 ```bash
-MONGO_URI="mongodb://admin:adminpassword@localhost:27017/agentbuilder?authSource=admin" \
-  node backend/scripts/migrate-skills-personas.js
+docker compose --env-file .env.local exec backend node scripts/migrate-skills-personas.js
 ```
 
-**Windows (PowerShell):**
-```powershell
-$env:MONGO_URI = "mongodb://admin:adminpassword@localhost:27017/agentbuilder?authSource=admin"
-node backend/scripts/migrate-skills-personas.js
-```
+The container already has the right `MONGO_URI` — no environment variables needed on the host. Node.js and all dependencies are inside the image, so this works without any local `npm install`.
 
 Expected output:
 ```
@@ -153,13 +139,13 @@ Scripts run in filename order. All are idempotent (`IF NOT EXISTS`, `ON CONFLICT
 | `01_init.js` | Collections: `user_preferences`, `workspace_state`, `draft_agents` with indexes |
 | `02_seed_templates.js` | 5 starter agent templates (Researcher, Code Assistant, Data Analyst, Customer Service, Blank) |
 
-### Manual seed (step 3 above)
+### One-time seed (step 3 above)
 
-| Script | What it does |
+| Command | What it does |
 |---|---|
-| `backend/scripts/migrate-skills-personas.js` | 15 built-in skills + 11 persona categories (35 personas) in MongoDB |
+| `docker exec backend node scripts/migrate-skills-personas.js` | 15 built-in skills + 11 persona categories (35 personas) in MongoDB |
 
-> **After `docker compose down -v`** (volume wipe): all auto-seeds replay on the next `up`. Re-run the manual seed script once.
+> **After `docker compose down -v`** (volume wipe): all auto-seeds replay on the next `up`. Re-run the exec command once for MongoDB skills/personas.
 
 ---
 
@@ -181,9 +167,8 @@ cd frontend
 npm install
 npm run dev        # starts on http://localhost:5173
 
-# Seed MongoDB (same as step 3 above — only needed once)
-$env:MONGO_URI = "mongodb://admin:adminpassword@localhost:27017/agentbuilder?authSource=admin"
-node backend/scripts/migrate-skills-personas.js
+# Seed MongoDB (same as step 3 — only needed once, run while Docker DBs are up)
+docker compose --env-file .env.local exec backend node scripts/migrate-skills-personas.js
 ```
 
 The Vite dev server (`localhost:5173`) proxies all `/api/*` requests to the backend at `localhost:4000` — no CORS config needed.
@@ -213,9 +198,8 @@ The backend uses `backend/.env` for local DB connection strings — the defaults
 docker compose --env-file .env.local down -v
 docker compose --env-file .env.local up -d --build
 
-# Re-run MongoDB seed (PostgreSQL seeds replay automatically)
-$env:MONGO_URI = "mongodb://admin:adminpassword@localhost:27017/agentbuilder?authSource=admin"
-node backend/scripts/migrate-skills-personas.js
+# Re-seed MongoDB (PostgreSQL seeds replay automatically)
+docker compose --env-file .env.local exec backend node scripts/migrate-skills-personas.js
 ```
 
 ### Connect to databases directly
@@ -309,7 +293,10 @@ docker compose logs backend
 ```
 
 **Seed script `Cannot find module` error**
-The `scripts/` directory is not in the Docker image. Run `migrate-skills-personas.js` from the host, not via `docker exec`.
+Run the seed via `docker exec`, not bare `node` on the host. The host doesn't have `backend/node_modules` unless you've run `npm install` there:
+```bash
+docker compose --env-file .env.local exec backend node scripts/migrate-skills-personas.js
+```
 
 **No skills or personas in the app after a volume wipe**
 Re-run the MongoDB seed script (step 3). PostgreSQL seed agents come back automatically.
