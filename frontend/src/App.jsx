@@ -7,6 +7,7 @@ import SkillsBar from './components/SkillsBar.jsx';
 import AgentsPage from './components/AgentsPage.jsx';
 import SkillsPage from './components/SkillsPage.jsx';
 import AdminPage from './components/AdminPage.jsx';
+import MarketplacePage from './components/MarketplacePage.jsx';
 import AuthModal from './components/AuthModal.jsx';
 import ImportModal from './components/ImportModal.jsx';
 import TemplateGallery from './components/TemplateGallery.jsx';
@@ -137,7 +138,7 @@ export default function App() {
       api.getUserPreferences(USER_ID),
       api.getWorkspaceData(WORKSPACE_ID),
     ]).then(([prefs, wsData]) => {
-      if (prefs.view && ['builder', 'agents', 'skills', 'admin'].includes(prefs.view)) {
+      if (prefs.view && ['builder', 'agents', 'skills', 'admin', 'marketplace'].includes(prefs.view)) {
         setView(prefs.view);
       }
       if (typeof prefs.canvas_zoom === 'number' || prefs.canvas_pan) {
@@ -650,6 +651,12 @@ export default function App() {
           onUpdateSkill={onUpdateSkill}
           onDeleteSkill={onDeleteSkill}
           isAuthenticated={isAuthenticated}
+          onOpenAuth={(tab) => setAuthModal({ tab, onSuccess: null })}
+        />
+      ) : view === 'marketplace' ? (
+        <MarketplacePage
+          isAuthenticated={isAuthenticated}
+          onView={onLoad}
           onOpenAuth={(tab) => setAuthModal({ tab, onSuccess: null })}
         />
       ) : view === 'admin' ? (

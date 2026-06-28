@@ -210,6 +210,60 @@ Returns all public agents ordered by `updated_at DESC`. Accepts an optional Bear
 
 ---
 
+### `GET /api/agents/marketplace`
+
+Public agent discovery endpoint with full-text search, composable filters, multiple sort orders, and offset pagination. Never returns private agents. Accepts an optional Bearer token — when authenticated each item includes `isSubscribed`, `isFavorited`, and `isOwner` flags.
+
+**Headers (optional)**
+
+| Header | Value |
+|---|---|
+| `Authorization` | `Bearer <token>` |
+
+**Query parameters**
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `q` | string | — | Full-text search term (uses PostgreSQL `websearch_to_tsquery`) |
+| `model` | string | — | Filter by exact model identifier |
+| `tools` | string | — | Comma-separated tool IDs; returns agents that include **all** listed tools |
+| `sort` | string | `recent` | `recent` \| `popular` \| `top_rated` \| `most_forked` |
+| `minRating` | number | `0` | Minimum average star rating (0 = no filter) |
+| `page` | integer | `1` | 1-based page number |
+| `pageSize` | integer | `20` | Items per page (max 50) |
+
+**Response 200**
+
+```json
+{
+  "items": [
+    {
+      "id": "550e8400-e29b-41d4-a716-446655440000",
+      "name": "Research Agent",
+      "persona": "A helpful research assistant",
+      "model": "claude-sonnet-4-6",
+      "tools": ["web_search", "calculator"],
+      "ownerDisplayName": "Alice",
+      "avgRating": 4.2,
+      "ratingCount": 14,
+      "forkCount": 3,
+      "favoriteCount": 27,
+      "isSubscribed": false,
+      "isFavorited": false,
+      "isOwner": false
+    }
+  ],
+  "page": 1,
+  "pageSize": 20,
+  "total": 42,
+  "hasMore": true
+}
+```
+
+`isSubscribed`, `isFavorited`, and `isOwner` are only present when the request is authenticated. `avgRating` is `null` when the agent has no ratings yet.
+
+---
+
 ### `GET /api/agents/mine`
 
 Returns the authenticated user's **owned agents** plus any **subscribed public agents**, ordered by `updated_at DESC`. Each item carries `isOwned` and `isSubscribed` boolean flags.
@@ -436,6 +490,91 @@ Unsubscribes the authenticated user from an agent. Returns 404 when the subscrip
 **Response 401** — missing or invalid token.
 
 **Response 404** — `{ "error": "Subscription not found" }`
+
+---
+
+### `PUT /api/agents/:id/rating` _(issue #90)_
+
+Submits or replaces the authenticated user's star rating for a public agent. Ratings are 1–5 integers; submitting again overwrites the previous value. The endpoint returns the updated aggregate so the UI can update the displayed average without a full reload.
+
+**Headers**
+
+| Header | Value |
+|---|---|
+| `Authorization` | `Bearer <token>` |
+
+**Request body**
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `rating` | integer | Yes | 1 – 5 |
+
+**Response 200**
+
+```json
+{
+  "avgRating": 4.1,
+  "ratingCount": 15
+}
+```
+
+**Response 400** — `{ "error": "rating must be an integer between 1 and 5" }`
+
+**Response 401** — missing or invalid token.
+
+**Response 403** — `{ "error": "Cannot rate your own agent" }`
+
+**Response 404** — `{ "error": "Agent not found" }`
+
+> **Status:** backend implementation tracked in issue #90. The frontend already calls this endpoint; until it lands the call will return 404 and the UI silently ignores the error.
+
+---
+
+### `POST /api/agents/:id/favorite` _(issue #93)_
+
+Adds a public agent to the authenticated user's favorites. Idempotent.
+
+**Headers** — `Authorization: Bearer <token>`
+
+**Response 200** — `{ "userId": "...", "agentId": "..." }`
+
+**Response 401** — missing or invalid token.
+
+**Response 404** — `{ "error": "Agent not found" }`
+
+---
+
+### `DELETE /api/agents/:id/favorite` _(issue #93)_
+
+Removes a public agent from the authenticated user's favorites.
+
+**Headers** — `Authorization: Bearer <token>`
+
+**Response 204** — no body.
+
+**Response 401** — missing or invalid token.
+
+**Response 404** — `{ "error": "Favorite not found" }`
+
+> **Status:** backend implementation tracked in issue #93.
+
+---
+
+### `POST /api/agents/:id/fork` _(issue #92)_
+
+Creates a private copy of a public agent owned by the authenticated user. The original agent's `fork_count` is incremented. The response is the newly created agent object.
+
+**Headers** — `Authorization: Bearer <token>`
+
+**Response 201** — agent object (same shape as `POST /api/agents`, with `visibility: "private"` and the caller's `ownerId`).
+
+**Response 401** — missing or invalid token.
+
+**Response 403** — `{ "error": "Cannot fork your own agent" }`
+
+**Response 404** — `{ "error": "Agent not found" }`
+
+> **Status:** backend implementation tracked in issue #92.
 
 ---
 
