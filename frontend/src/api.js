@@ -178,9 +178,10 @@ export const api = {
   rateAgent: (id, rating) =>
     request(`/agents/${id}/rating`, { method: 'PUT', body: JSON.stringify({ rating }) }),
 
-  // Favorite / unfavorite
+  // Favorite / unfavorite / list favorites
   favoriteAgent: (id) => request(`/agents/${id}/favorite`, { method: 'POST' }),
   unfavoriteAgent: (id) => request(`/agents/${id}/favorite`, { method: 'DELETE' }),
+  listFavorites: () => request('/agents/favorites'),
 
   // Fork
   forkAgent: (id) => request(`/agents/${id}/fork`, { method: 'POST' }),

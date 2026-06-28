@@ -245,17 +245,20 @@ app.get('/api/agents/marketplace', optionalAuth, async (req, res) => {
 
   const offset = (page - 1) * pageSize;
 
-  // Per-user flags require a subscription LEFT JOIN; only added when authenticated.
+  // Per-user flags require subscription + favorites LEFT JOINs; only added when authenticated.
   const dataParams = [...filterParams];
   let subJoin = '';
   let isSubscribedExpr = 'FALSE';
   let isOwnerExpr = 'FALSE';
+  let isFavoritedExpr = 'FALSE';
   if (userId) {
     dataParams.push(userId);
     const up = `$${dataParams.length}`;
-    subJoin = `LEFT JOIN subscriptions s ON s.agent_id = a.id AND s.user_id = ${up}`;
+    subJoin = `LEFT JOIN subscriptions s ON s.agent_id = a.id AND s.user_id = ${up}
+         LEFT JOIN agent_favorites f ON f.agent_id = a.id AND f.user_id = ${up}`;
     isSubscribedExpr = `(s.agent_id IS NOT NULL)`;
     isOwnerExpr = `(a.owner_id = ${up})`;
+    isFavoritedExpr = `(f.agent_id IS NOT NULL)`;
   }
   dataParams.push(pageSize);
   const pageSizeParam = `$${dataParams.length}`;
@@ -274,7 +277,8 @@ app.get('/api/agents/marketplace', optionalAuth, async (req, res) => {
            u.display_name AS owner_display_name,
            ${rankExpr} AS rank,
            ${isSubscribedExpr} AS is_subscribed,
-           ${isOwnerExpr} AS is_owner
+           ${isOwnerExpr} AS is_owner,
+           ${isFavoritedExpr} AS is_favorited
          FROM agents a
          LEFT JOIN users u ON u.id = a.owner_id
          ${subJoin}
@@ -302,13 +306,104 @@ app.get('/api/agents/marketplace', optionalAuth, async (req, res) => {
       };
       if (userId) {
         item.isSubscribed = Boolean(r.is_subscribed);
-        item.isFavorited = false;
+        item.isFavorited = Boolean(r.is_favorited);
         item.isOwner = Boolean(r.is_owner);
       }
       return item;
     });
 
     res.json({ items, page, pageSize, total, hasMore: page * pageSize < total });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --- Agent favorites ----------------------------------------------------------
+// GET  /api/agents/favorites       — list caller's favorited agents
+// POST /api/agents/:id/favorite    — idempotent bookmark (200 on duplicate)
+// DELETE /api/agents/:id/favorite  — remove bookmark (404 if not found)
+
+app.get('/api/agents/favorites', requireAuth, async (req, res) => {
+  const userId = req.user.userId;
+  try {
+    const { rows } = await db.query(
+      `SELECT a.*,
+              u.display_name AS owner_display_name,
+              TRUE AS is_favorited,
+              (a.owner_id = $1) AS is_owner,
+              (s.agent_id IS NOT NULL) AS is_subscribed
+       FROM agent_favorites f
+       JOIN agents a ON a.id = f.agent_id
+       LEFT JOIN users u ON u.id = a.owner_id
+       LEFT JOIN subscriptions s ON s.agent_id = a.id AND s.user_id = $1
+       WHERE f.user_id = $1
+       ORDER BY f.created_at DESC`,
+      [userId]
+    );
+    res.json(rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      persona: r.persona,
+      model: r.model,
+      tools: r.tools ?? [],
+      ownerDisplayName: r.owner_display_name ?? null,
+      forkCount: r.fork_count ?? 0,
+      favoriteCount: r.favorite_count ?? 0,
+      avgRating: r.rating_count > 0 ? r.rating_sum / r.rating_count : null,
+      ratingCount: r.rating_count ?? 0,
+      visibility: r.visibility,
+      isFavorited: true,
+      isOwner: Boolean(r.is_owner),
+      isSubscribed: Boolean(r.is_subscribed),
+    })));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/agents/:id/favorite', requireAuth, async (req, res) => {
+  const agentId = req.params.id;
+  const userId = req.user.userId;
+  try {
+    const { rows } = await db.query('SELECT id FROM agents WHERE id = $1', [agentId]);
+    if (!rows[0]) return res.status(404).json({ error: 'Agent not found' });
+
+    await withClient(async (client) => {
+      await client.query(
+        'INSERT INTO agent_favorites (user_id, agent_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+        [userId, agentId]
+      );
+      await client.query(
+        'UPDATE agents SET favorite_count = (SELECT COUNT(*) FROM agent_favorites WHERE agent_id = $1) WHERE id = $1',
+        [agentId]
+      );
+    });
+
+    res.status(200).json({ userId, agentId });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/agents/:id/favorite', requireAuth, async (req, res) => {
+  const agentId = req.params.id;
+  const userId = req.user.userId;
+  try {
+    let deleted = false;
+    await withClient(async (client) => {
+      const { rowCount } = await client.query(
+        'DELETE FROM agent_favorites WHERE user_id = $1 AND agent_id = $2',
+        [userId, agentId]
+      );
+      deleted = rowCount > 0;
+      await client.query(
+        'UPDATE agents SET favorite_count = (SELECT COUNT(*) FROM agent_favorites WHERE agent_id = $1) WHERE id = $1',
+        [agentId]
+      );
+    });
+
+    if (!deleted) return res.status(404).json({ error: 'Favorite not found' });
+    res.status(204).end();
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { TOOL_META } from '../toolMeta.jsx';
+import { api } from '../api.js';
 
 function timeAgo(dateStr) {
   const diff = Date.now() - new Date(dateStr).getTime();
@@ -244,13 +245,185 @@ function TabContent({ agents, loading, error, search, onOpen, onDownload, onDele
   );
 }
 
+// Card shown in the Favorites tab — optimistic unfavorite with revert, plus
+// quick View, Fork, and Subscribe actions.
+function FavoriteCard({ agent, onView, onFork, onSubscribe, onUnfavorite }) {
+  const [localAgent, setLocalAgent] = useState(agent);
+  const [busyFav, setBusyFav] = useState(false);
+  const [busySubscribe, setBusySubscribe] = useState(false);
+  const [busyFork, setBusyFork] = useState(false);
+
+  useEffect(() => { setLocalAgent(agent); }, [agent]);
+
+  const toolCount = (localAgent.tools || []).length;
+
+  async function handleUnfavorite() {
+    setBusyFav(true);
+    try {
+      await onUnfavorite(localAgent.id);
+    } catch {
+      // revert is handled by the parent re-fetching; nothing to revert locally
+    } finally {
+      setBusyFav(false);
+    }
+  }
+
+  async function handleSubscribe() {
+    const wasSubscribed = localAgent.isSubscribed;
+    setLocalAgent((p) => ({ ...p, isSubscribed: !wasSubscribed }));
+    setBusySubscribe(true);
+    try {
+      await onSubscribe(localAgent, !wasSubscribed);
+    } catch {
+      setLocalAgent((p) => ({ ...p, isSubscribed: wasSubscribed }));
+    } finally {
+      setBusySubscribe(false);
+    }
+  }
+
+  async function handleFork() {
+    setBusyFork(true);
+    try {
+      await onFork(localAgent.id);
+      setLocalAgent((p) => ({ ...p, forkCount: (p.forkCount || 0) + 1 }));
+    } catch {
+      // silent
+    } finally {
+      setBusyFork(false);
+    }
+  }
+
+  return (
+    <div className="agent-card mp-card">
+      <div className="agent-card-body">
+        <div className="mp-card-header">
+          <div className="agent-card-name">{localAgent.name || 'Untitled'}</div>
+          {localAgent.ownerDisplayName && (
+            <span className="mp-owner">by {localAgent.ownerDisplayName}</span>
+          )}
+        </div>
+        {localAgent.persona && (
+          <div className="agent-card-persona">{localAgent.persona}</div>
+        )}
+        <div className="mp-card-meta">
+          {localAgent.forkCount > 0 && (
+            <span className="mp-meta-item">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/>
+                <path d="M18 9v1a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V9"/>
+                <line x1="12" y1="12" x2="12" y2="15"/>
+              </svg>
+              {localAgent.forkCount}
+            </span>
+          )}
+          {localAgent.favoriteCount > 0 && (
+            <span className="mp-meta-item">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+              </svg>
+              {localAgent.favoriteCount}
+            </span>
+          )}
+        </div>
+        {toolCount > 0 && (
+          <div className="agent-card-tools">
+            {localAgent.tools.slice(0, 5).map((id) => {
+              const meta = TOOL_META[id];
+              return (
+                <span
+                  key={id}
+                  className="agent-card-tool-chip"
+                  style={{ '--tool-color': meta ? meta.color : '#999' }}
+                  title={meta ? meta.blurb : id}
+                >
+                  {meta ? meta.label : id}
+                </span>
+              );
+            })}
+            {localAgent.tools.length > 5 && (
+              <span className="agent-card-tool-chip more">+{localAgent.tools.length - 5}</span>
+            )}
+          </div>
+        )}
+      </div>
+      <div className="agent-card-footer">
+        <div className="agent-card-actions">
+          <button className="btn primary" onClick={() => onView(localAgent.id)}>View</button>
+          {!localAgent.isOwner && (
+            <button
+              className="btn subtle"
+              onClick={handleSubscribe}
+              disabled={busySubscribe}
+              title={localAgent.isSubscribed ? 'Remove from My Agents' : 'Add to My Agents'}
+            >
+              {localAgent.isSubscribed ? 'Unsubscribe' : 'Subscribe'}
+            </button>
+          )}
+          {!localAgent.isOwner && (
+            <button
+              className="btn subtle"
+              onClick={handleFork}
+              disabled={busyFork}
+              title="Fork this agent"
+            >
+              Fork
+            </button>
+          )}
+          <button
+            className="btn subtle mp-btn-fav active"
+            onClick={handleUnfavorite}
+            disabled={busyFav}
+            title="Remove from favorites"
+          >
+            ♥
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FavoritesTab({ agents, loading, error, onView, onFork, onSubscribe, onUnfavorite }) {
+  if (loading) return <div className="agents-loading">Loading…</div>;
+  if (error) return <p className="agents-error">Failed to load favorites: {error}</p>;
+  if (agents.length === 0) {
+    return (
+      <div className="agents-empty">
+        <div className="agents-empty-icon">
+          <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M36 8.5a9 9 0 0 0-12.73 0L24 9.77l-.27-.27A9 9 0 0 0 11 22.27L24 35.5 37 22.27A9 9 0 0 0 36 8.5z"/>
+          </svg>
+        </div>
+        <p className="agents-empty-text">No favorites yet. Bookmark agents from the Marketplace.</p>
+      </div>
+    );
+  }
+  return (
+    <div className="agents-grid">
+      {agents.map((agent) => (
+        <FavoriteCard
+          key={agent.id}
+          agent={agent}
+          onView={onView}
+          onFork={onFork}
+          onSubscribe={onSubscribe}
+          onUnfavorite={onUnfavorite}
+        />
+      ))}
+    </div>
+  );
+}
+
 export default function AgentsPage({
   publicAgents = [],
   myAgents = [],
+  favoriteAgents = [],
   loadingPublic = false,
   loadingMine = false,
+  loadingFavorites = false,
   errorPublic = null,
   errorMine = null,
+  errorFavorites = null,
   isAuthenticated = false,
   onOpen,
   onDownload,
@@ -259,10 +432,13 @@ export default function AgentsPage({
   onOpenAuth,
   onSubscribe,
   onToggleVisibility,
+  onFork,
+  onUnfavorite,
 }) {
   const [activeTab, setActiveTab] = useState('agents');
   const [search, setSearch] = useState('');
 
+  const isFavTab = activeTab === 'favorites';
   const isMyTab = activeTab === 'mine';
 
   function handleMyAgentsTabClick() {
@@ -273,7 +449,26 @@ export default function AgentsPage({
     }
   }
 
-  const totalShown = isMyTab ? myAgents.length : publicAgents.length;
+  function handleFavTabClick() {
+    if (!isAuthenticated) {
+      onOpenAuth?.('login');
+    } else {
+      setActiveTab('favorites');
+    }
+  }
+
+  function subTitle() {
+    if (isFavTab) {
+      if (loadingFavorites) return 'Loading…';
+      return favoriteAgents.length === 0
+        ? 'Your bookmarked agents.'
+        : `${favoriteAgents.length} favorited agent${favoriteAgents.length !== 1 ? 's' : ''}`;
+    }
+    if (isMyTab) {
+      return myAgents.length === 0 ? 'Your saved and subscribed agents.' : `${myAgents.length} agent${myAgents.length !== 1 ? 's' : ''}`;
+    }
+    return publicAgents.length === 0 ? 'Publicly shared agents.' : `${publicAgents.length} public agent${publicAgents.length !== 1 ? 's' : ''}`;
+  }
 
   // Wraps onSubscribe with an auth gate — anonymous clicks open the login modal
   // and throw to roll back the AgentCard optimistic toggle.
@@ -285,38 +480,40 @@ export default function AgentsPage({
     return onSubscribe?.(agent);
   }
 
+  async function handleFavSubscribe(agent, subscribing) {
+    if (subscribing) {
+      await api.subscribeAgent(agent.id);
+    } else {
+      await api.unsubscribeAgent(agent.id);
+    }
+  }
+
   return (
     <div className="agents-page">
       <div className="agents-page-header">
         <div>
           <h1 className="agents-page-title">Agents</h1>
-          <p className="agents-page-sub">
-            {isMyTab
-              ? myAgents.length === 0
-                ? 'Your saved and subscribed agents.'
-                : `${myAgents.length} agent${myAgents.length !== 1 ? 's' : ''}`
-              : publicAgents.length === 0
-              ? 'Publicly shared agents.'
-              : `${publicAgents.length} public agent${publicAgents.length !== 1 ? 's' : ''}`}
-          </p>
+          <p className="agents-page-sub">{subTitle()}</p>
         </div>
         <div className="agents-page-header-actions">
-          <div className="filter-wrap" style={{ width: 240 }}>
-            <svg className="filter-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="11" cy="11" r="7" />
-              <line x1="21" y1="21" x2="16.65" y2="16.65" />
-            </svg>
-            <input
-              className="filter-input"
-              type="text"
-              placeholder="Search agents…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-            {search && (
-              <button className="filter-clear" onClick={() => setSearch('')}>✕</button>
-            )}
-          </div>
+          {!isFavTab && (
+            <div className="filter-wrap" style={{ width: 240 }}>
+              <svg className="filter-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="11" cy="11" r="7" />
+                <line x1="21" y1="21" x2="16.65" y2="16.65" />
+              </svg>
+              <input
+                className="filter-input"
+                type="text"
+                placeholder="Search agents…"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+              {search && (
+                <button className="filter-clear" onClick={() => setSearch('')}>✕</button>
+              )}
+            </div>
+          )}
           <button className="btn primary" onClick={onNew}>
             + New Agent
           </button>
@@ -326,8 +523,8 @@ export default function AgentsPage({
       <div className="agents-tabs" role="tablist">
         <button
           role="tab"
-          aria-selected={!isMyTab}
-          className={`agents-tab${!isMyTab ? ' active' : ''}`}
+          aria-selected={activeTab === 'agents'}
+          className={`agents-tab${activeTab === 'agents' ? ' active' : ''}`}
           onClick={() => setActiveTab('agents')}
         >
           Agents
@@ -340,9 +537,41 @@ export default function AgentsPage({
         >
           My Agents
         </button>
+        <button
+          role="tab"
+          aria-selected={isFavTab}
+          className={`agents-tab${isFavTab ? ' active' : ''}`}
+          onClick={handleFavTabClick}
+        >
+          Favorites
+          {isAuthenticated && favoriteAgents.length > 0 && (
+            <span className="agents-tab-badge">{favoriteAgents.length}</span>
+          )}
+        </button>
       </div>
 
-      {isMyTab && !isAuthenticated ? (
+      {isFavTab && !isAuthenticated ? (
+        <div className="agents-empty">
+          <div className="agents-empty-icon">
+            <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="24" cy="16" r="8" />
+              <path d="M8 40c0-8.837 7.163-16 16-16s16 7.163 16 16" />
+            </svg>
+          </div>
+          <p className="agents-empty-text">Sign in to see your favorite agents.</p>
+          <button className="btn primary" onClick={() => onOpenAuth?.('login')}>Sign in</button>
+        </div>
+      ) : isFavTab ? (
+        <FavoritesTab
+          agents={favoriteAgents}
+          loading={loadingFavorites}
+          error={errorFavorites}
+          onView={onOpen}
+          onFork={onFork}
+          onSubscribe={handleFavSubscribe}
+          onUnfavorite={onUnfavorite}
+        />
+      ) : isMyTab && !isAuthenticated ? (
         <div className="agents-empty">
           <div className="agents-empty-icon">
             <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">

@@ -87,10 +87,13 @@ export default function App() {
   const [agent, setAgent] = useState(DEFAULT_AGENT);
   const [publicAgents, setPublicAgents] = useState([]);
   const [myAgents, setMyAgents] = useState([]);
+  const [favoriteAgents, setFavoriteAgents] = useState([]);
   const [loadingPublic, setLoadingPublic] = useState(false);
   const [loadingMine, setLoadingMine] = useState(false);
+  const [loadingFavorites, setLoadingFavorites] = useState(false);
   const [errorPublic, setErrorPublic] = useState(null);
   const [errorMine, setErrorMine] = useState(null);
+  const [errorFavorites, setErrorFavorites] = useState(null);
   const [saving, setSaving] = useState(false);
   const [view, setView] = useState('builder');
   const [builtinSkills, setBuiltinSkills] = useState([]);
@@ -192,15 +195,18 @@ export default function App() {
   }, []);
 
   // Load or clear the user's own agents/skills whenever authentication state changes.
-  // Also re-fetch public agents so isSubscribed flags reflect the current user.
+  // Also re-fetch public agents so isSubscribed/isFavorited flags reflect the current user.
   useEffect(() => {
     if (isAuthenticated) {
       refreshMyAgents();
       refreshPublicAgents();
+      refreshFavorites();
       refreshCustomSkills(true);
     } else {
       setMyAgents([]);
+      setFavoriteAgents([]);
       setErrorMine(null);
+      setErrorFavorites(null);
       refreshPublicAgents();
       refreshCustomSkills(false);
     }
@@ -222,6 +228,15 @@ export default function App() {
       .then(setMyAgents)
       .catch((err) => setErrorMine(err.message))
       .finally(() => setLoadingMine(false));
+  }
+
+  function refreshFavorites() {
+    setLoadingFavorites(true);
+    setErrorFavorites(null);
+    api.listFavorites()
+      .then(setFavoriteAgents)
+      .catch((err) => setErrorFavorites(err.message))
+      .finally(() => setLoadingFavorites(false));
   }
 
   function refreshSavedAgents() {
@@ -475,6 +490,17 @@ export default function App() {
     }
   };
 
+  const onUnfavorite = async (id) => {
+    setFavoriteAgents((prev) => prev.filter((a) => a.id !== id));
+    try {
+      await api.unfavoriteAgent(id);
+      api.bustMarketplaceCache();
+    } catch (err) {
+      refreshFavorites();
+      throw err;
+    }
+  };
+
   const onDownload = (agentData) => {
     const target = agentData || agent;
     // Only validate the current canvas agent, not saved agents opened from the list
@@ -655,10 +681,13 @@ export default function App() {
         <AgentsPage
           publicAgents={publicAgents}
           myAgents={myAgents}
+          favoriteAgents={favoriteAgents}
           loadingPublic={loadingPublic}
           loadingMine={loadingMine}
+          loadingFavorites={loadingFavorites}
           errorPublic={errorPublic}
           errorMine={errorMine}
+          errorFavorites={errorFavorites}
           isAuthenticated={isAuthenticated}
           onOpen={onLoad}
           onDownload={onDownload}
@@ -667,6 +696,8 @@ export default function App() {
           onOpenAuth={(tab) => setAuthModal({ tab, onSuccess: null })}
           onSubscribe={onSubscribe}
           onToggleVisibility={onToggleVisibility}
+          onFork={onFork}
+          onUnfavorite={onUnfavorite}
         />
       ) : view === 'skills' ? (
         <SkillsPage
