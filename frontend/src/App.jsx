@@ -16,6 +16,7 @@ import TemplateGallery from './components/TemplateGallery.jsx';
 import VersionHistoryPanel from './components/VersionHistoryPanel.jsx';
 import ValidationPanel from './components/ValidationPanel.jsx';
 import ErrorBoundary from './components/ErrorBoundary.jsx';
+import ShortcutsOverlay from './components/ShortcutsOverlay.jsx';
 import { api } from './api.js';
 import { useAuth } from './AuthContext.jsx';
 import { TOOL_META } from './toolMeta.jsx';
@@ -109,6 +110,7 @@ export default function App() {
   const [importOpen, setImportOpen] = useState(false);
   const [templateGalleryOpen, setTemplateGalleryOpen] = useState(false);
   const [emptyStateDismissed, setEmptyStateDismissed] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
 
   const [analyticsAgent, setAnalyticsAgent] = useState(null);
 
@@ -706,24 +708,60 @@ export default function App() {
     }
   }, [redo, scheduleWorkspaceAutosave]);
 
-  // Ctrl/Cmd+Z = undo, Ctrl/Cmd+Y or Ctrl/Cmd+Shift+Z = redo.
-  // Skip when focus is inside a text input so the browser's native undo still works there.
+  // Refs so the keydown handler always sees the latest callbacks without re-registering.
+  const onSaveRef = useRef(onSave);
+  useEffect(() => { onSaveRef.current = onSave; });
+  const onDownloadRef = useRef(onDownload);
+  useEffect(() => { onDownloadRef.current = onDownload; });
+  const shortcutsOpenRef = useRef(shortcutsOpen);
+  useEffect(() => { shortcutsOpenRef.current = shortcutsOpen; }, [shortcutsOpen]);
+
+  // Global keyboard shortcuts. Registered once; reads latest values through refs.
   useEffect(() => {
     const handler = (e) => {
-      const mod = e.ctrlKey || e.metaKey;
-      if (!mod) return;
-      const isUndo = e.key === 'z' && !e.shiftKey;
-      const isRedo = e.key === 'y' || (e.key === 'z' && e.shiftKey);
-      if (!isUndo && !isRedo) return;
+      const modKey = e.ctrlKey || e.metaKey;
       const tag = document.activeElement?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
-      e.preventDefault();
-      if (isUndo) handleUndo();
-      else handleRedo();
+      const inTextField = tag === 'INPUT' || tag === 'TEXTAREA';
+
+      // Ctrl/Cmd+S — save; fires even from text fields, always prevents browser save dialog.
+      if (modKey && e.key === 's') {
+        e.preventDefault();
+        onSaveRef.current();
+        return;
+      }
+
+      // Remaining modifier shortcuts are suppressed when a text field is focused.
+      if (modKey) {
+        const isUndo = e.key === 'z' && !e.shiftKey;
+        const isRedo = e.key === 'y' || (e.key === 'z' && e.shiftKey);
+        const isExport = e.key === 'e';
+
+        if (isUndo || isRedo || isExport) {
+          if (inTextField) return;
+          e.preventDefault();
+          if (isUndo) handleUndo();
+          else if (isRedo) handleRedo();
+          else if (isExport) onDownloadRef.current();
+        }
+        return;
+      }
+
+      // ? — toggle shortcuts overlay (not in text fields).
+      if (e.key === '?' && !inTextField) {
+        e.preventDefault();
+        setShortcutsOpen((prev) => !prev);
+        return;
+      }
+
+      // Escape — close shortcuts overlay.
+      if (e.key === 'Escape' && shortcutsOpenRef.current) {
+        e.preventDefault();
+        setShortcutsOpen(false);
+      }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [handleUndo, handleRedo]);
+  }, [handleUndo, handleRedo]); // stable; onSave/onDownload/shortcutsOpen accessed via refs
 
   const onCreateSkill = async (data) => {
     try {
@@ -817,6 +855,10 @@ export default function App() {
             action?.();
           }}
         />
+      )}
+
+      {shortcutsOpen && (
+        <ShortcutsOverlay onClose={() => setShortcutsOpen(false)} />
       )}
 
       {validationState && (
