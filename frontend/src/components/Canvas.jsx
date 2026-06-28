@@ -22,6 +22,7 @@ export default function Canvas({
   pan = { x: 0, y: 0 },
   onZoomPanChange,
   validationState,
+  onViewSource,
 }) {
   const wrapRef = useRef(null);
   const canvasRef = useRef(null);
@@ -204,6 +205,7 @@ export default function Canvas({
           onToggleInstruction={onToggleInstruction}
           allSkills={allSkills}
           fieldIssues={validationState ? agentFieldIssues : null}
+          onViewSource={onViewSource}
         />
 
         {agent.tools.map((toolId) => {

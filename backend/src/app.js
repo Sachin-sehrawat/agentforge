@@ -316,7 +316,13 @@ app.get('/api/agents/marketplace', optionalAuth, async (req, res) => {
 
 app.get('/api/agents/:id', optionalAuth, async (req, res) => {
   try {
-    const { rows } = await db.query('SELECT * FROM agents WHERE id = $1', [req.params.id]);
+    const { rows } = await db.query(
+      `SELECT a.*, sa.name AS forked_from_name
+       FROM agents a
+       LEFT JOIN agents sa ON sa.id = a.forked_from
+       WHERE a.id = $1`,
+      [req.params.id]
+    );
     if (!rows[0]) return res.status(404).json({ error: 'Agent not found' });
     const agent = rows[0];
     if (agent.visibility !== 'public' && agent.owner_id !== req.user?.userId) {
@@ -860,10 +866,10 @@ app.post('/api/agents/:id/fork', requireAuth, async (req, res) => {
         [newId, hash, JSON.stringify(canonical), `Forked from ${sourceId}`, callerId]
       );
 
-      return { newAgent: agent, skillWarnings: warnings };
+      return { newAgent: agent, skillWarnings: warnings, sourceName: source.name };
     });
 
-    res.status(201).json({ ...serializeAgent(newAgent), skillWarnings });
+    res.status(201).json({ ...serializeAgent({ ...newAgent, forked_from_name: sourceName }), skillWarnings });
   } catch (err) {
     if (err.statusCode === 404) return res.status(404).json({ error: err.message });
     if (err.statusCode === 403) return res.status(403).json({ error: err.message });
@@ -1569,6 +1575,7 @@ function serializeAgent(row) {
     ownerId: row.owner_id ?? null,
     visibility: row.visibility ?? 'private',
     forkedFrom: row.forked_from ?? null,
+    forkedFromName: row.forked_from_name ?? null,
     forkCount: row.fork_count ?? 0,
     createdAt: row.created_at,
     updatedAt: row.updated_at,

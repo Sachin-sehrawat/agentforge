@@ -249,6 +249,7 @@ function MarketplaceCard({ agent, isAuthenticated, onView, onSubscribe, onFavori
 export default function MarketplacePage({
   isAuthenticated,
   onView,
+  onFork,
   onOpenAuth,
 }) {
   const [items, setItems] = useState([]);
@@ -339,9 +340,7 @@ export default function MarketplacePage({
   }
 
   async function handleFork(id) {
-    const result = await api.forkAgent(id);
-    api.bustMarketplaceCache();
-    return result;
+    return onFork?.(id);
   }
 
   async function handleRate(id, rating) {

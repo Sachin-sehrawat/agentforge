@@ -7,7 +7,7 @@ const PERSONA_LOOKUP = Object.fromEntries(
 );
 
 const AgentNode = React.forwardRef(function AgentNode(
-  { position, agent, onChange, onHeaderPointerDown, onToggleSkill, onToggleInstruction, allSkills, fieldIssues },
+  { position, agent, onChange, onHeaderPointerDown, onToggleSkill, onToggleInstruction, allSkills, fieldIssues, onViewSource },
   ref
 ) {
   const [expandedSkill, setExpandedSkill] = useState(null);
@@ -79,6 +79,28 @@ const AgentNode = React.forwardRef(function AgentNode(
             placeholder="Extra instructions for how the agent should behave and when to use its tools..."
           />
         </div>
+
+        {agent.forkedFrom && (
+          <div className="agent-provenance">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <circle cx="12" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/>
+              <path d="M18 9v1a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V9"/>
+              <line x1="12" y1="12" x2="12" y2="15"/>
+            </svg>
+            Forked from{' '}
+            {agent.forkedFromName ? (
+              <button
+                className="provenance-link"
+                onClick={() => onViewSource?.(agent.forkedFrom)}
+                title={`View source: ${agent.forkedFromName}`}
+              >
+                {agent.forkedFromName}
+              </button>
+            ) : (
+              <span className="provenance-deleted">[deleted agent]</span>
+            )}
+          </div>
+        )}
 
         {activeSkills.length > 0 && (
           <div className="node-skills-section">
