@@ -44,6 +44,18 @@ services:
     networks:
       - agentforge-net
 
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "${FRONTEND_PORT:-3000}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - agentforge-net
+
   backend:
     build:
       context: ./backend

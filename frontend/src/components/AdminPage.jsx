@@ -343,7 +343,7 @@ function TemplatesTab({ templates, onTemplatesChange, isAuthenticated, onOpenAut
           <p className="agents-page-sub">{templates.length} template{templates.length !== 1 ? 's' : ''}</p>
         </div>
         <div className="agents-page-header-actions">
-          <div className="filter-wrap" style={{ width: 220 }}>
+          <div className="filter-wrap filter-wrap--header">
             <svg className="filter-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
               <circle cx="11" cy="11" r="7" />
               <line x1="21" y1="21" x2="16.65" y2="16.65" />
@@ -437,7 +437,7 @@ function BuiltinSkillsTab({ skills, onSkillsChange, isAuthenticated, onOpenAuth 
           <p className="agents-page-sub">{skills.length} skill{skills.length !== 1 ? 's' : ''}</p>
         </div>
         <div className="agents-page-header-actions">
-          <div className="filter-wrap" style={{ width: 220 }}>
+          <div className="filter-wrap filter-wrap--header">
             <svg className="filter-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
               <circle cx="11" cy="11" r="7" />
               <line x1="21" y1="21" x2="16.65" y2="16.65" />

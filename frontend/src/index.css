@@ -949,6 +949,12 @@ button {
   margin-bottom: 12px;
 }
 
+/* Header search bars — fixed width on desktop, full-width on mobile via parent override */
+.filter-wrap--header {
+  width: 240px;
+  margin-bottom: 0;
+}
+
 .filter-icon {
   position: absolute;
   left: 9px;
@@ -3653,4 +3659,331 @@ button {
 
 .toast-dismiss:hover {
   opacity: 1;
+}
+
+/* ==========================================================================
+   RESPONSIVE BREAKPOINTS
+   ========================================================================== */
+
+/* ── 1024 px — tablet landscape ─────────────────────────────────────────── */
+
+@media (max-width: 1024px) {
+  .agents-page,
+  .agent-analytics {
+    padding: 24px 24px;
+  }
+
+  .agents-grid {
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  }
+
+  /* Shrink topbar gaps slightly */
+  .topbar {
+    gap: 14px;
+  }
+
+  /* Hide agent-name-input label text overflow earlier */
+  .agent-name-input {
+    min-width: 140px;
+  }
+}
+
+/* ── 768 px — tablet portrait ────────────────────────────────────────────── */
+
+@media (max-width: 768px) {
+  /* ---- Topbar ---- */
+  .topbar {
+    padding: 8px 14px;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  /* Push nav to a second row that spans full width */
+  .topbar-nav {
+    order: 10;
+    width: 100%;
+    overflow-x: auto;
+    scrollbar-width: none;
+    padding-bottom: 2px;
+  }
+  .topbar-nav::-webkit-scrollbar { display: none; }
+  .topbar-nav-item {
+    white-space: nowrap;
+    font-size: 12.5px;
+    padding: 5px 10px;
+  }
+
+  /* Dividers waste space on mobile */
+  .topbar-divider { display: none; }
+
+  /* Shrink name input */
+  .agent-name-input {
+    min-width: 100px;
+    font-size: 13px;
+  }
+
+  /* Hide secondary builder actions; keep primary ones */
+  .topbar-actions .btn.subtle {
+    display: none;
+  }
+
+  /* Keep spacer from pushing things off screen when nav wraps */
+  .topbar-spacer { display: none; }
+
+  /* Auth right-aligned in the first row */
+  .topbar-auth {
+    margin-left: auto;
+  }
+
+  /* ---- Pages ---- */
+  .agents-page,
+  .agent-analytics {
+    padding: 20px 16px;
+  }
+
+  .agents-page-header {
+    flex-direction: column;
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+  .agents-page-header-actions {
+    flex-shrink: 1;
+    flex-wrap: wrap;
+    width: 100%;
+    justify-content: flex-start;
+    max-width: 100%;
+  }
+  /* filter-wrap with inline width must yield on mobile */
+  .agents-page-header-actions .filter-wrap {
+    width: 100% !important;
+    max-width: 100%;
+  }
+
+  .agents-page-title { font-size: 19px; }
+
+  .agents-grid {
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 14px;
+  }
+
+  /* ---- Analytics ---- */
+  .analytics-cards {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  /* ---- Version panel: full-width slide-over ---- */
+  .version-panel {
+    width: 100vw;
+  }
+  .version-panel-body {
+    flex-direction: column;
+  }
+  .version-list {
+    width: 100%;
+    border-right: none;
+    border-bottom: 1px solid var(--border-soft);
+    max-height: 180px;
+  }
+
+  /* ---- Validation panel ---- */
+  .validation-panel {
+    width: calc(100vw - 32px);
+    right: 16px;
+    bottom: 16px;
+  }
+
+  /* ---- Modals ---- */
+  .modal-backdrop { padding: 12px; }
+  .modal {
+    max-width: 100%;
+    max-height: 94vh;
+  }
+  .modal-header { padding: 16px 18px 0; }
+  .modal-body   { padding: 16px 18px 18px; gap: 12px; }
+  .modal-footer { padding-top: 12px; }
+  .tg-modal { max-width: 100%; }
+  .tg-grid  { grid-template-columns: 1fr; }
+
+  /* ---- Toast ---- */
+  .toast-container {
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+    max-width: none;
+  }
+
+  /* ---- Marketplace filters wrap earlier ---- */
+  .mp-filters {
+    gap: 12px;
+    padding: 12px 14px;
+  }
+  .mp-select {
+    min-width: 110px;
+  }
+}
+
+/* ── 640 px — large phones ───────────────────────────────────────────────── */
+
+@media (max-width: 640px) {
+  /* ---- Topbar ---- */
+  .topbar {
+    padding: 7px 12px;
+    gap: 6px;
+  }
+  .brand {
+    font-size: 15px;
+    gap: 8px;
+  }
+  .auth-user-name {
+    /* Show initials only via overflow ellipsis at tight max-width */
+    max-width: 80px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .topbar-auth .btn {
+    padding: 5px 10px;
+    font-size: 12px;
+  }
+
+  /* ---- Pages ---- */
+  .agents-page,
+  .agent-analytics {
+    padding: 16px 12px;
+  }
+  .agents-page-title { font-size: 17px; }
+
+  .agents-grid {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  /* Card footer stacks on phones */
+  .agent-card-footer {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+  .agent-card-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  /* ---- Tabs ---- */
+  .agents-tab {
+    padding: 8px 12px;
+    font-size: 12.5px;
+  }
+
+  /* ---- Analytics ---- */
+  .analytics-card-value { font-size: 26px; }
+
+  /* ---- Marketplace: stack filters vertically ---- */
+  .mp-filters {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .mp-filter-group {
+    width: 100%;
+  }
+  .mp-select,
+  .mp-tool-btn {
+    width: 100%;
+    max-width: 100%;
+    min-width: unset;
+  }
+  .mp-slider { width: 100%; }
+
+  /* ---- Workbench ---- */
+  .sidebar { padding: 12px 10px; }
+  .canvas-wrap { height: 400px; }
+
+  /* ---- Modals ---- */
+  .modal-backdrop { padding: 8px; }
+  .modal {
+    border-radius: 10px;
+    max-height: 96vh;
+  }
+  .modal-header { padding: 14px 14px 0; }
+  .modal-body   { padding: 14px 14px 14px; gap: 10px; }
+  .modal-title  { font-size: 16px; }
+}
+
+/* ── 480 px — mobile phones ─────────────────────────────────────────────── */
+
+@media (max-width: 480px) {
+  /* ---- Topbar ---- */
+  .topbar { padding: 6px 10px; gap: 6px; }
+  .brand  { font-size: 14px; gap: 6px; }
+  .brand-mark { width: 26px; height: 26px; }
+  .brand-mark svg { width: 14px; height: 14px; }
+  .topbar-nav-item { font-size: 12px; padding: 4px 8px; gap: 4px; }
+  .topbar-nav-badge { font-size: 9.5px; padding: 1px 5px; }
+  .agent-name-input { min-width: 70px; font-size: 12.5px; }
+
+  /* ---- Pages ---- */
+  .agents-page,
+  .agent-analytics {
+    padding: 14px 10px;
+  }
+  .agents-page-title { font-size: 16px; }
+  .agents-page-sub   { font-size: 12px; }
+
+  /* ---- Analytics ---- */
+  .analytics-cards     { grid-template-columns: 1fr 1fr; gap: 10px; }
+  .analytics-card      { padding: 14px 14px; }
+  .analytics-card-value { font-size: 22px; }
+
+  /* ---- Version panel: full-screen on tiny phones ---- */
+  .version-panel {
+    top: 0; left: 0; right: 0; bottom: 0;
+    width: 100%;
+    border-radius: 0;
+    border-left: none;
+  }
+
+  /* ---- Validation panel ---- */
+  .validation-panel {
+    width: calc(100vw - 20px);
+    right: 10px;
+    bottom: 10px;
+    max-height: calc(100vh - 90px);
+  }
+
+  /* ---- Toast ---- */
+  .toast-container {
+    left: 10px;
+    right: 10px;
+    bottom: 10px;
+  }
+
+  /* ---- Canvas ---- */
+  .canvas-wrap { height: 360px; }
+
+  /* ---- Workbench already stacks at 980px; tighten sidebar ---- */
+  .sidebar {
+    padding: 10px 8px;
+  }
+  .sidebar-hint { font-size: 11.5px; }
+
+  /* ---- Agent card ---- */
+  .agent-card-body    { padding: 14px 14px 10px; }
+  .agent-card-footer  { padding: 8px 12px 12px; }
+  .agent-card-name    { font-size: 14.5px; }
+
+  /* ---- Modals ---- */
+  .modal-backdrop { padding: 0; align-items: flex-end; }
+  .modal {
+    border-radius: 14px 14px 0 0;
+    max-height: 90vh;
+    width: 100%;
+  }
+  .modal-header { padding: 14px 16px 0; }
+  .modal-body   { padding: 12px 16px 16px; }
+
+  /* ---- ces-card (empty builder) ---- */
+  .ces-card { padding: 24px 20px; }
+
+  /* ---- mp filters ---- */
+  .mp-filters { padding: 10px 12px; gap: 10px; }
 }
