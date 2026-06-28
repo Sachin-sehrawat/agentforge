@@ -22,6 +22,22 @@ import { useAuth } from './AuthContext.jsx';
 import { TOOL_META } from './toolMeta.jsx';
 import { validateAgentDefinition } from './serialization/agentValidation.js';
 
+const VALID_THEMES = ['light', 'dark', 'system'];
+
+function applyTheme(t) {
+  if (t === 'dark') {
+    document.documentElement.setAttribute('data-theme', 'dark');
+  } else if (t === 'light') {
+    document.documentElement.removeAttribute('data-theme');
+  } else {
+    if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
+      document.documentElement.setAttribute('data-theme', 'dark');
+    } else {
+      document.documentElement.removeAttribute('data-theme');
+    }
+  }
+}
+
 const DEFAULT_AGENT = {
   id: null,
   name: 'My Agent',
@@ -111,6 +127,10 @@ export default function App() {
   const [templateGalleryOpen, setTemplateGalleryOpen] = useState(false);
   const [emptyStateDismissed, setEmptyStateDismissed] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [theme, setTheme] = useState(() => {
+    const stored = localStorage.getItem('theme');
+    return VALID_THEMES.includes(stored) ? stored : 'system';
+  });
 
   const [analyticsAgent, setAnalyticsAgent] = useState(null);
 
@@ -159,6 +179,11 @@ export default function App() {
       api.getUserPreferences(USER_ID),
       api.getWorkspaceData(WORKSPACE_ID),
     ]).then(([prefs, wsData]) => {
+      if (prefs.theme && VALID_THEMES.includes(prefs.theme)) {
+        setTheme(prefs.theme);
+        localStorage.setItem('theme', prefs.theme);
+        applyTheme(prefs.theme);
+      }
       if (prefs.view && ['builder', 'agents', 'skills', 'admin', 'marketplace'].includes(prefs.view)) {
         setView(prefs.view);
       }
@@ -211,6 +236,22 @@ export default function App() {
     setAnalyticsAgent(null);
     api.saveUserPreferences(USER_ID, { view: nextView });
   }, []);
+
+  const handleThemeChange = useCallback((newTheme) => {
+    setTheme(newTheme);
+    localStorage.setItem('theme', newTheme);
+    applyTheme(newTheme);
+    api.saveUserPreferences(USER_ID, { theme: newTheme }).catch(() => {});
+  }, []);
+
+  // When in system mode, re-apply theme whenever the OS preference changes.
+  useEffect(() => {
+    if (theme !== 'system') return;
+    const mq = window.matchMedia('(prefers-color-scheme: dark)');
+    const handler = () => applyTheme('system');
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
+  }, [theme]);
 
   // Load or clear the user's own agents/skills whenever authentication state changes.
   // Also re-fetch public agents so isSubscribed/isFavorited flags reflect the current user.
@@ -818,6 +859,8 @@ export default function App() {
         onOpenAuth={(tab) => setAuthModal({ tab, onSuccess: null })}
         onLogout={logout}
         isAuthenticated={isAuthenticated}
+        theme={theme}
+        onThemeChange={handleThemeChange}
       />
 
       {importOpen && (
