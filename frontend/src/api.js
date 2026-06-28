@@ -181,7 +181,10 @@ export const api = {
   // Favorite / unfavorite / list favorites
   favoriteAgent: (id) => request(`/agents/${id}/favorite`, { method: 'POST' }),
   unfavoriteAgent: (id) => request(`/agents/${id}/favorite`, { method: 'DELETE' }),
-  listFavorites: () => request('/agents/favorites'),
+  listFavorites: async () => {
+    const data = await request('/agents/favorites');
+    return data?.items ?? data;
+  },
 
   // Fork
   forkAgent: (id) => request(`/agents/${id}/fork`, { method: 'POST' }),
