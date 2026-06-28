@@ -8,7 +8,7 @@ import { toCanonical } from './serialization/agentSchema.js';
 import { parseJson, parseMarkdown } from './serialization/importAgent.js';
 import { getDb, healthCheck as mongoHealth } from './mongo.js';
 import { TOOL_CATALOG, TOOL_IDS } from './tools/toolDefinitions.js';
-import { validatePreferences, validateWorkspaceData, validateDraftInput, validateSignupInput, validateLoginInput, validateBuiltinSkillInput, validatePersonaCategoryInput, validatePersonaInput, validateAgentDefinition, validateTemplateInput } from './validation.js';
+import { validatePreferences, validateWorkspaceData, validateDraftInput, validateSignupInput, validateLoginInput, validateBuiltinSkillInput, validatePersonaCategoryInput, validatePersonaInput, validateAgentDefinition, validateTemplateInput, validateRatingInput } from './validation.js';
 import { hashPassword, verifyPassword } from './auth/crypto.js';
 import { signAccessToken } from './auth/token.js';
 import { requireAuth, optionalAuth } from './middleware/auth.js';
@@ -699,6 +699,92 @@ app.delete('/api/agents/:id/subscribe', requireAuth, async (req, res) => {
     if (rowCount === 0) return res.status(404).json({ error: 'Subscription not found' });
     res.status(204).end();
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --- Agent ratings ---------------------------------------------------------
+// PUT upserts the caller's rating and recomputes aggregates in the same transaction.
+// DELETE removes it and recomputes in the same transaction.
+// Self-rating → 400; rating a private unowned agent → 403.
+
+app.put('/api/agents/:id/rating', requireAuth, async (req, res) => {
+  const validation = validateRatingInput(req.body);
+  if (validation.error) return res.status(400).json({ error: validation.error });
+
+  const agentId = req.params.id;
+  const userId = req.user.userId;
+  const { rating } = validation.data;
+
+  try {
+    await withClient(async (client) => {
+      const { rows } = await client.query(
+        'SELECT owner_id, visibility FROM agents WHERE id = $1',
+        [agentId]
+      );
+      if (!rows[0]) { const e = new Error('Agent not found'); e.statusCode = 404; throw e; }
+
+      const { owner_id, visibility } = rows[0];
+      if (owner_id === userId) {
+        const e = new Error('Cannot rate your own agent'); e.statusCode = 400; throw e;
+      }
+      if (visibility !== 'public') {
+        const e = new Error('Forbidden'); e.statusCode = 403; throw e;
+      }
+
+      await client.query(
+        `INSERT INTO agent_ratings (user_id, agent_id, rating, updated_at)
+         VALUES ($1, $2, $3, NOW())
+         ON CONFLICT (user_id, agent_id)
+         DO UPDATE SET rating = EXCLUDED.rating, updated_at = NOW()`,
+        [userId, agentId, rating]
+      );
+
+      await client.query(
+        `UPDATE agents
+         SET rating_sum   = (SELECT COALESCE(SUM(rating), 0) FROM agent_ratings WHERE agent_id = $1),
+             rating_count = (SELECT COUNT(*) FROM agent_ratings WHERE agent_id = $1)
+         WHERE id = $1`,
+        [agentId]
+      );
+    });
+
+    res.json({ agentId, userId, rating });
+  } catch (err) {
+    if (err.statusCode === 404) return res.status(404).json({ error: err.message });
+    if (err.statusCode === 400) return res.status(400).json({ error: err.message });
+    if (err.statusCode === 403) return res.status(403).json({ error: err.message });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/agents/:id/rating', requireAuth, async (req, res) => {
+  const agentId = req.params.id;
+  const userId = req.user.userId;
+
+  try {
+    await withClient(async (client) => {
+      const { rows } = await client.query('SELECT id FROM agents WHERE id = $1', [agentId]);
+      if (!rows[0]) { const e = new Error('Agent not found'); e.statusCode = 404; throw e; }
+
+      const { rowCount } = await client.query(
+        'DELETE FROM agent_ratings WHERE user_id = $1 AND agent_id = $2',
+        [userId, agentId]
+      );
+      if (rowCount === 0) { const e = new Error('Rating not found'); e.statusCode = 404; throw e; }
+
+      await client.query(
+        `UPDATE agents
+         SET rating_sum   = (SELECT COALESCE(SUM(rating), 0) FROM agent_ratings WHERE agent_id = $1),
+             rating_count = (SELECT COUNT(*) FROM agent_ratings WHERE agent_id = $1)
+         WHERE id = $1`,
+        [agentId]
+      );
+    });
+
+    res.status(204).end();
+  } catch (err) {
+    if (err.statusCode === 404) return res.status(404).json({ error: err.message });
     res.status(500).json({ error: err.message });
   }
 });
