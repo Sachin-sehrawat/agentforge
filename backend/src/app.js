@@ -187,6 +187,133 @@ app.get('/api/agents/mine', requireAuth, async (req, res) => {
   }
 });
 
+// Marketplace listing — public agents with full-text search, composable filters,
+// multiple sort orders, and offset pagination. Never leaks private agents.
+app.get('/api/agents/marketplace', optionalAuth, async (req, res) => {
+  const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+  const model = typeof req.query.model === 'string' ? req.query.model.trim() : '';
+  const toolsRaw = typeof req.query.tools === 'string' ? req.query.tools.trim() : '';
+  const sort = ['recent', 'popular', 'top_rated', 'most_forked'].includes(req.query.sort)
+    ? req.query.sort
+    : 'recent';
+  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const pageSize = Math.min(50, Math.max(1, parseInt(req.query.pageSize, 10) || 20));
+  const minRatingRaw = parseFloat(req.query.minRating);
+  const minRating = Number.isFinite(minRatingRaw) ? minRatingRaw : 0;
+  const toolIds = toolsRaw
+    ? toolsRaw.split(',').map((t) => t.trim()).filter(Boolean)
+    : [];
+  const userId = req.user?.userId ?? null;
+
+  // Build WHERE clause from composable filters (filterParams are shared with count query).
+  const filterParams = [];
+  const conditions = ["a.visibility = 'public'"];
+  let rankExpr = 'NULL';
+
+  if (q) {
+    filterParams.push(q);
+    const tsqRef = `websearch_to_tsquery('english', $${filterParams.length})`;
+    conditions.push(`a.search_tsv @@ ${tsqRef}`);
+    rankExpr = `ts_rank(a.search_tsv, ${tsqRef})`;
+  }
+
+  if (model) {
+    filterParams.push(model);
+    conditions.push(`a.model = $${filterParams.length}`);
+  }
+
+  if (toolIds.length > 0) {
+    filterParams.push(JSON.stringify(toolIds));
+    conditions.push(`a.tools @> $${filterParams.length}::jsonb`);
+  }
+
+  if (minRating > 0) {
+    filterParams.push(minRating);
+    conditions.push(
+      `(a.rating_count > 0 AND a.rating_sum::float / a.rating_count >= $${filterParams.length})`
+    );
+  }
+
+  const where = conditions.join(' AND ');
+
+  const orderBy = {
+    recent:      'a.updated_at DESC',
+    popular:     'a.favorite_count DESC, a.updated_at DESC',
+    top_rated:   'avg_rating DESC NULLS LAST, a.rating_count DESC, a.updated_at DESC',
+    most_forked: 'a.fork_count DESC, a.updated_at DESC',
+  }[sort];
+
+  const offset = (page - 1) * pageSize;
+
+  // Per-user flags require a subscription LEFT JOIN; only added when authenticated.
+  const dataParams = [...filterParams];
+  let subJoin = '';
+  let isSubscribedExpr = 'FALSE';
+  let isOwnerExpr = 'FALSE';
+  if (userId) {
+    dataParams.push(userId);
+    const up = `$${dataParams.length}`;
+    subJoin = `LEFT JOIN subscriptions s ON s.agent_id = a.id AND s.user_id = ${up}`;
+    isSubscribedExpr = `(s.agent_id IS NOT NULL)`;
+    isOwnerExpr = `(a.owner_id = ${up})`;
+  }
+  dataParams.push(pageSize);
+  const pageSizeParam = `$${dataParams.length}`;
+  dataParams.push(offset);
+  const offsetParam = `$${dataParams.length}`;
+
+  try {
+    const [{ rows }, { rows: countRows }] = await Promise.all([
+      db.query(
+        `SELECT
+           a.id, a.name, a.persona, a.model, a.tools,
+           a.fork_count, a.favorite_count, a.rating_sum, a.rating_count,
+           CASE WHEN a.rating_count > 0
+                THEN a.rating_sum::float / a.rating_count
+                ELSE NULL END AS avg_rating,
+           u.display_name AS owner_display_name,
+           ${rankExpr} AS rank,
+           ${isSubscribedExpr} AS is_subscribed,
+           ${isOwnerExpr} AS is_owner
+         FROM agents a
+         LEFT JOIN users u ON u.id = a.owner_id
+         ${subJoin}
+         WHERE ${where}
+         ORDER BY ${orderBy}
+         LIMIT ${pageSizeParam} OFFSET ${offsetParam}`,
+        dataParams
+      ),
+      db.query(`SELECT COUNT(*) AS total FROM agents a WHERE ${where}`, filterParams),
+    ]);
+
+    const total = parseInt(countRows[0].total, 10);
+    const items = rows.map((r) => {
+      const item = {
+        id: r.id,
+        name: r.name,
+        persona: r.persona,
+        model: r.model,
+        tools: r.tools ?? [],
+        ownerDisplayName: r.owner_display_name ?? null,
+        avgRating: r.avg_rating != null ? Number(r.avg_rating) : null,
+        ratingCount: r.rating_count,
+        forkCount: r.fork_count,
+        favoriteCount: r.favorite_count,
+      };
+      if (userId) {
+        item.isSubscribed = Boolean(r.is_subscribed);
+        item.isFavorited = false;
+        item.isOwner = Boolean(r.is_owner);
+      }
+      return item;
+    });
+
+    res.json({ items, page, pageSize, total, hasMore: page * pageSize < total });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/agents/:id', optionalAuth, async (req, res) => {
   try {
     const { rows } = await db.query('SELECT * FROM agents WHERE id = $1', [req.params.id]);
