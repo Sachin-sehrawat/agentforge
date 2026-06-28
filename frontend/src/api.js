@@ -160,6 +160,8 @@ export const api = {
   subscribeAgent: (id) => request(`/agents/${id}/subscribe`, { method: 'POST' }),
   unsubscribeAgent: (id) => request(`/agents/${id}/subscribe`, { method: 'DELETE' }),
   duplicateAgent: (id) => request(`/agents/${id}/duplicate`, { method: 'POST' }),
+  bulkDeleteAgents: (ids) => request('/agents/bulk-delete', { method: 'POST', body: JSON.stringify({ ids }) }),
+  bulkExportAgents: (ids, format) => request('/agents/bulk-export', { method: 'POST', body: JSON.stringify({ ids, format }) }),
 
   // Marketplace listing — accepts { q, model, tools, sort, minRating, page, pageSize }
   listMarketplace: (params = {}) => {

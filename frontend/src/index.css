@@ -498,6 +498,106 @@ button {
   box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.15);
 }
 
+/* --- Bulk selection -------------------------------------------------------- */
+
+.agent-card--selected {
+  border-color: rgba(99, 102, 241, 0.55);
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.18), 0 2px 8px rgba(99, 102, 241, 0.1);
+}
+
+.agent-card-checkbox-wrap {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: border-color 0.12s, box-shadow 0.12s;
+}
+.agent-card-checkbox-wrap:hover {
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12);
+}
+
+.agent-card-checkbox {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  cursor: pointer;
+  accent-color: #6366f1;
+}
+
+.agent-card {
+  position: relative;
+}
+
+.bulk-select-all-row {
+  display: flex;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.bulk-select-all-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+}
+.bulk-select-all-label input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  accent-color: #6366f1;
+  cursor: pointer;
+}
+.bulk-select-all-label:hover {
+  color: var(--text);
+}
+
+.bulk-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  margin-bottom: 16px;
+  background: color-mix(in srgb, #6366f1 6%, var(--panel));
+  border: 1px solid rgba(99, 102, 241, 0.2);
+  border-radius: var(--radius-sm);
+  flex-wrap: wrap;
+}
+
+.bulk-toolbar-count {
+  font-size: 13px;
+  font-weight: 600;
+  color: #6366f1;
+  font-family: var(--font-mono);
+  margin-right: 2px;
+}
+
+.bulk-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  flex-wrap: wrap;
+}
+
+.bulk-toolbar-label {
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+
+/* --- End bulk selection ---------------------------------------------------- */
+
 .agents-empty {
   display: flex;
   flex-direction: column;
