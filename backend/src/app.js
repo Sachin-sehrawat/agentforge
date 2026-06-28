@@ -1061,6 +1061,71 @@ app.post('/api/agents/:id/fork', requireAuth, async (req, res) => {
   }
 });
 
+// --- Agent duplicate -------------------------------------------------------
+// Owner-only one-click copy within the caller's own workspace.
+// Distinct from fork: no forked_from provenance, no public-source requirement.
+
+app.post('/api/agents/:id/duplicate', requireAuth, async (req, res) => {
+  const sourceId = req.params.id;
+  const callerId = req.user.userId;
+
+  try {
+    const newAgent = await withClient(async (client) => {
+      const { rows: sourceRows } = await client.query(
+        'SELECT * FROM agents WHERE id = $1',
+        [sourceId]
+      );
+      if (!sourceRows[0]) {
+        const e = new Error('Agent not found'); e.statusCode = 404; throw e;
+      }
+      const source = sourceRows[0];
+
+      if (source.owner_id !== callerId) {
+        const e = new Error('Forbidden'); e.statusCode = 403; throw e;
+      }
+
+      const newId = crypto.randomUUID();
+      const { rows: inserted } = await client.query(
+        `INSERT INTO agents
+           (id, name, persona, system_prompt, model, tools, positions, skills, instructions, tags, visibility, owner_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+         RETURNING *`,
+        [
+          newId,
+          source.name + ' (copy)',
+          source.persona,
+          source.system_prompt,
+          source.model,
+          JSON.stringify(source.tools ?? []),
+          JSON.stringify(source.positions ?? {}),
+          JSON.stringify(source.skills ?? []),
+          JSON.stringify(source.instructions ?? []),
+          JSON.stringify(source.tags ?? []),
+          source.visibility,
+          callerId,
+        ]
+      );
+      const agent = inserted[0];
+
+      const canonical = toCanonical(agent);
+      const hash = crypto.createHash('sha256').update(JSON.stringify(canonical)).digest('hex');
+      await client.query(
+        `INSERT INTO agent_versions (agent_id, version_no, canonical_hash, snapshot, change_summary, created_by)
+         VALUES ($1, 1, $2, $3, $4, $5)`,
+        [newId, hash, JSON.stringify(canonical), `Duplicated from ${sourceId}`, callerId]
+      );
+
+      return agent;
+    });
+
+    res.status(201).json(serializeAgent(newAgent));
+  } catch (err) {
+    if (err.statusCode === 404) return res.status(404).json({ error: err.message });
+    if (err.statusCode === 403) return res.status(403).json({ error: err.message });
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // --- Export event ---------------------------------------------------------
 // Called client-side when a user downloads a Markdown export.
 // Increments the export count for the agent; anonymous exports are recorded with actor_id = null.
