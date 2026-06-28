@@ -100,6 +100,7 @@ CREATE TABLE IF NOT EXISTS agent_versions (
   canonical_hash TEXT        NOT NULL,
   snapshot       JSONB       NOT NULL,
   change_summary TEXT        NOT NULL DEFAULT '',
+  created_by     UUID        REFERENCES users(id) ON DELETE SET NULL,
   created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE (agent_id, version_no)
 );
