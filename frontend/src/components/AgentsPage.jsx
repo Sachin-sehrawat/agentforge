@@ -31,9 +31,10 @@ function Badge({ label, color }) {
   );
 }
 
-function AgentCard({ agent, onOpen, onDownload, onDelete, onSubscribe, onToggleVisibility, onAnalytics }) {
+function AgentCard({ agent, onOpen, onDownload, onDelete, onSubscribe, onToggleVisibility, onAnalytics, onDuplicate }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [confirmPublish, setConfirmPublish] = useState(false);
+  const [duplicating, setDuplicating] = useState(false);
   const [subscribed, setSubscribed] = useState(Boolean(agent.isSubscribed));
   const [visibility, setVisibility] = useState(agent.visibility || 'private');
 
@@ -80,6 +81,15 @@ function AgentCard({ agent, onOpen, onDownload, onDelete, onSubscribe, onToggleV
     } else {
       setConfirmDelete(true);
       setTimeout(() => setConfirmDelete(false), 2500);
+    }
+  }
+
+  async function handleDuplicate() {
+    setDuplicating(true);
+    try {
+      await onDuplicate(agent);
+    } finally {
+      setDuplicating(false);
     }
   }
 
@@ -168,6 +178,16 @@ function AgentCard({ agent, onOpen, onDownload, onDelete, onSubscribe, onToggleV
                 : 'Make Public'}
             </button>
           )}
+          {onDuplicate && (
+            <button
+              className="btn subtle"
+              onClick={handleDuplicate}
+              disabled={duplicating}
+              title="Duplicate this agent"
+            >
+              {duplicating ? 'Copying…' : 'Duplicate'}
+            </button>
+          )}
           {onDelete && (
             <button
               className={`btn${confirmDelete ? ' danger' : ' subtle'}`}
@@ -204,7 +224,7 @@ function AgentCard({ agent, onOpen, onDownload, onDelete, onSubscribe, onToggleV
   );
 }
 
-function AgentsList({ agents, search, onOpen, onDownload, onDelete, canDelete, onSubscribe, onToggleVisibility, onAnalytics, emptyNode }) {
+function AgentsList({ agents, search, onOpen, onDownload, onDelete, canDelete, onSubscribe, onToggleVisibility, onAnalytics, onDuplicate, emptyNode }) {
   const q = search.trim().toLowerCase();
   const filtered = q
     ? agents.filter((a) =>
@@ -227,13 +247,14 @@ function AgentsList({ agents, search, onOpen, onDownload, onDelete, canDelete, o
           onSubscribe={onSubscribe || null}
           onToggleVisibility={onToggleVisibility && agent.isOwned ? onToggleVisibility : null}
           onAnalytics={onAnalytics && agent.isOwned ? onAnalytics : null}
+          onDuplicate={onDuplicate && agent.isOwned ? onDuplicate : null}
         />
       ))}
     </div>
   );
 }
 
-function TabContent({ agents, loading, error, search, onOpen, onDownload, onDelete, canDelete, onSubscribe, onToggleVisibility, onAnalytics, emptyNode }) {
+function TabContent({ agents, loading, error, search, onOpen, onDownload, onDelete, canDelete, onSubscribe, onToggleVisibility, onAnalytics, onDuplicate, emptyNode }) {
   if (loading) {
     return <div className="agents-loading">Loading…</div>;
   }
@@ -251,6 +272,7 @@ function TabContent({ agents, loading, error, search, onOpen, onDownload, onDele
       onSubscribe={onSubscribe}
       onToggleVisibility={onToggleVisibility}
       onAnalytics={onAnalytics}
+      onDuplicate={onDuplicate}
       emptyNode={emptyNode}
     />
   );
@@ -446,6 +468,7 @@ export default function AgentsPage({
   onFork,
   onUnfavorite,
   onAnalytics,
+  onDuplicate,
 }) {
   const [activeTab, setActiveTab] = useState('agents');
   const [search, setSearch] = useState('');
@@ -606,6 +629,7 @@ export default function AgentsPage({
           canDelete={(agent) => agent.isOwned}
           onToggleVisibility={onToggleVisibility}
           onAnalytics={onAnalytics}
+          onDuplicate={onDuplicate}
           emptyNode={
             <div className="agents-empty">
               <div className="agents-empty-icon">

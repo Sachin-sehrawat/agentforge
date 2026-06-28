@@ -159,6 +159,7 @@ export const api = {
   deleteAgent: (id) => request(`/agents/${id}`, { method: 'DELETE' }),
   subscribeAgent: (id) => request(`/agents/${id}/subscribe`, { method: 'POST' }),
   unsubscribeAgent: (id) => request(`/agents/${id}/subscribe`, { method: 'DELETE' }),
+  duplicateAgent: (id) => request(`/agents/${id}/duplicate`, { method: 'POST' }),
 
   // Marketplace listing — accepts { q, model, tools, sort, minRating, page, pageSize }
   listMarketplace: (params = {}) => {
