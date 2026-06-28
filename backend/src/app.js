@@ -250,12 +250,15 @@ app.get('/api/agents/marketplace', optionalAuth, async (req, res) => {
   let subJoin = '';
   let isSubscribedExpr = 'FALSE';
   let isOwnerExpr = 'FALSE';
+  let isFavoritedExpr = 'FALSE';
   if (userId) {
     dataParams.push(userId);
     const up = `$${dataParams.length}`;
-    subJoin = `LEFT JOIN subscriptions s ON s.agent_id = a.id AND s.user_id = ${up}`;
+    subJoin = `LEFT JOIN subscriptions s ON s.agent_id = a.id AND s.user_id = ${up}
+         LEFT JOIN agent_favorites af ON af.agent_id = a.id AND af.user_id = ${up}`;
     isSubscribedExpr = `(s.agent_id IS NOT NULL)`;
     isOwnerExpr = `(a.owner_id = ${up})`;
+    isFavoritedExpr = `(af.agent_id IS NOT NULL)`;
   }
   dataParams.push(pageSize);
   const pageSizeParam = `$${dataParams.length}`;
@@ -274,7 +277,8 @@ app.get('/api/agents/marketplace', optionalAuth, async (req, res) => {
            u.display_name AS owner_display_name,
            ${rankExpr} AS rank,
            ${isSubscribedExpr} AS is_subscribed,
-           ${isOwnerExpr} AS is_owner
+           ${isOwnerExpr} AS is_owner,
+           ${isFavoritedExpr} AS is_favorited
          FROM agents a
          LEFT JOIN users u ON u.id = a.owner_id
          ${subJoin}
@@ -302,13 +306,50 @@ app.get('/api/agents/marketplace', optionalAuth, async (req, res) => {
       };
       if (userId) {
         item.isSubscribed = Boolean(r.is_subscribed);
-        item.isFavorited = false;
+        item.isFavorited = Boolean(r.is_favorited);
         item.isOwner = Boolean(r.is_owner);
       }
       return item;
     });
 
     res.json({ items, page, pageSize, total, hasMore: page * pageSize < total });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Paginated list of agents the authenticated user has favorited.
+// Returns full agent objects in the same shape as /api/agents/mine.
+app.get('/api/agents/favorites', requireAuth, async (req, res) => {
+  const userId = req.user.userId;
+  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const pageSize = Math.min(50, Math.max(1, parseInt(req.query.pageSize, 10) || 20));
+  const offset = (page - 1) * pageSize;
+
+  try {
+    const [{ rows }, { rows: countRows }] = await Promise.all([
+      db.query(
+        `SELECT a.*
+         FROM agent_favorites f
+         JOIN agents a ON a.id = f.agent_id
+         WHERE f.user_id = $1
+         ORDER BY f.created_at DESC
+         LIMIT $2 OFFSET $3`,
+        [userId, pageSize, offset]
+      ),
+      db.query(
+        'SELECT COUNT(*) AS total FROM agent_favorites WHERE user_id = $1',
+        [userId]
+      ),
+    ]);
+    const total = parseInt(countRows[0].total, 10);
+    res.json({
+      items: rows.map(serializeAgent),
+      page,
+      pageSize,
+      total,
+      hasMore: page * pageSize < total,
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -705,6 +746,72 @@ app.delete('/api/agents/:id/subscribe', requireAuth, async (req, res) => {
     if (rowCount === 0) return res.status(404).json({ error: 'Subscription not found' });
     res.status(204).end();
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --- Agent favorites -------------------------------------------------------
+// POST inserts a row and increments favorite_count in the same transaction.
+// DELETE removes the row and decrements favorite_count atomically.
+// Guard: only public agents or agents owned by the caller may be favorited.
+
+app.post('/api/agents/:id/favorite', requireAuth, rateLimit, async (req, res) => {
+  const agentId = req.params.id;
+  const userId = req.user.userId;
+  try {
+    await withClient(async (client) => {
+      const { rows } = await client.query(
+        'SELECT owner_id, visibility FROM agents WHERE id = $1',
+        [agentId]
+      );
+      if (!rows[0]) { const e = new Error('Agent not found'); e.statusCode = 404; throw e; }
+      const { owner_id, visibility } = rows[0];
+      if (visibility !== 'public' && owner_id !== userId) {
+        const e = new Error('Cannot favorite a private unowned agent'); e.statusCode = 403; throw e;
+      }
+
+      const { rowCount } = await client.query(
+        'INSERT INTO agent_favorites (user_id, agent_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+        [userId, agentId]
+      );
+      if (rowCount === 0) { const e = new Error('Already favorited'); e.statusCode = 409; throw e; }
+
+      await client.query(
+        'UPDATE agents SET favorite_count = favorite_count + 1 WHERE id = $1',
+        [agentId]
+      );
+    });
+    res.status(200).json({ userId, agentId });
+  } catch (err) {
+    if (err.statusCode === 404) return res.status(404).json({ error: err.message });
+    if (err.statusCode === 403) return res.status(403).json({ error: err.message });
+    if (err.statusCode === 409) return res.status(409).json({ error: err.message });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/agents/:id/favorite', requireAuth, rateLimit, async (req, res) => {
+  const agentId = req.params.id;
+  const userId = req.user.userId;
+  try {
+    await withClient(async (client) => {
+      const { rows } = await client.query('SELECT id FROM agents WHERE id = $1', [agentId]);
+      if (!rows[0]) { const e = new Error('Agent not found'); e.statusCode = 404; throw e; }
+
+      const { rowCount } = await client.query(
+        'DELETE FROM agent_favorites WHERE user_id = $1 AND agent_id = $2',
+        [userId, agentId]
+      );
+      if (rowCount === 0) { const e = new Error('Not favorited'); e.statusCode = 404; throw e; }
+
+      await client.query(
+        'UPDATE agents SET favorite_count = GREATEST(0, favorite_count - 1) WHERE id = $1',
+        [agentId]
+      );
+    });
+    res.status(204).end();
+  } catch (err) {
+    if (err.statusCode === 404) return res.status(404).json({ error: err.message });
     res.status(500).json({ error: err.message });
   }
 });
@@ -1577,6 +1684,7 @@ function serializeAgent(row) {
     forkedFrom: row.forked_from ?? null,
     forkedFromName: row.forked_from_name ?? null,
     forkCount: row.fork_count ?? 0,
+    favoriteCount: row.favorite_count ?? 0,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
