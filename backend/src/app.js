@@ -482,8 +482,8 @@ app.post('/api/agents', requireAuth, async (req, res) => {
 
     const newRow = await withClient(async (client) => {
       const { rows } = await client.query(
-        `INSERT INTO agents (id, name, persona, system_prompt, model, tools, positions, skills, instructions, visibility, owner_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        `INSERT INTO agents (id, name, persona, system_prompt, model, tools, positions, skills, instructions, visibility, tags, owner_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
          RETURNING *`,
         [
           id,
@@ -496,6 +496,7 @@ app.post('/api/agents', requireAuth, async (req, res) => {
           JSON.stringify(agent.skills),
           JSON.stringify(agent.instructions),
           agent.visibility,
+          JSON.stringify(agent.tags),
           owner_id,
         ]
       );
@@ -545,8 +546,8 @@ app.put('/api/agents/:id', requireAuth, async (req, res) => {
         `UPDATE agents
          SET name = $1, persona = $2, system_prompt = $3, model = $4,
              tools = $5, positions = $6, skills = $7, instructions = $8,
-             visibility = $9, updated_at = NOW()
-         WHERE id = $10
+             tags = $9, visibility = $10, updated_at = NOW()
+         WHERE id = $11
          RETURNING *`,
         [
           agent.name,
@@ -557,6 +558,7 @@ app.put('/api/agents/:id', requireAuth, async (req, res) => {
           JSON.stringify(agent.positions),
           JSON.stringify(agent.skills),
           JSON.stringify(agent.instructions),
+          JSON.stringify(agent.tags),
           agent.visibility,
           req.params.id,
         ]
@@ -1867,6 +1869,7 @@ function serializeAgent(row) {
     positions: row.positions ?? {},
     skills: row.skills ?? [],
     instructions: row.instructions ?? [],
+    tags: row.tags ?? [],
     ownerId: row.owner_id ?? null,
     visibility: row.visibility ?? 'private',
     forkedFrom: row.forked_from ?? null,
@@ -1967,6 +1970,19 @@ export function validateAgentInput(body) {
       ? body.visibility
       : 'private';
 
+  const rawTags = Array.isArray(body.tags) ? body.tags : [];
+  const normalizedTags = rawTags
+    .filter((t) => typeof t === 'string')
+    .map((t) => t.trim().toLowerCase())
+    .filter((t) => t.length > 0);
+  if (normalizedTags.some((t) => t.length > 30)) {
+    return { error: 'Each tag must be 30 characters or fewer' };
+  }
+  const uniqueTags = [...new Set(normalizedTags)];
+  if (uniqueTags.length > 10) {
+    return { error: 'A maximum of 10 tags is allowed' };
+  }
+
   return {
     name,
     persona: typeof body.persona === 'string' ? body.persona : '',
@@ -1977,6 +1993,7 @@ export function validateAgentInput(body) {
     skills: Array.isArray(body.skills) ? body.skills.filter((s) => typeof s === 'string') : [],
     instructions: Array.isArray(body.instructions) ? body.instructions.filter((s) => typeof s === 'string') : [],
     visibility,
+    tags: uniqueTags,
   };
 }
 

@@ -240,6 +240,38 @@ LIMIT 20;
 
 ---
 
+## Adding `tags` Column to an Existing Deployment
+
+`backend/db/init/11_tags.sql` runs automatically on a **fresh** volume. For existing deployments apply the DDL manually:
+
+```sql
+-- Run against your PostgreSQL instance (psql, DBeaver, etc.)
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS tags JSONB NOT NULL DEFAULT '[]'::jsonb;
+CREATE INDEX IF NOT EXISTS idx_agents_tags ON agents USING GIN (tags);
+ANALYZE agents;
+```
+
+**Notes:**
+
+- `tags` defaults to `'[]'` — all existing agents automatically get an empty tag list with no back-fill required.
+- Tags are stored as a JSONB array of lowercase strings (e.g. `["research", "coding"]`).
+- The GIN index enables efficient containment queries (`tags @> '["research"]'`).
+- The API validates tags on write: max 10 tags, each ≤ 30 characters, lowercased and trimmed, no duplicates.
+
+**Verify after applying:**
+
+```sql
+-- Confirm column exists
+SELECT column_name FROM information_schema.columns
+WHERE table_name = 'agents' AND column_name = 'tags';
+
+-- Confirm GIN index exists
+SELECT indexname FROM pg_indexes
+WHERE tablename = 'agents' AND indexname = 'idx_agents_tags';
+```
+
+---
+
 ## Related Documents
 
 - [Database Schema](database-schema.md) — PostgreSQL tables and MongoDB collections

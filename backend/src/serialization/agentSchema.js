@@ -15,6 +15,7 @@ export function toCanonical(agentRow) {
     tools: agentRow.tools ?? [],
     skills: agentRow.skills ?? [],
     instructions: agentRow.instructions ?? [],
+    tags: agentRow.tags ?? [],
     positions: agentRow.positions ?? {},
   };
 }

@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS agents (
   owner_id      UUID        REFERENCES users(id) ON DELETE SET NULL,
   visibility    TEXT        NOT NULL DEFAULT 'private'
                   CHECK (visibility IN ('public', 'private')),
+  tags          JSONB       NOT NULL DEFAULT '[]'::jsonb,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -54,6 +55,7 @@ CREATE INDEX IF NOT EXISTS idx_agents_model        ON agents (model);
 CREATE INDEX IF NOT EXISTS idx_agents_name_text    ON agents USING BTREE (name text_pattern_ops);
 CREATE INDEX IF NOT EXISTS idx_agents_tools_gin    ON agents USING GIN  (tools  jsonb_path_ops);
 CREATE INDEX IF NOT EXISTS idx_agents_skills_gin   ON agents USING GIN  (skills jsonb_path_ops);
+CREATE INDEX IF NOT EXISTS idx_agents_tags         ON agents USING GIN  (tags);
 
 -- Custom skills ---------------------------------------------------------
 
