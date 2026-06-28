@@ -135,6 +135,108 @@ app.post('/api/agents/import', optionalAuth, (req, res) => {
   res.json({ agent: result.agent, warnings: result.warnings });
 });
 
+// --- Bulk operations -------------------------------------------------------
+
+const BULK_LIMIT = 100;
+
+// Generate minimal Markdown for an agent row using server-side tool catalog.
+// Skills and instructions are stored as opaque IDs; they are omitted from the
+// Markdown output (same limitation as parseMarkdown on re-import).
+function agentToMarkdown(row) {
+  const toolLines = (row.tools ?? []).length
+    ? (row.tools ?? []).map((id) => {
+        const meta = TOOL_CATALOG[id];
+        return `- **${meta ? meta.label : id}**`;
+      }).join('\n')
+    : '_No tools added._';
+
+  const date = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+
+  return `# ${row.name || 'Untitled Agent'}
+
+${row.persona ? `> ${row.persona}\n` : ''}## System Prompt
+
+${row.system_prompt || '_No system prompt defined._'}
+
+## Capabilities
+
+${toolLines}
+
+---
+_Created with AgentForge · ${date}_
+`;
+}
+
+app.post('/api/agents/bulk-delete', requireAuth, async (req, res) => {
+  const { ids } = req.body ?? {};
+
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ error: 'ids must be a non-empty array' });
+  }
+  if (ids.length > BULK_LIMIT) {
+    return res.status(400).json({ error: `Batch size exceeds the limit of ${BULK_LIMIT}` });
+  }
+
+  const callerId = req.user.userId;
+
+  try {
+    const result = await withClient(async (client) => {
+      const { rows } = await client.query(
+        'SELECT id FROM agents WHERE id = ANY($1::uuid[]) AND owner_id = $2',
+        [ids, callerId]
+      );
+      const ownedIds = rows.map((r) => r.id);
+      const skipped = ids.filter((id) => !ownedIds.includes(id));
+
+      if (ownedIds.length > 0) {
+        await client.query('DELETE FROM agents WHERE id = ANY($1::uuid[])', [ownedIds]);
+      }
+
+      return { deleted: ownedIds, skipped };
+    });
+
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/agents/bulk-export', requireAuth, async (req, res) => {
+  const { ids, format } = req.body ?? {};
+
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ error: 'ids must be a non-empty array' });
+  }
+  if (ids.length > BULK_LIMIT) {
+    return res.status(400).json({ error: `Batch size exceeds the limit of ${BULK_LIMIT}` });
+  }
+  if (format !== 'json' && format !== 'markdown') {
+    return res.status(400).json({ error: 'format must be "json" or "markdown"' });
+  }
+
+  const callerId = req.user.userId;
+
+  try {
+    const { rows } = await db.query(
+      'SELECT * FROM agents WHERE id = ANY($1::uuid[]) AND owner_id = $2',
+      [ids, callerId]
+    );
+
+    const results = rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      content:
+        format === 'json'
+          ? JSON.stringify(toCanonical(row), null, 2)
+          : agentToMarkdown(row),
+    }));
+
+    res.json({ results });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // --- Agent CRUD ------------------------------------------------------------
 
 // Legacy endpoint kept for back-compat; now scoped to public agents only (private agents
