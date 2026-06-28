@@ -981,7 +981,7 @@ app.post('/api/agents/:id/fork', requireAuth, async (req, res) => {
   const callerId = req.user.userId;
 
   try {
-    const { newAgent, skillWarnings } = await withClient(async (client) => {
+    const { newAgent, skillWarnings, sourceName } = await withClient(async (client) => {
       const { rows: sourceRows } = await client.query(
         'SELECT * FROM agents WHERE id = $1',
         [sourceId]
@@ -998,14 +998,18 @@ app.post('/api/agents/:id/fork', requireAuth, async (req, res) => {
       const skillIds = Array.isArray(source.skills) ? source.skills : [];
       let warnings = [];
       if (skillIds.length > 0) {
-        const { rows: accessible } = await client.query(
-          `SELECT id FROM custom_skills
-           WHERE id = ANY($1::uuid[])
-             AND (visibility = 'public' OR owner_id = $2)`,
-          [skillIds, callerId]
-        );
-        const accessibleSet = new Set(accessible.map((r) => r.id));
-        warnings = skillIds.filter((id) => !accessibleSet.has(id));
+        const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        const customSkillIds = skillIds.filter((id) => UUID_RE.test(id));
+        if (customSkillIds.length > 0) {
+          const { rows: accessible } = await client.query(
+            `SELECT id FROM custom_skills
+             WHERE id = ANY($1::uuid[])
+               AND (visibility = 'public' OR owner_id = $2)`,
+            [customSkillIds, callerId]
+          );
+          const accessibleSet = new Set(accessible.map((r) => r.id));
+          warnings = customSkillIds.filter((id) => !accessibleSet.has(id));
+        }
       }
 
       const newId = crypto.randomUUID();
