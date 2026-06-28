@@ -10,7 +10,18 @@
 
 # Database Schema
 
-AgentForge uses **PostgreSQL 14+** as its primary data store. The schema is initialized automatically when starting the Docker Compose stack via the ordered init scripts in `backend/db/init/` (`01_schema.sql`, `02_performance_indexes.sql`, `03_users.sql`, `04_ownership.sql`, `05_subscriptions.sql`).
+AgentForge uses **PostgreSQL 14+** as its primary data store. The schema is initialized automatically when starting the Docker Compose stack via the ordered init scripts in `backend/db/init/`:
+
+| File | Contents |
+|---|---|
+| `01_schema.sql` | Core tables: `agents`, `custom_skills`, `users`, `subscriptions`, `agent_versions` |
+| `02_performance_indexes.sql` | Additional composite indexes |
+| `03_users.sql` | User-related constraints and indexes |
+| `04_ownership.sql` | Ownership backfill |
+| `05_subscriptions.sql` | Subscription constraints |
+| `06_agent_versions.sql` | Version history table |
+| `07_marketplace.sql` | Marketplace columns: `search_tsv`, `fork_count`, `favorite_count`, `rating_sum`, `rating_count`, `forked_from`; full-text search trigger |
+| `08_ratings.sql` | `agent_ratings` table |
 
 ## Tables
 
@@ -31,6 +42,12 @@ Stores agent configurations created in the visual builder.
 | `instructions` | `JSONB` | `NOT NULL DEFAULT '[]'` | Ordered array of instruction strings |
 | `owner_id` | `UUID` | nullable, FK → `users.id` ON DELETE SET NULL | Owning user; NULL for legacy rows created before ownership was introduced |
 | `visibility` | `TEXT` | `NOT NULL DEFAULT 'private'` CHECK (`'public'`\|`'private'`) | Access level; existing rows were backfilled to `'public'` |
+| `search_tsv` | `tsvector` | nullable | Full-text search vector maintained by `trg_agents_search_tsv` trigger (name weight A, persona weight B, system_prompt weight C) |
+| `fork_count` | `INTEGER` | `NOT NULL DEFAULT 0` | Number of times this agent has been forked; incremented atomically by `POST /api/agents/:id/fork` |
+| `favorite_count` | `INTEGER` | `NOT NULL DEFAULT 0` | Number of users who have favorited this agent |
+| `rating_sum` | `INTEGER` | `NOT NULL DEFAULT 0` | Running sum of all star ratings (1–5); used with `rating_count` to compute the average |
+| `rating_count` | `INTEGER` | `NOT NULL DEFAULT 0` | Number of ratings submitted |
+| `forked_from` | `UUID` | nullable, FK → `agents.id` ON DELETE SET NULL | Source agent UUID when this row was created by a fork; NULL for original agents |
 | `created_at` | `TIMESTAMPTZ` | `NOT NULL DEFAULT NOW()` | Creation timestamp |
 | `updated_at` | `TIMESTAMPTZ` | `NOT NULL DEFAULT NOW()` | Last modification timestamp |
 
@@ -42,6 +59,8 @@ Stores agent configurations created in the visual builder.
 | `idx_agents_updated_at` | `updated_at DESC` | Supports default sort order (most recently updated first) |
 | `idx_agents_owner_id` | `owner_id` | Supports listing all agents owned by a user |
 | `idx_agents_visibility` | `visibility` | Supports filtering public vs. private agents |
+| `idx_agents_search_tsv` | `search_tsv` (GIN) | Powers full-text search in `GET /api/agents/marketplace` |
+| `idx_agents_public_updated` | `updated_at DESC` WHERE `visibility = 'public'` | Partial index for marketplace listing — avoids scanning private agents |
 
 ---
 
@@ -132,12 +151,52 @@ Stores user subscriptions to public agents. Uses **reference semantics** — eac
 
 ---
 
+---
+
+### `agent_versions`
+
+Immutable snapshots of the canonical agent state. One row is inserted on every save, restore, or fork. Version numbers are monotonically increasing per agent; gaps are not allowed. Equal `canonical_hash` ↔ no content change (no-op detection skips the insert).
+
+| Column | Type | Constraints | Description |
+|---|---|---|---|
+| `id` | `BIGSERIAL` | PK | Auto-incrementing surrogate key |
+| `agent_id` | `UUID` | `NOT NULL`, FK → `agents.id` ON DELETE CASCADE | Owning agent |
+| `version_no` | `INT` | `NOT NULL`, UNIQUE with `agent_id` | Monotonically increasing version number per agent |
+| `canonical_hash` | `TEXT` | `NOT NULL` | SHA-256 of the serialized canonical JSON; used to detect no-op saves |
+| `snapshot` | `JSONB` | `NOT NULL` | Full canonical agent representation at this version |
+| `change_summary` | `TEXT` | `NOT NULL DEFAULT ''` | Human-readable description of what changed |
+| `created_by` | `UUID` | nullable, FK → `users.id` ON DELETE SET NULL | User who triggered the save; NULL for system-generated versions |
+| `created_at` | `TIMESTAMPTZ` | `NOT NULL DEFAULT NOW()` | When the version was recorded |
+
+---
+
+### `agent_ratings`
+
+One row per `(user_id, agent_id)` pair. Rating aggregates (`rating_sum`, `rating_count`) are maintained on the `agents` table and recomputed in the same transaction as every upsert/delete.
+
+| Column | Type | Constraints | Description |
+|---|---|---|---|
+| `user_id` | `UUID` | `NOT NULL`, FK → `users.id` ON DELETE CASCADE, part of PK | Rating user |
+| `agent_id` | `UUID` | `NOT NULL`, FK → `agents.id` ON DELETE CASCADE, part of PK | Rated agent |
+| `rating` | `SMALLINT` | `NOT NULL` CHECK (1–5) | Star rating |
+| `created_at` | `TIMESTAMPTZ` | `NOT NULL DEFAULT NOW()` | When the rating was first submitted |
+| `updated_at` | `TIMESTAMPTZ` | `NOT NULL DEFAULT NOW()` | When the rating was last changed |
+
+**Constraints**
+
+- `PRIMARY KEY (user_id, agent_id)` — one rating per user per agent; upsert via `ON CONFLICT DO UPDATE`.
+- Self-rating is blocked at the API layer (`PUT /api/agents/:id/rating` returns 400 when caller owns the agent).
+
+---
+
 ## Design Notes
 
 - **UUID primary keys** — all tables use `gen_random_uuid()` so IDs are globally unique and safe to expose in APIs.
 - **JSONB for flexible fields** — `tools`, `positions`, `skills`, and `instructions` are stored as JSONB to allow schema-free evolution without migrations for structural changes to these arrays/objects.
 - **TIMESTAMPTZ** — all timestamps are stored with timezone information to avoid ambiguity.
 - The `updated_at` column is updated explicitly to `NOW()` in every `UPDATE` statement (no trigger needed for the current load).
+- **Fork provenance** — `agents.forked_from` records the source agent UUID at fork time. It uses `ON DELETE SET NULL` so deleting the source does not cascade to forks. `fork_count` on the source is incremented atomically in the same transaction as the fork `INSERT`, ensuring the count is never out of sync.
+- **Subscription vs fork semantics** — subscriptions use reference semantics (subscriber always sees the live source); forks use snapshot semantics (the copy is fully independent from the moment of creation).
 
 ## Local Development
 
