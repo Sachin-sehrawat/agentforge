@@ -6,12 +6,52 @@ const PERSONA_LOOKUP = Object.fromEntries(
   PERSONA_CATEGORIES.flatMap((c) => c.personas.map((p) => [p.id, { ...p, color: c.color }]))
 );
 
+const TAG_MAX_LENGTH = 30;
+const TAG_MAX_COUNT = 10;
+
 const AgentNode = React.forwardRef(function AgentNode(
   { position, agent, onChange, onHeaderPointerDown, onToggleSkill, onToggleInstruction, allSkills, fieldIssues, onViewSource },
   ref
 ) {
   const [expandedSkill, setExpandedSkill] = useState(null);
   const [expandedInstruction, setExpandedInstruction] = useState(null);
+  const [tagInput, setTagInput] = useState('');
+  const [tagError, setTagError] = useState('');
+
+  function addTag(raw) {
+    const value = raw.trim().toLowerCase();
+    if (!value) return;
+    const currentTags = agent.tags || [];
+    if (value.length > TAG_MAX_LENGTH) {
+      setTagError(`Tag must be ${TAG_MAX_LENGTH} characters or fewer`);
+      return;
+    }
+    if (currentTags.length >= TAG_MAX_COUNT) {
+      setTagError(`Maximum ${TAG_MAX_COUNT} tags allowed`);
+      return;
+    }
+    if (currentTags.includes(value)) {
+      setTagError('Tag already added');
+      return;
+    }
+    setTagError('');
+    onChange('tags', [...currentTags, value]);
+    setTagInput('');
+  }
+
+  function removeTag(tag) {
+    onChange('tags', (agent.tags || []).filter((t) => t !== tag));
+  }
+
+  function handleTagKeyDown(e) {
+    if (e.key === 'Enter' || e.key === ',') {
+      e.preventDefault();
+      addTag(tagInput);
+    } else if (e.key === 'Backspace' && tagInput === '' && (agent.tags || []).length > 0) {
+      const tags = agent.tags || [];
+      onChange('tags', tags.slice(0, -1));
+    }
+  }
 
   function fieldSeverity(field) {
     if (!fieldIssues) return null;
@@ -78,6 +118,37 @@ const AgentNode = React.forwardRef(function AgentNode(
             onChange={(e) => onChange('systemPrompt', e.target.value)}
             placeholder="Extra instructions for how the agent should behave and when to use its tools..."
           />
+        </div>
+
+        <div>
+          <label className="field-label" htmlFor="agent-tags">Tags</label>
+          <div className="agent-tags-input-row">
+            {(agent.tags || []).map((tag) => (
+              <span key={tag} className="agent-tag-pill">
+                {tag}
+                <button
+                  className="agent-tag-remove"
+                  onClick={() => removeTag(tag)}
+                  title={`Remove tag "${tag}"`}
+                >
+                  ✕
+                </button>
+              </span>
+            ))}
+            {(agent.tags || []).length < TAG_MAX_COUNT && (
+              <input
+                id="agent-tags"
+                className="agent-tags-input"
+                value={tagInput}
+                onChange={(e) => { setTagInput(e.target.value); setTagError(''); }}
+                onKeyDown={handleTagKeyDown}
+                onBlur={() => { if (tagInput.trim()) addTag(tagInput); }}
+                placeholder={(agent.tags || []).length === 0 ? 'e.g. research, coding' : ''}
+                maxLength={TAG_MAX_LENGTH + 1}
+              />
+            )}
+          </div>
+          {tagError && <span className="field-error">{tagError}</span>}
         </div>
 
         {agent.forkedFrom && (
