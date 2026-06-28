@@ -59,6 +59,12 @@ export default function Topbar({
           Agents
         </button>
         <button
+          className={`topbar-nav-item${view === 'marketplace' ? ' active' : ''}`}
+          onClick={() => onSetView('marketplace')}
+        >
+          Marketplace
+        </button>
+        <button
           className={`topbar-nav-item${view === 'skills' ? ' active' : ''}`}
           onClick={() => onSetView('skills')}
         >

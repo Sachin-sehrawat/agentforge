@@ -159,6 +159,40 @@ export const api = {
   deleteAgent: (id) => request(`/agents/${id}`, { method: 'DELETE' }),
   subscribeAgent: (id) => request(`/agents/${id}/subscribe`, { method: 'POST' }),
   unsubscribeAgent: (id) => request(`/agents/${id}/subscribe`, { method: 'DELETE' }),
+
+  // Marketplace listing — accepts { q, model, tools, sort, minRating, page, pageSize }
+  listMarketplace: (params = {}) => {
+    const qs = new URLSearchParams();
+    if (params.q) qs.set('q', params.q);
+    if (params.model) qs.set('model', params.model);
+    if (params.tools?.length) qs.set('tools', params.tools.join(','));
+    if (params.sort) qs.set('sort', params.sort);
+    if (params.minRating > 0) qs.set('minRating', String(params.minRating));
+    if (params.page > 1) qs.set('page', String(params.page));
+    if (params.pageSize) qs.set('pageSize', String(params.pageSize));
+    const path = `/agents/marketplace${qs.toString() ? `?${qs}` : ''}`;
+    return request(path);
+  },
+
+  // Rating — PUT /agents/:id/rating  { rating: 1-5 }
+  rateAgent: (id, rating) =>
+    request(`/agents/${id}/rating`, { method: 'PUT', body: JSON.stringify({ rating }) }),
+
+  // Favorite / unfavorite
+  favoriteAgent: (id) => request(`/agents/${id}/favorite`, { method: 'POST' }),
+  unfavoriteAgent: (id) => request(`/agents/${id}/favorite`, { method: 'DELETE' }),
+
+  // Fork
+  forkAgent: (id) => request(`/agents/${id}/fork`, { method: 'POST' }),
+
+  // Bust the cache for a specific marketplace path after a write
+  bustMarketplaceCache: () => {
+    for (const key of _cache.keys()) {
+      if (key.startsWith('/agents/marketplace') || key === '/agents/marketplace') {
+        _cache.delete(key);
+      }
+    }
+  },
   listAgentVersions: (id) => request(`/agents/${id}/versions`),
   getAgentVersion: (id, versionNo) => request(`/agents/${id}/versions/${versionNo}`),
   restoreAgentVersion: (id, versionNo) => request(`/agents/${id}/versions/${versionNo}/restore`, { method: 'POST' }),

@@ -43,6 +43,7 @@ architecture rationale and migration history.
 - **Custom skills** — create reusable skill definitions (label, description, instruction) and attach them to any agent.
 - **Markdown export** — click **Export MD** in the top bar to download a Markdown spec of the agent's full configuration. The button is always visible (no login required) and enabled as soon as the agent has any content.
 - **Agents page** — browse all public agents in the **Agents** tab (no login required). Sign in to access **My Agents**, which shows agents you own plus any public agents you have subscribed to. Owned agents display an **Owned** badge; subscriptions show a **Subscribed** badge.
+- **Marketplace** — a dedicated discovery surface reachable from the **Marketplace** nav item. Supports full-text search (debounced), sort (recent / popular / top-rated / most-forked), tool multi-select filter, and minimum star-rating slider. Results paginate via a **Load more** button. Cards display the owner name, tool badges, average star rating, fork count, and favorite count. Authenticated non-owners can rate agents (1–5 stars); the displayed average updates immediately without a page reload. Subscribe, Favorite, and Fork actions are hidden for the agent's own owner.
 - **Saved agents** — agents are stored in PostgreSQL; reload or download them from the top bar at any time.
 
 ## Requirements
@@ -153,6 +154,7 @@ agent-builder/
             ├── SkillsBar.jsx
             ├── SkillsPage.jsx
             ├── AgentsPage.jsx
+            ├── MarketplacePage.jsx
             ├── ChatPanel.jsx
             ├── TraceLog.jsx
             └── ErrorBoundary.jsx
