@@ -1,21 +1,60 @@
-# Docker Setup
+# Local Setup Guide
 
-Local development environment using Docker Compose — PostgreSQL 14, MongoDB 7.0, the AgentForge backend API, and the React frontend served by nginx.
+Everything you need to run AgentForge locally — from zero to a fully seeded app in a few commands.
+
+---
+
+## TL;DR (Docker, all-in-one)
+
+```bash
+# 1. Copy env file and set a JWT secret
+cp .env.local.example .env.local
+# Edit .env.local — change JWT_SECRET to any long random string
+
+# 2. Start all four services (builds images on first run)
+docker compose --env-file .env.local up -d --build
+
+# 3. Seed MongoDB reference data (skills + persona categories)
+# macOS / Linux
+MONGO_URI="mongodb://admin:adminpassword@localhost:27017/agentbuilder?authSource=admin" \
+  node backend/scripts/migrate-skills-personas.js
+
+# Windows (PowerShell)
+$env:MONGO_URI = "mongodb://admin:adminpassword@localhost:27017/agentbuilder?authSource=admin"
+node backend/scripts/migrate-skills-personas.js
+
+# 4. Open the app
+# http://localhost:3000  — sign up for a new account to get started
+```
+
+That's it. Everything else (schema, indexes, public seed agents, templates) is automatic.
+
+---
 
 ## Prerequisites
 
-- [Docker Desktop](https://www.docker.com/products/docker-desktop/) (Windows / Mac) or Docker Engine + Compose plugin (Linux)
-- Docker Compose v2 (`docker compose`) or v1 (`docker-compose`) — both work
+| Requirement | Notes |
+|---|---|
+| [Docker Desktop](https://www.docker.com/products/docker-desktop/) | Windows / macOS. Linux: Docker Engine + Compose plugin. |
+| Node.js 18+ | Only needed for the MongoDB seed script (step 3 above) and local dev mode. |
+| Ports free: 3000, 4000, 5432, 27017 | Override in `.env.local` if any are in use. |
 
-## Quick Start
+---
 
-### 1. Configure environment
+## Step-by-step Docker Setup
+
+### 1. Configure the environment
 
 ```bash
 cp .env.local.example .env.local
 ```
 
-Edit `.env.local` if you need non-default credentials or ports.
+Open `.env.local` and set `JWT_SECRET` to any long random string. Everything else works with the defaults.
+
+Generate a secret quickly:
+```bash
+node -e "console.log(require('crypto').randomBytes(64).toString('hex'))"
+```
 
 ### 2. Start all services
 
@@ -23,67 +62,202 @@ Edit `.env.local` if you need non-default credentials or ports.
 docker compose --env-file .env.local up -d --build
 ```
 
-This starts PostgreSQL, MongoDB, the backend API, and the React frontend. On first run, Docker builds both application images and both databases are initialized automatically (schema + indexes via the init scripts).
+This starts four containers. On the very first run it also:
 
-> **Windows note:** Docker Desktop installs the CLI to `C:\Program Files\Docker\Docker\resources\bin\`. If `docker` is not found in your shell, either open a new terminal after Docker Desktop has started, or add that path to your `PATH` manually.
+- Builds the backend and frontend images from source
+- Runs all PostgreSQL init scripts in order (schema → indexes → seed agents)
+- Runs MongoDB init scripts (collections → agent templates)
 
-### 3. Verify all containers are healthy
+Wait ~30–60 seconds on first run. Check status:
 
 ```bash
 docker compose ps
 ```
 
-All four services (`postgres`, `mongodb`, `backend`, `frontend`) should show `(healthy)` or `running` status. The backend waits for both databases to pass health checks before it starts, and the frontend waits for the backend — this can take ~30–60 seconds on the first run.
+All four services should show `healthy` or `running`. Then verify the backend:
 
 ```bash
-# Quick API check
+# macOS / Linux
 curl http://localhost:4000/api/health
-# → {"ok": true}
+# → {"ok":true}
 
-# Open the app in a browser
-open http://localhost:3000   # macOS
-start http://localhost:3000  # Windows
+# Windows (PowerShell)
+Invoke-RestMethod -Uri http://localhost:4000/api/health
 ```
 
-### 4. Seed reference data into MongoDB
+### 3. Seed MongoDB reference data
 
-Built-in skills and persona categories live in MongoDB and must be seeded once after the first start. The `scripts/` directory is not included in the Docker image, so run the seed script from the host:
+The `scripts/` directory is not copied into the Docker image, so this one step runs from the host:
 
+**macOS / Linux:**
 ```bash
-# From the project root
 MONGO_URI="mongodb://admin:adminpassword@localhost:27017/agentbuilder?authSource=admin" \
   node backend/scripts/migrate-skills-personas.js
 ```
 
-On Windows (PowerShell):
-
+**Windows (PowerShell):**
 ```powershell
 $env:MONGO_URI = "mongodb://admin:adminpassword@localhost:27017/agentbuilder?authSource=admin"
 node backend/scripts/migrate-skills-personas.js
 ```
 
-Expected output: 15 built-in skills and 11 persona categories inserted. Re-running is safe — existing documents are skipped.
+Expected output:
+```
+Connected to database: agentbuilder
+  [insert] builtin_skill "caveman" (Caveman)
+  ... (15 skills total)
+  [insert] persona_category "technology" (Technology, 5 personas)
+  ... (11 categories total)
+Migration complete.
+```
 
-> **When to re-run:** Only on first start, or after `docker compose down -v` wipes the MongoDB volume.
+Re-running is safe — existing documents are skipped.
+
+### 4. Open the app
+
+```
+http://localhost:3000
+```
+
+Click **Sign up** to create your account. The Marketplace and Skills pages are pre-populated.
+
+---
+
+## What Gets Seeded Automatically
+
+On first `docker compose up`, both databases initialize without any extra steps:
+
+### PostgreSQL (via `backend/db/init/`)
+
+Scripts run in filename order. All are idempotent (`IF NOT EXISTS`, `ON CONFLICT DO NOTHING`).
+
+| File | What it does |
+|---|---|
+| `01_schema.sql` | Core tables: `users`, `agents`, `custom_skills`, `subscriptions`, `agent_versions` |
+| `02_performance_indexes.sql` | Composite indexes for list + filter queries |
+| `03_users.sql` | Users table with email normalization |
+| `04_ownership.sql` | Agent ownership columns |
+| `05_subscriptions.sql` | Subscriptions join table |
+| `06_agent_versions.sql` | Version history table |
+| `07_marketplace.sql` | Full-text search vector, fork/favorite counters, search trigger |
+| `08_ratings.sql` | Agent rating columns |
+| `09_favorites.sql` | Favorites join table |
+| `10_agent_events.sql` | Analytics event log |
+| `11_tags.sql` | Tags JSONB column + GIN index |
+| `12_seed_agents.sql` | **20 public seed agents** spanning research, security, testing, efficiency, education, and more |
+
+### MongoDB (via `backend/db/mongo-init/`)
+
+| File | What it does |
+|---|---|
+| `01_init.js` | Collections: `user_preferences`, `workspace_state`, `draft_agents` with indexes |
+| `02_seed_templates.js` | 5 starter agent templates (Researcher, Code Assistant, Data Analyst, Customer Service, Blank) |
+
+### Manual seed (step 3 above)
+
+| Script | What it does |
+|---|---|
+| `backend/scripts/migrate-skills-personas.js` | 15 built-in skills + 11 persona categories (35 personas) in MongoDB |
+
+> **After `docker compose down -v`** (volume wipe): all auto-seeds replay on the next `up`. Re-run the manual seed script once.
+
+---
+
+## Dev Mode (Hot Reload)
+
+Run only the databases in Docker and the backend + frontend directly on your machine for fast iteration:
+
+```bash
+# Terminal 1 — start only the databases
+docker compose --env-file .env.local up -d postgres mongodb
+
+# Terminal 2 — backend with file-watch restart
+cd backend
+npm install
+npm run dev        # starts on http://localhost:4000
+
+# Terminal 3 — frontend dev server with HMR
+cd frontend
+npm install
+npm run dev        # starts on http://localhost:5173
+
+# Seed MongoDB (same as step 3 above — only needed once)
+$env:MONGO_URI = "mongodb://admin:adminpassword@localhost:27017/agentbuilder?authSource=admin"
+node backend/scripts/migrate-skills-personas.js
+```
+
+The Vite dev server (`localhost:5173`) proxies all `/api/*` requests to the backend at `localhost:4000` — no CORS config needed.
+
+The backend uses `backend/.env` for local DB connection strings — the defaults connect to the Docker databases on `localhost`.
 
 ---
 
 ## Common Commands
 
-| Command | Description |
-|---------|-------------|
-| `docker compose --env-file .env.local up -d` | Start all services in the background |
-| `docker compose --env-file .env.local up` | Start with logs attached |
-| `docker compose down` | Stop and remove containers (data volumes preserved) |
-| `docker compose down -v` | Stop containers **and delete data volumes** |
-| `docker compose logs -f` | Stream logs from all services |
-| `docker compose logs -f backend` | Stream backend logs only |
-| `docker compose logs -f frontend` | Stream frontend (nginx) logs only |
-| `docker compose ps` | Show running service status |
-| `docker compose build backend` | Rebuild the backend image after code changes |
-| `docker compose build frontend` | Rebuild the frontend image after UI changes |
-| `docker compose restart backend` | Restart only the backend service |
-| `docker compose restart frontend` | Restart only the frontend service |
+| Command | What it does |
+|---|---|
+| `docker compose --env-file .env.local up -d --build` | Build images and start all services |
+| `docker compose --env-file .env.local up -d` | Start without rebuilding |
+| `docker compose ps` | Show service status |
+| `docker compose logs -f backend` | Stream backend logs |
+| `docker compose logs -f` | Stream all logs |
+| `docker compose restart backend` | Restart backend only |
+| `docker compose build backend` | Rebuild backend image after source changes |
+| `docker compose build frontend` | Rebuild frontend image after source changes |
+| `docker compose down` | Stop containers, keep volumes |
+| `docker compose --env-file .env.local down -v` | Stop containers and **delete all data** |
+
+### Reset everything and start fresh
+
+```bash
+docker compose --env-file .env.local down -v
+docker compose --env-file .env.local up -d --build
+
+# Re-run MongoDB seed (PostgreSQL seeds replay automatically)
+$env:MONGO_URI = "mongodb://admin:adminpassword@localhost:27017/agentbuilder?authSource=admin"
+node backend/scripts/migrate-skills-personas.js
+```
+
+### Connect to databases directly
+
+```bash
+# PostgreSQL
+docker compose --env-file .env.local exec postgres \
+  psql -U agentforge -d agentforge
+
+# MongoDB shell
+docker compose --env-file .env.local exec mongodb \
+  mongosh --username admin --password adminpassword \
+  --authenticationDatabase admin agentbuilder
+```
+
+---
+
+## Environment Variables
+
+All variables have defaults in `docker-compose.yml`. Override any of them in `.env.local`.
+
+| Variable | Default | Description |
+|---|---|---|
+| `JWT_SECRET` | _(required)_ | Sign auth tokens — set to a long random string |
+| `FRONTEND_PORT` | `3000` | Host port for the React app |
+| `PORT` | `4000` | Backend API port |
+| `POSTGRES_PORT` | `5432` | PostgreSQL host port |
+| `POSTGRES_DB` | `agentforge` | Database name |
+| `POSTGRES_USER` | `agentforge` | Database user |
+| `POSTGRES_PASSWORD` | `agentforge` | Database password |
+| `POSTGRES_POOL_MAX` | `10` | Max PG connection pool size |
+| `POSTGRES_POOL_MIN` | `2` | Min idle PG connections |
+| `MONGO_PORT` | `27017` | MongoDB host port |
+| `MONGO_DB` | `agentbuilder` | MongoDB database name |
+| `MONGO_ROOT_USERNAME` | `admin` | MongoDB root user |
+| `MONGO_ROOT_PASSWORD` | `adminpassword` | MongoDB root password |
+| `QUERY_TIMEOUT_MS` | `5000` | Per-query timeout in ms |
+| `SLOW_QUERY_THRESHOLD_MS` | `1000` | Log queries slower than this |
+
+**Port conflict?** Change the host-side port (`FRONTEND_PORT=3001`, `POSTGRES_PORT=5433`, etc.) in `.env.local`.
+
+> Never commit `.env.local` — it is gitignored.
 
 ---
 
@@ -91,222 +265,68 @@ Expected output: 15 built-in skills and 11 persona categories inserted. Re-runni
 
 ### PostgreSQL (`postgres`)
 
-| Setting | Default |
-|---------|---------|
-| Image | `postgres:14-alpine` |
-| Port | `5432` (host) → `5432` (container) |
-| Database | `agentforge` |
-| User | `agentforge` |
-| Password | `agentforge` |
-| Volume | `postgres_data` |
-
-**Init script:** [backend/db/init/01_schema.sql](../backend/db/init/01_schema.sql) — creates `agents` and `custom_skills` tables with indexes. Runs once on first container start.
-
-Connect from the host:
-```bash
-psql postgresql://agentforge:agentforge@localhost:5432/agentforge
-```
+- **Image:** `postgres:14-alpine`
+- **Host port:** `5432` (configurable via `POSTGRES_PORT`)
+- **Volume:** `postgres_data`
+- **Init:** `backend/db/init/` — all `.sql` files run once on first volume start
 
 ### MongoDB (`mongodb`)
 
-| Setting | Default |
-|---------|---------|
-| Image | `mongo:7.0` |
-| Port | `27017` (host) → `27017` (container) |
-| Root user | `admin` / `adminpassword` |
-| Database | `agentbuilder` |
-| Volume | `mongo_data` |
-
-**Init script:** [backend/db/mongo-init/01_init.js](../backend/db/mongo-init/01_init.js) — creates `user_preferences`, `workspace_state`, and `draft_agents` collections with indexes. Runs once on first container start.
-
-**Seeded collections** (populated via `migrate-skills-personas.js` — see Quick Start step 4):
-- `builtin_skills` — 15 built-in skill modifiers (Caveman, Formal Mode, ELI5, etc.)
-- `persona_categories` — 11 categories containing 35 agent personas (Technology, Writing, Business, etc.)
-
-Connect from the host:
-```bash
-mongosh "mongodb://admin:adminpassword@localhost:27017/agentbuilder?authSource=admin"
-```
+- **Image:** `mongo:7.0`
+- **Host port:** `27017` (configurable via `MONGO_PORT`)
+- **Volume:** `mongo_data`
+- **Init:** `backend/db/mongo-init/` — all `.js` files run once on first volume start
 
 ### Backend (`backend`)
 
-| Setting | Default |
-|---------|---------|
-| Build context | `./backend` |
-| Port | `4000` (host) → `4000` (container) |
-| Health endpoint | `GET /api/health` |
-
-The backend waits for both databases to pass their health checks before starting. Inside the Docker network, it connects to `postgres:5432` and `mongodb:27017`.
+- **Build:** `backend/Dockerfile`
+- **Host port:** `4000`
+- **Health check:** `GET /api/health` → `{"ok":true}`
+- Waits for both databases to be healthy before starting
 
 ### Frontend (`frontend`)
 
-| Setting | Default |
-|---------|---------|
-| Build context | `./frontend` |
-| Port | `3000` (host) → `80` (container) |
-| Served by | `nginx:alpine` |
-| Config | `frontend/nginx.conf` |
-
-The frontend is built from source during `docker compose build` (multi-stage build: Node 20 compiles the Vite app, nginx serves the `dist/` output). nginx proxies all `/api/*` requests to `http://backend:4000/api/` and falls back all other routes to `index.html` for React client-side routing.
-
-The frontend waits for the backend health check before starting.
-
----
-
-## Data Persistence
-
-Named volumes keep data between `docker-compose down` / `up` cycles:
-
-- `postgres_data` — PostgreSQL data directory
-- `mongo_data` — MongoDB data directory
-
-To wipe all data and start fresh:
-```bash
-docker compose down -v
-docker compose --env-file .env.local up -d --build
-```
-
-After wiping, re-run the seed script (Quick Start step 4) — the MongoDB volume is empty so `builtin_skills` and `persona_categories` need to be repopulated.
-
----
-
-## Networking
-
-All services share the internal bridge network `agentforge-net`. Service names act as hostnames:
-
-- `postgres` — PostgreSQL
-- `mongodb` — MongoDB
-- `backend` — Express API
-- `frontend` — nginx serving the React build
-
-Only the ports listed above are exposed to the host machine. The frontend talks to the backend via the internal network (`http://backend:4000`), not through the host.
-
----
-
-## Development Workflow
-
-### Running databases only (backend + frontend on the host)
-
-If you want hot-reload for both the backend and frontend while keeping databases in Docker:
-
-```bash
-# Start only the databases
-docker compose --env-file .env.local up -d postgres mongodb
-
-# Terminal 1 — backend with hot-reload (uses localhost for DB hosts)
-cd backend && npm run dev
-
-# Terminal 2 — frontend dev server with Vite proxy to localhost:4000
-cd frontend && npm run dev
-```
-
-The default `backend/.env.example` uses `localhost` for both database hosts, which works when the backend is running directly on the host. Vite's dev proxy (configured in `vite.config.js`) forwards `/api/*` to `http://localhost:4000`.
-
-### Restarting the backend without Docker
-
-If Docker is not available, stop the existing Node process and restart the backend directly:
-
-**Find and kill the process on port 4000 (PowerShell):**
-```powershell
-# Find the PID holding port 4000
-Get-NetTCPConnection -LocalPort 4000 | Select-Object -ExpandProperty OwningProcess
-
-# Kill it (replace <PID> with the value above)
-Stop-Process -Id <PID> -Force
-```
-
-**Start the backend (PowerShell — from `backend/`):**
-```powershell
-# With hot-reload (recommended for development)
-node --watch src/server.js
-
-# Or via npm
-npm run dev
-```
-
-**Smoke-test after restart:**
-```powershell
-# Tool catalog (no DB required)
-Invoke-RestMethod -Uri "http://localhost:4000/api/tools"
-
-# DB-backed health (returns {"ok":false} if PostgreSQL is not running)
-Invoke-RestMethod -Uri "http://localhost:4000/api/health"
-
-# Import endpoint (stateless — no DB required)
-$body = '{"format":"json","content":"{\"name\":\"Test\",\"tools\":[\"web_search\"]}"}'
-Invoke-RestMethod -Uri "http://localhost:4000/api/agents/import" -Method POST -Body $body -ContentType "application/json"
-```
-
-The server starts and serves requests even without PostgreSQL/MongoDB — DB-backed endpoints return `503` until the databases are reachable, but stateless endpoints (`/api/tools`, `/api/agents/import`) work immediately.
-
-### Rebuilding images after code changes
-
-After changing backend source files or `package.json`:
-```bash
-docker compose build backend
-docker compose --env-file .env.local up -d backend
-```
-
-After changing frontend source files:
-```bash
-docker compose build frontend
-docker compose --env-file .env.local up -d frontend
-```
-
-To rebuild everything at once:
-```bash
-docker compose --env-file .env.local up -d --build
-```
-
----
-
-## Environment Variables
-
-All variables have sensible defaults in `docker-compose.yml`. Override any of them in `.env.local`.
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `FRONTEND_PORT` | `3000` | Host port for the frontend (nginx) |
-| `PORT` | `4000` | Backend port |
-| `POSTGRES_PORT` | `5432` | PostgreSQL host port |
-| `POSTGRES_DB` | `agentforge` | Database name |
-| `POSTGRES_USER` | `agentforge` | DB user |
-| `POSTGRES_PASSWORD` | `agentforge` | DB password |
-| `POSTGRES_POOL_MAX` | `10` | Max PG pool connections |
-| `POSTGRES_POOL_MIN` | `2` | Min PG pool connections |
-| `MONGO_PORT` | `27017` | MongoDB host port |
-| `MONGO_DB` | `agentbuilder` | MongoDB database name |
-| `MONGO_ROOT_USERNAME` | `admin` | MongoDB root username |
-| `MONGO_ROOT_PASSWORD` | `adminpassword` | MongoDB root password |
-| `QUERY_TIMEOUT_MS` | `5000` | PG query timeout |
-| `SLOW_QUERY_THRESHOLD_MS` | `1000` | Slow query log threshold |
-
----
-
-## Credential Management
-
-- **Never commit** `.env.local` — it is listed in `.gitignore`.
-- Rotate credentials by updating `.env.local`, running `docker-compose down -v`, then starting fresh.
-- For production deployments, use a secrets manager (e.g., AWS Secrets Manager, Doppler) instead of `.env` files.
+- **Build:** `frontend/Dockerfile` (multi-stage: Vite → nginx)
+- **Host port:** `3000`
+- nginx proxies `/api/*` → `http://backend:4000` internally
+- All other routes fall back to `index.html` for React client-side routing
+- Waits for the backend to be healthy before starting
 
 ---
 
 ## Troubleshooting
 
-**Port already in use**
-Change the host port in `.env.local` (e.g. `POSTGRES_PORT=5433`, `FRONTEND_PORT=3001`) and restart.
-
-**Backend fails to connect on first run**
-The backend waits for database health checks, but on very slow machines the `start_period` may need to be increased in `docker-compose.yml`. Check logs with `docker-compose logs backend`.
-
-**MongoDB init script did not run**
-Init scripts only execute when the data volume is empty (first start). Wipe the volume with `docker-compose down -v` to re-run them.
-
-**Permission denied on Linux**
-You may need to prefix commands with `sudo` or [add your user to the `docker` group](https://docs.docker.com/engine/install/linux-postinstall/).
-
 **`docker` not found on Windows**
-Docker Desktop installs the CLI to `C:\Program Files\Docker\Docker\resources\bin\`. Open a new terminal after Docker Desktop has fully started, or add that directory to your `PATH`. Alternatively, use the full path: `& "C:\Program Files\Docker\Docker\resources\bin\docker.exe" compose ...`
+Docker Desktop installs the CLI to `C:\Program Files\Docker\Docker\resources\bin\`. Open a new terminal after Docker Desktop has started, or add that path to `PATH`.
+
+**Port already in use**
+Change the conflicting port in `.env.local` (e.g. `FRONTEND_PORT=3001`) and restart.
+
+**Backend stuck in `starting` / health check failing**
+On slow machines, increase `start_period` in `docker-compose.yml`. Check logs:
+```bash
+docker compose logs backend
+```
 
 **Seed script `Cannot find module` error**
-The `scripts/` directory is not copied into the Docker image. Run `migrate-skills-personas.js` from the host (not via `docker exec`), as shown in Quick Start step 4.
+The `scripts/` directory is not in the Docker image. Run `migrate-skills-personas.js` from the host, not via `docker exec`.
+
+**No skills or personas in the app after a volume wipe**
+Re-run the MongoDB seed script (step 3). PostgreSQL seed agents come back automatically.
+
+**MongoDB init script did not run**
+Init scripts only execute when the data volume is empty. Wipe and restart:
+```bash
+docker compose --env-file .env.local down -v
+docker compose --env-file .env.local up -d --build
+```
+
+**`JWT_SECRET must be set in .env.local` error**
+Copy the example file and set `JWT_SECRET`:
+```bash
+cp .env.local.example .env.local
+# then edit JWT_SECRET
+```
+
+**Permission denied on Linux**
+Add your user to the `docker` group or prefix commands with `sudo`. See the [Docker post-install docs](https://docs.docker.com/engine/install/linux-postinstall/).

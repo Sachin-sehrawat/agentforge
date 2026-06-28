@@ -99,7 +99,7 @@ function AgentCard({ agent, onOpen, onDownload, onDelete, onSubscribe, onToggleV
   const hasStats = toolCount + skillCount + instrCount > 0;
 
   return (
-    <div className={`agent-card${isSelected ? ' agent-card--selected' : ''}`}>
+    <div className={`agent-card${onToggleSelect ? ' agent-card--selectable' : ''}${isSelected ? ' agent-card--selected' : ''}`}>
       {onToggleSelect && (
         <label className="agent-card-checkbox-wrap" onClick={(e) => e.stopPropagation()}>
           <input

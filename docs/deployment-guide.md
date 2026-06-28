@@ -74,7 +74,8 @@ This will:
 - Pull `postgres:14-alpine`, `mongo:7.0`, and `nginx:alpine` images
 - Build the backend image from `backend/Dockerfile`
 - Build the frontend image from `frontend/Dockerfile` (multi-stage: Vite build → nginx)
-- Run `backend/db/init/01_schema.sql` on PostgreSQL (first start only)
+- Run all PostgreSQL init scripts (`01_schema.sql` → `12_seed_agents.sql`) on first volume start — schema, indexes, and 20 public seed agents
+- Run MongoDB init scripts (`01_init.js`, `02_seed_templates.js`) on first volume start — collections and agent templates
 - Start all four services with health checks
 
 ### 3. Verify services are healthy
@@ -101,13 +102,25 @@ curl -s -o /dev/null -w "%{http_code}" http://localhost:3000
 
 The application is accessible at **`http://localhost:3000`** (or the IP/domain of your host).
 
-### 4. (Optional) Seed MongoDB fixture data
+### 4. Seed MongoDB reference data
 
+Built-in skills and persona categories live in MongoDB and must be seeded once after the first start. The `scripts/` directory is not included in the Docker image, so run this from the host:
+
+**Linux / macOS:**
 ```bash
-docker compose exec backend node db/mongo-seed.js
+MONGO_URI="mongodb://admin:adminpassword@localhost:27017/agentbuilder?authSource=admin" \
+  node backend/scripts/migrate-skills-personas.js
 ```
 
-This loads sample preferences and workspace state for local testing. Skip in production unless you want demonstration data.
+**Windows (PowerShell):**
+```powershell
+$env:MONGO_URI = "mongodb://admin:adminpassword@localhost:27017/agentbuilder?authSource=admin"
+node backend/scripts/migrate-skills-personas.js
+```
+
+This inserts 15 built-in skills and 11 persona categories (35 personas). Re-running is safe — existing documents are skipped.
+
+> The 20 public seed agents (research, security, testing, efficiency, etc.) are seeded automatically into PostgreSQL by `12_seed_agents.sql` on first start — no extra step needed.
 
 ### 5. (Optional) Migrate existing SQLite data
 
@@ -129,13 +142,20 @@ See [migration-guide.md](migration-guide.md) for full instructions and [migratio
 
 ### PostgreSQL
 
-The schema initializes automatically via `backend/db/init/01_schema.sql` when the Docker volume is empty (first start). The init script is idempotent — it uses `CREATE TABLE IF NOT EXISTS` and `CREATE INDEX IF NOT EXISTS`, so re-running it is safe.
+All scripts in `backend/db/init/` run automatically in filename order when the Docker volume is empty (first start). They are fully idempotent (`CREATE TABLE IF NOT EXISTS`, `ON CONFLICT DO NOTHING`).
 
-If you need to re-initialize a running container manually:
+| File | Purpose |
+|---|---|
+| `01_schema.sql` | Core tables and indexes |
+| `02–11_*.sql` | Performance indexes, marketplace columns, ratings, favorites, tags |
+| `12_seed_agents.sql` | 20 public seed agents across research, security, testing, and more |
+
+To re-apply a specific script against a running container:
 
 ```bash
-docker compose exec postgres psql -U agentforge -d agentforge \
-  -f /docker-entrypoint-initdb.d/01_schema.sql
+# Example: re-run the seed agents script
+Get-Content backend/db/init/12_seed_agents.sql | \
+  docker compose exec -T postgres psql -U agentforge -d agentforge
 ```
 
 ### MongoDB
