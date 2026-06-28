@@ -155,7 +155,7 @@ Returns the catalog of built-in tools available to agents.
 
 ## Agents
 
-Agent objects include `ownerId` (the user ID that created it) and `visibility` (`"public"` or `"private"`).
+Agent objects include `ownerId` (the user ID that created it), `visibility` (`"public"` or `"private"`), `forkedFrom` (source agent UUID or `null`), and `forkCount` (number of times this agent has been forked).
 
 ### `GET /api/agents` _(legacy)_
 
@@ -330,6 +330,8 @@ Returns the agent if it is public, or if the requester is the owner.
   "instructions": ["Always cite sources"],
   "ownerId": "cccccccc-0000-0000-0000-000000000001",
   "visibility": "public",
+  "forkedFrom": null,
+  "forkCount": 3,
   "createdAt": "2024-01-01T00:00:00.000Z",
   "updatedAt": "2024-01-01T00:00:00.000Z"
 }
@@ -493,9 +495,9 @@ Unsubscribes the authenticated user from an agent. Returns 404 when the subscrip
 
 ---
 
-### `PUT /api/agents/:id/rating` _(issue #90)_
+### `PUT /api/agents/:id/rating`
 
-Submits or replaces the authenticated user's star rating for a public agent. Ratings are 1–5 integers; submitting again overwrites the previous value. The endpoint returns the updated aggregate so the UI can update the displayed average without a full reload.
+Submits or replaces the authenticated user's star rating for a public agent. Ratings are 1–5 integers; submitting again overwrites the previous value. Aggregates (`rating_sum`, `rating_count`) are updated on the `agents` row in the same transaction.
 
 **Headers**
 
@@ -513,8 +515,9 @@ Submits or replaces the authenticated user's star rating for a public agent. Rat
 
 ```json
 {
-  "avgRating": 4.1,
-  "ratingCount": 15
+  "agentId": "550e8400-e29b-41d4-a716-446655440000",
+  "userId": "cccccccc-0000-0000-0000-000000000001",
+  "rating": 4
 }
 ```
 
@@ -522,11 +525,25 @@ Submits or replaces the authenticated user's star rating for a public agent. Rat
 
 **Response 401** — missing or invalid token.
 
-**Response 403** — `{ "error": "Cannot rate your own agent" }`
+**Response 400** — `{ "error": "Cannot rate your own agent" }` (self-rating blocked at API layer).
+
+**Response 403** — `{ "error": "Forbidden" }` — agent is private and not owned by caller.
 
 **Response 404** — `{ "error": "Agent not found" }`
 
-> **Status:** backend implementation tracked in issue #90. The frontend already calls this endpoint; until it lands the call will return 404 and the UI silently ignores the error.
+---
+
+### `DELETE /api/agents/:id/rating`
+
+Removes the authenticated user's rating for an agent. Aggregates are recomputed in the same transaction.
+
+**Headers** — `Authorization: Bearer <token>`
+
+**Response 204** — no body.
+
+**Response 401** — missing or invalid token.
+
+**Response 404** — `{ "error": "Agent not found" }` or `{ "error": "Rating not found" }`.
 
 ---
 
@@ -560,21 +577,51 @@ Removes a public agent from the authenticated user's favorites.
 
 ---
 
-### `POST /api/agents/:id/fork` _(issue #92)_
+### `POST /api/agents/:id/fork`
 
-Creates a private copy of a public agent owned by the authenticated user. The original agent's `fork_count` is incremented. The response is the newly created agent object.
+Creates an independent private copy of a public agent (or any agent owned by the caller) into the authenticated user's workspace. The source agent's `fork_count` is incremented atomically in the same transaction. The fork is a full snapshot — later edits to the source never affect the fork.
 
-**Headers** — `Authorization: Bearer <token>`
+**Headers**
 
-**Response 201** — agent object (same shape as `POST /api/agents`, with `visibility: "private"` and the caller's `ownerId`).
+| Header | Value |
+|---|---|
+| `Authorization` | `Bearer <token>` |
+
+**Rules**
+- The source must be `visibility: "public"` **or** owned by the caller. Any other private agent returns 403.
+- Forking your own agent is allowed (useful for branching experiments).
+- Skill IDs that are private and not owned by the caller are kept in the fork as-is but reported in `skillWarnings[]` so the caller knows they may not be resolvable.
+
+**Response 201**
+
+```json
+{
+  "id": "dddddddd-0000-0000-0000-000000000001",
+  "name": "Research Agent (fork)",
+  "persona": "A helpful research assistant",
+  "systemPrompt": "You are a helpful research assistant.",
+  "model": "claude-sonnet-4-6",
+  "tools": ["web_search", "calculator"],
+  "positions": { "web_search": { "x": 100, "y": 200 } },
+  "skills": ["skill-uuid-1"],
+  "instructions": ["Always cite sources"],
+  "ownerId": "cccccccc-0000-0000-0000-000000000001",
+  "visibility": "private",
+  "forkedFrom": "550e8400-e29b-41d4-a716-446655440000",
+  "forkCount": 0,
+  "createdAt": "2026-06-28T00:00:00.000Z",
+  "updatedAt": "2026-06-28T00:00:00.000Z",
+  "skillWarnings": []
+}
+```
+
+`skillWarnings` is always present. It is an empty array when all referenced skill IDs are public or owned by the caller; otherwise it contains the unresolvable skill UUIDs.
 
 **Response 401** — missing or invalid token.
 
-**Response 403** — `{ "error": "Cannot fork your own agent" }`
+**Response 403** — `{ "error": "Forbidden" }` — source agent is private and not owned by the caller.
 
 **Response 404** — `{ "error": "Agent not found" }`
-
-> **Status:** backend implementation tracked in issue #92.
 
 ---
 

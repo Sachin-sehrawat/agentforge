@@ -789,6 +789,88 @@ app.delete('/api/agents/:id/rating', requireAuth, async (req, res) => {
   }
 });
 
+// --- Agent fork ------------------------------------------------------------
+// Creates an independent private copy of a public (or caller-owned) agent.
+// Provenance is recorded via forked_from; source fork_count increments atomically.
+
+app.post('/api/agents/:id/fork', requireAuth, async (req, res) => {
+  const sourceId = req.params.id;
+  const callerId = req.user.userId;
+
+  try {
+    const { newAgent, skillWarnings } = await withClient(async (client) => {
+      const { rows: sourceRows } = await client.query(
+        'SELECT * FROM agents WHERE id = $1',
+        [sourceId]
+      );
+      if (!sourceRows[0]) {
+        const e = new Error('Agent not found'); e.statusCode = 404; throw e;
+      }
+      const source = sourceRows[0];
+
+      if (source.visibility !== 'public' && source.owner_id !== callerId) {
+        const e = new Error('Forbidden'); e.statusCode = 403; throw e;
+      }
+
+      const skillIds = Array.isArray(source.skills) ? source.skills : [];
+      let warnings = [];
+      if (skillIds.length > 0) {
+        const { rows: accessible } = await client.query(
+          `SELECT id FROM custom_skills
+           WHERE id = ANY($1::uuid[])
+             AND (visibility = 'public' OR owner_id = $2)`,
+          [skillIds, callerId]
+        );
+        const accessibleSet = new Set(accessible.map((r) => r.id));
+        warnings = skillIds.filter((id) => !accessibleSet.has(id));
+      }
+
+      const newId = crypto.randomUUID();
+      const { rows: inserted } = await client.query(
+        `INSERT INTO agents
+           (id, name, persona, system_prompt, model, tools, positions, skills, instructions, visibility, owner_id, forked_from)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'private', $10, $11)
+         RETURNING *`,
+        [
+          newId,
+          source.name + ' (fork)',
+          source.persona,
+          source.system_prompt,
+          source.model,
+          JSON.stringify(source.tools ?? []),
+          JSON.stringify(source.positions ?? {}),
+          JSON.stringify(source.skills ?? []),
+          JSON.stringify(source.instructions ?? []),
+          callerId,
+          sourceId,
+        ]
+      );
+      const agent = inserted[0];
+
+      await client.query(
+        'UPDATE agents SET fork_count = fork_count + 1 WHERE id = $1',
+        [sourceId]
+      );
+
+      const canonical = toCanonical(agent);
+      const hash = crypto.createHash('sha256').update(JSON.stringify(canonical)).digest('hex');
+      await client.query(
+        `INSERT INTO agent_versions (agent_id, version_no, canonical_hash, snapshot, change_summary, created_by)
+         VALUES ($1, 1, $2, $3, $4, $5)`,
+        [newId, hash, JSON.stringify(canonical), `Forked from ${sourceId}`, callerId]
+      );
+
+      return { newAgent: agent, skillWarnings: warnings };
+    });
+
+    res.status(201).json({ ...serializeAgent(newAgent), skillWarnings });
+  } catch (err) {
+    if (err.statusCode === 404) return res.status(404).json({ error: err.message });
+    if (err.statusCode === 403) return res.status(403).json({ error: err.message });
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // --- Custom Skills CRUD ---------------------------------------------------
 
 // Legacy endpoint — returns public skills only (no auth required).
@@ -1486,6 +1568,8 @@ function serializeAgent(row) {
     instructions: row.instructions ?? [],
     ownerId: row.owner_id ?? null,
     visibility: row.visibility ?? 'private',
+    forkedFrom: row.forked_from ?? null,
+    forkCount: row.fork_count ?? 0,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
