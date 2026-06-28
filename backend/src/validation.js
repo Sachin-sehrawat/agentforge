@@ -266,6 +266,25 @@ export function validateDraftInput(body) {
 }
 
 // ---------------------------------------------------------------------------
+// Rating validation
+// ---------------------------------------------------------------------------
+
+/**
+ * Validates a rating payload for PUT /api/agents/:id/rating.
+ * Required: rating (integer 1–5).
+ */
+export function validateRatingInput(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return { error: 'Request body must be a JSON object' };
+  }
+  const rating = Number(body.rating);
+  if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
+    return { error: 'rating must be an integer between 1 and 5' };
+  }
+  return { data: { rating } };
+}
+
+// ---------------------------------------------------------------------------
 // Agent definition validation (shared ruleset)
 // ---------------------------------------------------------------------------
 
