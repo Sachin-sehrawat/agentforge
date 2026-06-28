@@ -5,8 +5,9 @@ import { useCallback, useRef } from 'react';
  *
  * @param {(updater: (prev: {x:number,y:number}) => {x:number,y:number}) => void} onMove
  * @param {number} zoom - current canvas zoom level; pointer movement is divided by this
+ * @param {() => void} [onDragEnd] - called once when the pointer is released
  */
-export function useNodeDrag(onMove, zoom = 1) {
+export function useNodeDrag(onMove, zoom = 1, onDragEnd) {
   const dragging = useRef(false);
 
   const onPointerDown = useCallback(
@@ -26,12 +27,13 @@ export function useNodeDrag(onMove, zoom = 1) {
         dragging.current = false;
         window.removeEventListener('pointermove', onPointerMove);
         window.removeEventListener('pointerup', onPointerUp);
+        onDragEnd?.();
       };
 
       window.addEventListener('pointermove', onPointerMove);
       window.addEventListener('pointerup', onPointerUp);
     },
-    [onMove, zoom]
+    [onMove, zoom, onDragEnd]
   );
 
   return onPointerDown;

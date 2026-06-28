@@ -13,6 +13,7 @@ export default function Canvas({
   agent,
   onChangeAgentField,
   onMoveTool,
+  onMoveToolEnd,
   onAddTool,
   onRemoveTool,
   onToggleSkill,
@@ -131,7 +132,7 @@ export default function Canvas({
     return () => el.removeEventListener('wheel', handleWheel);
   }, [onZoomPanChange]);
 
-  const handleAgentDrag = useNodeDrag((updater) => onMoveTool('agent', updater), zoom);
+  const handleAgentDrag = useNodeDrag((updater) => onMoveTool('agent', updater), zoom, onMoveToolEnd);
 
   // Pan by dragging canvas background (not a node or its children).
   const handlePanStart = useCallback(
@@ -224,6 +225,7 @@ export default function Canvas({
               pulsing={false}
               zoom={zoom}
               issues={toolIssuesMap[toolId] || []}
+              onMoveEnd={onMoveToolEnd}
             />
           );
         })}

@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useHistory } from './useHistory.jsx';
 import Topbar from './components/Topbar.jsx';
 import Sidebar from './components/Sidebar.jsx';
 import Canvas from './components/Canvas.jsx';
@@ -117,6 +118,17 @@ export default function App() {
   const isRestoredRef = useRef(false);
   const autosaveTimerRef = useRef(null);
   const canvasViewSaveTimerRef = useRef(null);
+
+  const { pushHistory, pushHistoryDebounced, undo, redo, canUndo, canRedo, clearHistory } = useHistory();
+
+  // Always-fresh ref to current agent — used by undo/redo and drag handlers
+  // without needing to include `agent` in every useCallback dep array.
+  const agentStateRef = useRef(agent);
+  useEffect(() => { agentStateRef.current = agent; }, [agent]);
+
+  // Pre-drag snapshot for coalescing node-move history entries.
+  const moveStartSnapshotRef = useRef(null);
+  const isMoveInProgressRef = useRef(false);
 
   const allSkills = useMemo(
     () => [
@@ -266,6 +278,7 @@ export default function App() {
   }
 
   const onChangeAgentField = (field, value) => {
+    pushHistoryDebounced(agentStateRef.current);
     setAgent((prev) => {
       const next = { ...prev, [field]: value };
       scheduleWorkspaceAutosave(next);
@@ -274,6 +287,11 @@ export default function App() {
   };
 
   const onMoveTool = (nodeId, updater) => {
+    // Capture pre-drag state on the first pointermove of each drag gesture.
+    if (!isMoveInProgressRef.current) {
+      moveStartSnapshotRef.current = agentStateRef.current;
+      isMoveInProgressRef.current = true;
+    }
     setAgent((prev) => {
       const current = prev.positions[nodeId] || (nodeId === 'agent' ? { x: 36, y: 36 } : defaultToolPosition(prev.tools.indexOf(nodeId)));
       const next = { ...prev, positions: { ...prev.positions, [nodeId]: updater(current) } };
@@ -282,7 +300,16 @@ export default function App() {
     });
   };
 
+  const onMoveToolEnd = useCallback(() => {
+    if (moveStartSnapshotRef.current) {
+      pushHistory(moveStartSnapshotRef.current);
+      moveStartSnapshotRef.current = null;
+    }
+    isMoveInProgressRef.current = false;
+  }, [pushHistory]);
+
   const onAddTool = (toolId, pos) => {
+    pushHistory(agentStateRef.current);
     setAgent((prev) => {
       if (prev.tools.includes(toolId)) {
         if (!pos) return prev;
@@ -302,6 +329,7 @@ export default function App() {
   };
 
   const onRemoveTool = (toolId) => {
+    pushHistory(agentStateRef.current);
     setAgent((prev) => {
       const positions = { ...prev.positions };
       delete positions[toolId];
@@ -312,6 +340,7 @@ export default function App() {
   };
 
   const onToggleSkill = (skillId) => {
+    pushHistory(agentStateRef.current);
     setAgent((prev) => {
       const skills = prev.skills.includes(skillId)
         ? prev.skills.filter((s) => s !== skillId)
@@ -323,6 +352,7 @@ export default function App() {
   };
 
   const onToggleInstruction = (persona) => {
+    pushHistory(agentStateRef.current);
     setAgent((prev) => {
       const instructions = prev.instructions.includes(persona.id)
         ? prev.instructions.filter((id) => id !== persona.id)
@@ -334,6 +364,7 @@ export default function App() {
   };
 
   const onNew = () => {
+    clearHistory();
     setAgent(DEFAULT_AGENT);
     setView('builder');
     setEmptyStateDismissed(false);
@@ -407,6 +438,7 @@ export default function App() {
     try {
       const result = await api.getAgent(id);
       const loaded = { ...DEFAULT_AGENT, ...result };
+      clearHistory();
       setAgent(loaded);
       setView('builder');
       api.saveWorkspaceData(WORKSPACE_ID, { agent: loaded });
@@ -435,6 +467,7 @@ export default function App() {
     const result = await api.forkAgent(id);
     api.bustMarketplaceCache();
     const loaded = { ...DEFAULT_AGENT, ...result };
+    clearHistory();
     setAgent(loaded);
     setView('builder');
     setEmptyStateDismissed(true);
@@ -611,10 +644,11 @@ export default function App() {
 
   const onRestoreVersion = useCallback((restoredAgent) => {
     const loaded = { ...DEFAULT_AGENT, ...restoredAgent };
+    clearHistory();
     setAgent(loaded);
     api.saveWorkspaceData(WORKSPACE_ID, { agent: loaded });
     refreshSavedAgents();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [clearHistory]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const onImportCommit = useCallback((parsedAgent) => {
     const positions = { ...(parsedAgent.positions ?? {}) };
@@ -623,11 +657,12 @@ export default function App() {
       if (!positions[toolId]) positions[toolId] = defaultToolPosition(index);
     });
     const draft = { ...DEFAULT_AGENT, ...parsedAgent, positions, id: null };
+    clearHistory();
     setAgent(draft);
     setView('builder');
     setImportOpen(false);
     api.saveWorkspaceData(WORKSPACE_ID, { agent: draft });
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [clearHistory]); // eslint-disable-line react-deps
 
   const onFromTemplate = useCallback(async (template) => {
     setTemplateGalleryOpen(false);
@@ -654,6 +689,41 @@ export default function App() {
       setValidationState({ errors, warnings, action: 'template', onConfirm: null });
     }
   }, [onImportCommit, onNew, buildValidationOpts]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleUndo = useCallback(() => {
+    const prev = undo(agentStateRef.current);
+    if (prev) {
+      setAgent(prev);
+      scheduleWorkspaceAutosave(prev);
+    }
+  }, [undo, scheduleWorkspaceAutosave]);
+
+  const handleRedo = useCallback(() => {
+    const next = redo(agentStateRef.current);
+    if (next) {
+      setAgent(next);
+      scheduleWorkspaceAutosave(next);
+    }
+  }, [redo, scheduleWorkspaceAutosave]);
+
+  // Ctrl/Cmd+Z = undo, Ctrl/Cmd+Y or Ctrl/Cmd+Shift+Z = redo.
+  // Skip when focus is inside a text input so the browser's native undo still works there.
+  useEffect(() => {
+    const handler = (e) => {
+      const mod = e.ctrlKey || e.metaKey;
+      if (!mod) return;
+      const isUndo = e.key === 'z' && !e.shiftKey;
+      const isRedo = e.key === 'y' || (e.key === 'z' && e.shiftKey);
+      if (!isUndo && !isRedo) return;
+      const tag = document.activeElement?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      e.preventDefault();
+      if (isUndo) handleUndo();
+      else handleRedo();
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [handleUndo, handleRedo]);
 
   const onCreateSkill = async (data) => {
     try {
@@ -858,6 +928,7 @@ export default function App() {
                   agent={agent}
                   onChangeAgentField={onChangeAgentField}
                   onMoveTool={onMoveTool}
+                  onMoveToolEnd={onMoveToolEnd}
                   onAddTool={onAddTool}
                   onRemoveTool={onRemoveTool}
                   onToggleSkill={onToggleSkill}
