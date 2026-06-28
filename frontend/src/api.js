@@ -250,6 +250,17 @@ export const api = {
   updateTemplate: (id, template) => request(`/templates/${id}`, { method: 'PUT', body: JSON.stringify(template) }),
   deleteTemplate: (id) => request(`/templates/${id}`, { method: 'DELETE' }),
 
+  // --- Agent Analytics (owner-only) ----------------------------------------
+  getAgentAnalytics: (id) => request(`/agents/${id}/analytics`),
+  getAgentTimeline: (id, params = {}) => {
+    const qs = new URLSearchParams();
+    if (params.page > 1) qs.set('page', String(params.page));
+    if (params.limit) qs.set('limit', String(params.limit));
+    const path = `/agents/${id}/analytics/timeline${qs.toString() ? `?${qs}` : ''}`;
+    return request(path);
+  },
+  getAnalyticsSummary: () => request('/agents/mine/analytics-summary'),
+
   // --- Health ---------------------------------------------------------------
   health: () => request('/health'),
 

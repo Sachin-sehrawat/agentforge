@@ -624,6 +624,130 @@ Records that a Markdown export was downloaded. Called client-side after the file
 
 ---
 
+### `GET /api/agents/mine/analytics-summary`
+
+Returns a per-agent analytics rollup for every agent owned by the authenticated user. Useful for a high-level dashboard overview. Requires authentication.
+
+**Headers**
+
+| Header | Value |
+|---|---|
+| `Authorization` | `Bearer <token>` |
+
+**Response 200** — array ordered by `created_at DESC`
+
+```json
+[
+  {
+    "agentId": "550e8400-e29b-41d4-a716-446655440000",
+    "name": "Research Agent",
+    "subscriberCount": 42,
+    "favoriteCount": 18,
+    "forkCount": 3,
+    "exportCount": 12,
+    "avgRating": 4.2
+  }
+]
+```
+
+`avgRating` is `null` when the agent has no ratings. `exportCount` counts only `export` events recorded via `POST /api/agents/:id/export-event`.
+
+**Response 401** — missing or invalid token.
+
+---
+
+### `GET /api/agents/:id/analytics`
+
+Returns aggregate stats and the full subscriber list for a single agent. Owner-only — returns 403 when the authenticated user is not the owner.
+
+**Headers**
+
+| Header | Value |
+|---|---|
+| `Authorization` | `Bearer <token>` |
+
+**Response 200**
+
+```json
+{
+  "subscriberCount": 42,
+  "favoriteCount": 18,
+  "forkCount": 3,
+  "exportCount": 12,
+  "avgRating": 4.2,
+  "ratingCount": 24,
+  "subscribers": [
+    {
+      "displayName": "Alice",
+      "subscribedAt": "2026-06-01T10:00:00.000Z"
+    }
+  ]
+}
+```
+
+`avgRating` is `null` when `ratingCount` is 0. `subscribers` is ordered by `subscribed_at DESC`. Display names are shown but no email addresses are leaked.
+
+**Response 401** — missing or invalid token.
+
+**Response 403** — `{ "error": "Forbidden" }` — authenticated but not the owner.
+
+**Response 404** — `{ "error": "Agent not found" }`
+
+---
+
+### `GET /api/agents/:id/analytics/timeline`
+
+Returns a paginated activity timeline for a single agent, newest events first. Owner-only — returns 403 when the authenticated user is not the owner.
+
+**Headers**
+
+| Header | Value |
+|---|---|
+| `Authorization` | `Bearer <token>` |
+
+**Query parameters**
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `page` | integer | `1` | 1-based page number |
+| `limit` | integer | `20` | Events per page (max 100) |
+
+**Response 200**
+
+```json
+{
+  "total": 87,
+  "page": 1,
+  "limit": 20,
+  "events": [
+    {
+      "id": 1001,
+      "type": "subscribe",
+      "meta": null,
+      "createdAt": "2026-06-28T09:15:00.000Z",
+      "actorDisplayName": "Bob"
+    },
+    {
+      "id": 1000,
+      "type": "rate",
+      "meta": { "rating": 5 },
+      "createdAt": "2026-06-27T14:30:00.000Z",
+      "actorDisplayName": null
+    }
+  ]
+}
+```
+
+`actorDisplayName` is `null` for anonymous actions (e.g. unauthenticated exports). `meta` is `null` except for `rate` events (`{ "rating": 1–5 }` or `null` for removals) and `export` events (`{ "format": "markdown" }`). See the `agent_events` table in [database-schema.md](database-schema.md) for the full list of event types.
+
+**Response 401** — missing or invalid token.
+
+**Response 403** — `{ "error": "Forbidden" }` — authenticated but not the owner.
+
+**Response 404** — `{ "error": "Agent not found" }`
+
+---
+
 ### `POST /api/agents/:id/fork`
 
 Creates an independent private copy of a public agent (or any agent owned by the caller) into the authenticated user's workspace. The source agent's `fork_count` is incremented atomically in the same transaction. The fork is a full snapshot — later edits to the source never affect the fork. Emits a `fork` event on the source agent (best-effort).
