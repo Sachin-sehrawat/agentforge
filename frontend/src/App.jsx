@@ -530,6 +530,53 @@ export default function App() {
     }
   };
 
+  const onBulkDelete = async (ids) => {
+    try {
+      const result = await api.bulkDeleteAgents(ids);
+      setMyAgents((prev) => prev.filter((a) => !result.deleted.includes(a.id)));
+      if (result.deleted.includes(agent.id)) onNew();
+      if (result.skipped.length > 0) {
+        showToast(
+          `Deleted ${result.deleted.length} agent${result.deleted.length !== 1 ? 's' : ''}. ${result.skipped.length} skipped (not owned).`,
+          'warning'
+        );
+      } else {
+        showToast(`Deleted ${result.deleted.length} agent${result.deleted.length !== 1 ? 's' : ''}.`, 'success');
+      }
+      return result;
+    } catch (err) {
+      showToast(`Bulk delete failed: ${err.message}`, 'error');
+      throw err;
+    }
+  };
+
+  const onBulkExport = async (ids, format) => {
+    try {
+      const result = await api.bulkExportAgents(ids, format);
+      let content, mimeType, ext;
+      if (format === 'json') {
+        const parsed = result.results.map((r) => JSON.parse(r.content));
+        content = JSON.stringify(parsed, null, 2);
+        mimeType = 'application/json';
+        ext = 'json';
+      } else {
+        content = result.results.map((r) => r.content).join('\n\n---\n\n');
+        mimeType = 'text/markdown';
+        ext = 'md';
+      }
+      const blob = new Blob([content], { type: mimeType });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `agents-export.${ext}`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      showToast(`Export failed: ${err.message}`, 'error');
+      throw err;
+    }
+  };
+
   const onUnfavorite = async (id) => {
     setFavoriteAgents((prev) => prev.filter((a) => a.id !== id));
     try {
@@ -745,6 +792,8 @@ export default function App() {
           onFork={onFork}
           onUnfavorite={onUnfavorite}
           onDuplicate={onDuplicate}
+          onBulkDelete={onBulkDelete}
+          onBulkExport={onBulkExport}
           onAnalytics={(agent) => setAnalyticsAgent({ id: agent.id, name: agent.name })}
         />
       ) : view === 'skills' ? (

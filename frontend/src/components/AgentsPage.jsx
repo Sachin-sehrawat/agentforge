@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { TOOL_META } from '../toolMeta.jsx';
 import { api } from '../api.js';
 
@@ -31,7 +31,7 @@ function Badge({ label, color }) {
   );
 }
 
-function AgentCard({ agent, onOpen, onDownload, onDelete, onSubscribe, onToggleVisibility, onAnalytics, onDuplicate }) {
+function AgentCard({ agent, onOpen, onDownload, onDelete, onSubscribe, onToggleVisibility, onAnalytics, onDuplicate, isSelected, onToggleSelect }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [confirmPublish, setConfirmPublish] = useState(false);
   const [duplicating, setDuplicating] = useState(false);
@@ -99,7 +99,17 @@ function AgentCard({ agent, onOpen, onDownload, onDelete, onSubscribe, onToggleV
   const hasStats = toolCount + skillCount + instrCount > 0;
 
   return (
-    <div className="agent-card">
+    <div className={`agent-card${isSelected ? ' agent-card--selected' : ''}`}>
+      {onToggleSelect && (
+        <label className="agent-card-checkbox-wrap" onClick={(e) => e.stopPropagation()}>
+          <input
+            type="checkbox"
+            className="agent-card-checkbox"
+            checked={isSelected}
+            onChange={onToggleSelect}
+          />
+        </label>
+      )}
       <div className="agent-card-body">
         <div className="agent-card-name">{agent.name || 'Untitled'}</div>
         {agent.persona && (
@@ -224,7 +234,7 @@ function AgentCard({ agent, onOpen, onDownload, onDelete, onSubscribe, onToggleV
   );
 }
 
-function AgentsList({ agents, search, onOpen, onDownload, onDelete, canDelete, onSubscribe, onToggleVisibility, onAnalytics, onDuplicate, emptyNode }) {
+function AgentsList({ agents, search, onOpen, onDownload, onDelete, canDelete, onSubscribe, onToggleVisibility, onAnalytics, onDuplicate, emptyNode, selectedIds, onToggleSelect, onToggleSelectAll }) {
   const q = search.trim().toLowerCase();
   const filtered = q
     ? agents.filter((a) =>
@@ -232,29 +242,60 @@ function AgentsList({ agents, search, onOpen, onDownload, onDelete, canDelete, o
       )
     : agents;
 
+  const selectAllRef = useRef(null);
+  const filteredIds = filtered.map((a) => a.id);
+  const isSelectable = Boolean(onToggleSelect);
+  const allSelected = isSelectable && filteredIds.length > 0 && filteredIds.every((id) => selectedIds.has(id));
+  const someSelected = isSelectable && filteredIds.some((id) => selectedIds.has(id));
+
+  useEffect(() => {
+    if (selectAllRef.current) {
+      selectAllRef.current.indeterminate = someSelected && !allSelected;
+    }
+  }, [someSelected, allSelected]);
+
   if (agents.length === 0) return emptyNode;
   if (filtered.length === 0) return <p className="filter-empty">No agents match &ldquo;{search}&rdquo;</p>;
 
   return (
-    <div className="agents-grid">
-      {filtered.map((agent) => (
-        <AgentCard
-          key={agent.id}
-          agent={agent}
-          onOpen={onOpen}
-          onDownload={onDownload}
-          onDelete={canDelete && canDelete(agent) ? onDelete : null}
-          onSubscribe={onSubscribe || null}
-          onToggleVisibility={onToggleVisibility && agent.isOwned ? onToggleVisibility : null}
-          onAnalytics={onAnalytics && agent.isOwned ? onAnalytics : null}
-          onDuplicate={onDuplicate && agent.isOwned ? onDuplicate : null}
-        />
-      ))}
-    </div>
+    <>
+      {isSelectable && (
+        <div className="bulk-select-all-row">
+          <label className="bulk-select-all-label">
+            <input
+              ref={selectAllRef}
+              type="checkbox"
+              checked={allSelected}
+              onChange={() => onToggleSelectAll(filteredIds)}
+            />
+            {allSelected
+              ? `Deselect all ${filtered.length}`
+              : `Select all ${filtered.length} visible`}
+          </label>
+        </div>
+      )}
+      <div className="agents-grid">
+        {filtered.map((agent) => (
+          <AgentCard
+            key={agent.id}
+            agent={agent}
+            onOpen={onOpen}
+            onDownload={onDownload}
+            onDelete={canDelete && canDelete(agent) ? onDelete : null}
+            onSubscribe={onSubscribe || null}
+            onToggleVisibility={onToggleVisibility && agent.isOwned ? onToggleVisibility : null}
+            onAnalytics={onAnalytics && agent.isOwned ? onAnalytics : null}
+            onDuplicate={onDuplicate && agent.isOwned ? onDuplicate : null}
+            isSelected={isSelectable ? selectedIds.has(agent.id) : undefined}
+            onToggleSelect={isSelectable ? () => onToggleSelect(agent.id) : undefined}
+          />
+        ))}
+      </div>
+    </>
   );
 }
 
-function TabContent({ agents, loading, error, search, onOpen, onDownload, onDelete, canDelete, onSubscribe, onToggleVisibility, onAnalytics, onDuplicate, emptyNode }) {
+function TabContent({ agents, loading, error, search, onOpen, onDownload, onDelete, canDelete, onSubscribe, onToggleVisibility, onAnalytics, onDuplicate, emptyNode, selectedIds, onToggleSelect, onToggleSelectAll }) {
   if (loading) {
     return <div className="agents-loading">Loading…</div>;
   }
@@ -274,6 +315,9 @@ function TabContent({ agents, loading, error, search, onOpen, onDownload, onDele
       onAnalytics={onAnalytics}
       onDuplicate={onDuplicate}
       emptyNode={emptyNode}
+      selectedIds={selectedIds}
+      onToggleSelect={onToggleSelect}
+      onToggleSelectAll={onToggleSelectAll}
     />
   );
 }
@@ -469,12 +513,82 @@ export default function AgentsPage({
   onUnfavorite,
   onAnalytics,
   onDuplicate,
+  onBulkDelete,
+  onBulkExport,
 }) {
   const [activeTab, setActiveTab] = useState('agents');
   const [search, setSearch] = useState('');
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [bulkDeletePrimed, setBulkDeletePrimed] = useState(false);
+  const [exportPickerOpen, setExportPickerOpen] = useState(false);
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   const isFavTab = activeTab === 'favorites';
   const isMyTab = activeTab === 'mine';
+
+  // Clear selection when switching tabs
+  useEffect(() => {
+    setSelectedIds(new Set());
+    setBulkDeletePrimed(false);
+    setExportPickerOpen(false);
+  }, [activeTab]);
+
+  function toggleSelect(id) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+    setBulkDeletePrimed(false);
+    setExportPickerOpen(false);
+  }
+
+  function toggleSelectAll(filteredIds) {
+    const allSelected = filteredIds.every((id) => selectedIds.has(id));
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (allSelected) {
+        filteredIds.forEach((id) => next.delete(id));
+      } else {
+        filteredIds.forEach((id) => next.add(id));
+      }
+      return next;
+    });
+    setBulkDeletePrimed(false);
+    setExportPickerOpen(false);
+  }
+
+  function clearSelection() {
+    setSelectedIds(new Set());
+    setBulkDeletePrimed(false);
+    setExportPickerOpen(false);
+  }
+
+  async function handleBulkDelete() {
+    if (!bulkDeletePrimed) {
+      setBulkDeletePrimed(true);
+      return;
+    }
+    setBulkBusy(true);
+    setBulkDeletePrimed(false);
+    try {
+      await onBulkDelete([...selectedIds]);
+      setSelectedIds(new Set());
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+
+  async function handleBulkExport(format) {
+    setExportPickerOpen(false);
+    setBulkBusy(true);
+    try {
+      await onBulkExport([...selectedIds], format);
+    } finally {
+      setBulkBusy(false);
+    }
+  }
 
   function handleMyAgentsTabClick() {
     if (!isAuthenticated) {
@@ -522,6 +636,8 @@ export default function AgentsPage({
       await api.unsubscribeAgent(agent.id);
     }
   }
+
+  const selectionCount = selectedIds.size;
 
   return (
     <div className="agents-page">
@@ -585,6 +701,62 @@ export default function AgentsPage({
         </button>
       </div>
 
+      {isMyTab && selectionCount > 0 && (
+        <div className="bulk-toolbar">
+          <span className="bulk-toolbar-count">{selectionCount} selected</span>
+          <button className="btn subtle small" onClick={clearSelection} disabled={bulkBusy}>
+            Clear
+          </button>
+          <div className="bulk-toolbar-actions">
+            {exportPickerOpen ? (
+              <>
+                <span className="bulk-toolbar-label">Export as:</span>
+                <button
+                  className="btn subtle small"
+                  onClick={() => handleBulkExport('markdown')}
+                  disabled={bulkBusy}
+                >
+                  Markdown
+                </button>
+                <button
+                  className="btn subtle small"
+                  onClick={() => handleBulkExport('json')}
+                  disabled={bulkBusy}
+                >
+                  JSON
+                </button>
+                <button
+                  className="btn subtle small"
+                  onClick={() => setExportPickerOpen(false)}
+                  disabled={bulkBusy}
+                >
+                  ✕
+                </button>
+              </>
+            ) : (
+              <button
+                className="btn subtle small"
+                onClick={() => { setBulkDeletePrimed(false); setExportPickerOpen(true); }}
+                disabled={bulkBusy}
+              >
+                Export
+              </button>
+            )}
+            <button
+              className={`btn small${bulkDeletePrimed ? ' danger' : ' subtle'}`}
+              onClick={handleBulkDelete}
+              disabled={bulkBusy}
+            >
+              {bulkBusy && bulkDeletePrimed
+                ? 'Deleting…'
+                : bulkDeletePrimed
+                ? `Confirm delete ${selectionCount}?`
+                : 'Delete selected'}
+            </button>
+          </div>
+        </div>
+      )}
+
       {isFavTab && !isAuthenticated ? (
         <div className="agents-empty">
           <div className="agents-empty-icon">
@@ -630,6 +802,9 @@ export default function AgentsPage({
           onToggleVisibility={onToggleVisibility}
           onAnalytics={onAnalytics}
           onDuplicate={onDuplicate}
+          selectedIds={selectedIds}
+          onToggleSelect={toggleSelect}
+          onToggleSelectAll={toggleSelectAll}
           emptyNode={
             <div className="agents-empty">
               <div className="agents-empty-icon">
