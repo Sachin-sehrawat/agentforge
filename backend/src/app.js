@@ -245,7 +245,7 @@ app.get('/api/agents/marketplace', optionalAuth, async (req, res) => {
 
   const offset = (page - 1) * pageSize;
 
-  // Per-user flags require a subscription LEFT JOIN; only added when authenticated.
+  // Per-user flags require subscription + favorites LEFT JOINs; only added when authenticated.
   const dataParams = [...filterParams];
   let subJoin = '';
   let isSubscribedExpr = 'FALSE';
@@ -318,8 +318,14 @@ app.get('/api/agents/marketplace', optionalAuth, async (req, res) => {
   }
 });
 
+// --- Agent favorites ----------------------------------------------------------
+// GET  /api/agents/favorites       — paginated list of caller's bookmarked agents
+// POST /api/agents/:id/favorite    — see below (added by #94)
+// DELETE /api/agents/:id/favorite  — see below (added by #94)
+
 // Paginated list of agents the authenticated user has favorited.
-// Returns full agent objects in the same shape as /api/agents/mine.
+// Augments serializeAgent with ownerDisplayName, isFavorited, isOwner,
+// and isSubscribed so the Favorites tab can render quick-action cards.
 app.get('/api/agents/favorites', requireAuth, async (req, res) => {
   const userId = req.user.userId;
   const page = Math.max(1, parseInt(req.query.page, 10) || 1);
@@ -329,9 +335,14 @@ app.get('/api/agents/favorites', requireAuth, async (req, res) => {
   try {
     const [{ rows }, { rows: countRows }] = await Promise.all([
       db.query(
-        `SELECT a.*
+        `SELECT a.*,
+                u.display_name AS owner_display_name,
+                (a.owner_id = $1) AS is_owner,
+                (s.agent_id IS NOT NULL) AS is_subscribed
          FROM agent_favorites f
          JOIN agents a ON a.id = f.agent_id
+         LEFT JOIN users u ON u.id = a.owner_id
+         LEFT JOIN subscriptions s ON s.agent_id = a.id AND s.user_id = $1
          WHERE f.user_id = $1
          ORDER BY f.created_at DESC
          LIMIT $2 OFFSET $3`,
@@ -344,7 +355,13 @@ app.get('/api/agents/favorites', requireAuth, async (req, res) => {
     ]);
     const total = parseInt(countRows[0].total, 10);
     res.json({
-      items: rows.map(serializeAgent),
+      items: rows.map((r) => ({
+        ...serializeAgent(r),
+        ownerDisplayName: r.owner_display_name ?? null,
+        isFavorited: true,
+        isOwner: Boolean(r.is_owner),
+        isSubscribed: Boolean(r.is_subscribed),
+      })),
       page,
       pageSize,
       total,
