@@ -479,7 +479,7 @@ export default function App() {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const onImportCommit = useCallback((parsedAgent) => {
-    const positions = { ...parsedAgent.positions };
+    const positions = { ...(parsedAgent.positions ?? {}) };
     if (!positions.agent) positions.agent = { x: 36, y: 36 };
     parsedAgent.tools.forEach((toolId, index) => {
       if (!positions[toolId]) positions[toolId] = defaultToolPosition(index);
@@ -491,15 +491,25 @@ export default function App() {
     api.saveWorkspaceData(WORKSPACE_ID, { agent: draft });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const onFromTemplate = useCallback((template) => {
+  const onFromTemplate = useCallback(async (template) => {
     setTemplateGalleryOpen(false);
     if (template.id === 'blank') {
       onNew();
       return;
     }
-    onImportCommit(template.definition);
+    let def = template.definition;
+    if (!def) {
+      try {
+        const full = await api.getTemplate(template.id);
+        def = full.definition;
+      } catch (err) {
+        console.error('Could not load template:', err.message);
+        return;
+      }
+    }
+    onImportCommit(def);
     const { errors, warnings } = validateAgentDefinition(
-      { ...DEFAULT_AGENT, ...template.definition },
+      { ...DEFAULT_AGENT, ...def },
       buildValidationOpts()
     );
     if (errors.length > 0 || warnings.length > 0) {
