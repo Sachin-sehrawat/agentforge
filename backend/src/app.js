@@ -199,6 +199,41 @@ app.get('/api/agents/mine', requireAuth, async (req, res) => {
   }
 });
 
+// Per-agent rollup across all agents owned by the authenticated user.
+app.get('/api/agents/mine/analytics-summary', requireAuth, async (req, res) => {
+  const userId = req.user.userId;
+  try {
+    const { rows } = await db.query(
+      `SELECT
+         a.id              AS agent_id,
+         a.name,
+         a.favorite_count,
+         a.fork_count,
+         a.rating_sum,
+         a.rating_count,
+         (SELECT COUNT(*) FROM subscriptions s WHERE s.agent_id = a.id)::int AS subscriber_count,
+         (SELECT COUNT(*) FROM agent_events e WHERE e.agent_id = a.id AND e.type = 'export')::int AS export_count
+       FROM agents a
+       WHERE a.owner_id = $1
+       ORDER BY a.created_at DESC`,
+      [userId]
+    );
+    res.json(
+      rows.map((r) => ({
+        agentId: r.agent_id,
+        name: r.name,
+        subscriberCount: r.subscriber_count,
+        favoriteCount: r.favorite_count,
+        forkCount: r.fork_count,
+        exportCount: r.export_count,
+        avgRating: r.rating_count > 0 ? r.rating_sum / r.rating_count : null,
+      }))
+    );
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Marketplace listing — public agents with full-text search, composable filters,
 // multiple sort orders, and offset pagination. Never leaks private agents.
 app.get('/api/agents/marketplace', optionalAuth, async (req, res) => {
@@ -1032,6 +1067,102 @@ app.post('/api/agents/:id/export-event', optionalAuth, async (req, res) => {
     if (!rows[0]) return res.status(404).json({ error: 'Agent not found' });
     emitEvent(agentId, actorId, 'export', { format: 'markdown' });
     res.status(204).end();
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --- Agent Analytics (owner-only) -----------------------------------------
+
+// Aggregate summary for a single agent: counts + subscriber list (no PII beyond display name).
+app.get('/api/agents/:id/analytics', requireAuth, async (req, res) => {
+  const agentId = req.params.id;
+  const userId = req.user.userId;
+  try {
+    const { rows } = await db.query(
+      `SELECT
+         a.owner_id,
+         a.favorite_count,
+         a.fork_count,
+         a.rating_sum,
+         a.rating_count,
+         (SELECT COUNT(*) FROM subscriptions s WHERE s.agent_id = a.id)::int AS subscriber_count,
+         (SELECT COUNT(*) FROM agent_events e WHERE e.agent_id = a.id AND e.type = 'export')::int AS export_count
+       FROM agents a
+       WHERE a.id = $1`,
+      [agentId]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Agent not found' });
+    if (rows[0].owner_id !== userId) return res.status(403).json({ error: 'Forbidden' });
+
+    const { rows: subs } = await db.query(
+      `SELECT u.display_name, s.created_at AS subscribed_at
+       FROM subscriptions s
+       JOIN users u ON u.id = s.user_id
+       WHERE s.agent_id = $1
+       ORDER BY s.created_at DESC`,
+      [agentId]
+    );
+
+    const r = rows[0];
+    res.json({
+      subscriberCount: r.subscriber_count,
+      favoriteCount: r.favorite_count,
+      forkCount: r.fork_count,
+      exportCount: r.export_count,
+      avgRating: r.rating_count > 0 ? r.rating_sum / r.rating_count : null,
+      ratingCount: r.rating_count,
+      subscribers: subs.map((s) => ({ displayName: s.display_name, subscribedAt: s.subscribed_at })),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Paginated activity timeline for a single agent, newest first.
+app.get('/api/agents/:id/analytics/timeline', requireAuth, async (req, res) => {
+  const agentId = req.params.id;
+  const userId = req.user.userId;
+  const limit = Math.min(parseInt(req.query.limit, 10) || 20, 100);
+  const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+  const offset = (page - 1) * limit;
+
+  try {
+    const { rows: agentRows } = await db.query(
+      'SELECT owner_id FROM agents WHERE id = $1',
+      [agentId]
+    );
+    if (!agentRows[0]) return res.status(404).json({ error: 'Agent not found' });
+    if (agentRows[0].owner_id !== userId) return res.status(403).json({ error: 'Forbidden' });
+
+    const [{ rows: events }, { rows: countRows }] = await Promise.all([
+      db.query(
+        `SELECT e.id, e.type, e.meta, e.created_at, u.display_name AS actor_display_name
+         FROM agent_events e
+         LEFT JOIN users u ON u.id = e.actor_id
+         WHERE e.agent_id = $1
+         ORDER BY e.created_at DESC
+         LIMIT $2 OFFSET $3`,
+        [agentId, limit, offset]
+      ),
+      db.query(
+        'SELECT COUNT(*)::int AS total FROM agent_events WHERE agent_id = $1',
+        [agentId]
+      ),
+    ]);
+
+    res.json({
+      total: countRows[0].total,
+      page,
+      limit,
+      events: events.map((e) => ({
+        id: e.id,
+        type: e.type,
+        meta: e.meta,
+        createdAt: e.created_at,
+        actorDisplayName: e.actor_display_name ?? null,
+      })),
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
