@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { TOOL_META } from '../toolMeta.jsx';
 import { api } from '../api.js';
 
@@ -234,13 +234,23 @@ function AgentCard({ agent, onOpen, onDownload, onDelete, onSubscribe, onToggleV
   );
 }
 
-function AgentsList({ agents, search, onOpen, onDownload, onDelete, canDelete, onSubscribe, onToggleVisibility, onAnalytics, onDuplicate, emptyNode, selectedIds, onToggleSelect, onToggleSelectAll }) {
+function AgentsList({ agents, search, toolsFilter, tagsFilter, onClearFilters, onOpen, onDownload, onDelete, canDelete, onSubscribe, onToggleVisibility, onAnalytics, onDuplicate, emptyNode, selectedIds, onToggleSelect, onToggleSelectAll }) {
   const q = search.trim().toLowerCase();
-  const filtered = q
-    ? agents.filter((a) =>
-        (a.name || '').toLowerCase().includes(q) || (a.persona || '').toLowerCase().includes(q)
-      )
-    : agents;
+  const filtered = agents.filter((a) => {
+    if (q && !(
+      (a.name || '').toLowerCase().includes(q) ||
+      (a.persona || '').toLowerCase().includes(q)
+    )) return false;
+    if (toolsFilter && toolsFilter.size > 0) {
+      const agentTools = a.tools || [];
+      if (![...toolsFilter].some((t) => agentTools.includes(t))) return false;
+    }
+    if (tagsFilter && tagsFilter.size > 0) {
+      const agentTags = a.tags || [];
+      if (![...tagsFilter].some((t) => agentTags.includes(t))) return false;
+    }
+    return true;
+  });
 
   const selectAllRef = useRef(null);
   const filteredIds = filtered.map((a) => a.id);
@@ -255,7 +265,16 @@ function AgentsList({ agents, search, onOpen, onDownload, onDelete, canDelete, o
   }, [someSelected, allSelected]);
 
   if (agents.length === 0) return emptyNode;
-  if (filtered.length === 0) return <p className="filter-empty">No agents match &ldquo;{search}&rdquo;</p>;
+  if (filtered.length === 0) {
+    return (
+      <div className="filter-empty-wrap">
+        <p className="filter-empty">No agents match the active filters.</p>
+        {onClearFilters && (
+          <button className="btn subtle small" onClick={onClearFilters}>Clear filters</button>
+        )}
+      </div>
+    );
+  }
 
   return (
     <>
@@ -295,7 +314,7 @@ function AgentsList({ agents, search, onOpen, onDownload, onDelete, canDelete, o
   );
 }
 
-function TabContent({ agents, loading, error, search, onOpen, onDownload, onDelete, canDelete, onSubscribe, onToggleVisibility, onAnalytics, onDuplicate, emptyNode, selectedIds, onToggleSelect, onToggleSelectAll }) {
+function TabContent({ agents, loading, error, search, toolsFilter, tagsFilter, onClearFilters, onOpen, onDownload, onDelete, canDelete, onSubscribe, onToggleVisibility, onAnalytics, onDuplicate, emptyNode, selectedIds, onToggleSelect, onToggleSelectAll }) {
   if (loading) {
     return <div className="agents-loading">Loading…</div>;
   }
@@ -306,6 +325,9 @@ function TabContent({ agents, loading, error, search, onOpen, onDownload, onDele
     <AgentsList
       agents={agents}
       search={search}
+      toolsFilter={toolsFilter}
+      tagsFilter={tagsFilter}
+      onClearFilters={onClearFilters}
       onOpen={onOpen}
       onDownload={onDownload}
       onDelete={onDelete}
@@ -522,16 +544,78 @@ export default function AgentsPage({
   const [bulkDeletePrimed, setBulkDeletePrimed] = useState(false);
   const [exportPickerOpen, setExportPickerOpen] = useState(false);
   const [bulkBusy, setBulkBusy] = useState(false);
+  const [toolsFilter, setToolsFilter] = useState(() => new Set());
+  const [tagsFilter, setTagsFilter] = useState(() => new Set());
+  const [toolPickerOpen, setToolPickerOpen] = useState(false);
+  const [tagPickerOpen, setTagPickerOpen] = useState(false);
+  const toolPickerRef = useRef(null);
+  const tagPickerRef = useRef(null);
 
   const isFavTab = activeTab === 'favorites';
   const isMyTab = activeTab === 'mine';
 
-  // Clear selection when switching tabs
+  const availableTools = useMemo(() => {
+    const seen = new Set();
+    for (const a of myAgents) {
+      for (const t of (a.tools || [])) seen.add(t);
+    }
+    return [...seen];
+  }, [myAgents]);
+
+  const availableTags = useMemo(() => {
+    const seen = new Set();
+    for (const a of myAgents) {
+      for (const t of (a.tags || [])) seen.add(t);
+    }
+    return [...seen].sort();
+  }, [myAgents]);
+
+  // Clear selection and filters when switching tabs
   useEffect(() => {
     setSelectedIds(new Set());
     setBulkDeletePrimed(false);
     setExportPickerOpen(false);
+    setToolsFilter(new Set());
+    setTagsFilter(new Set());
+    setToolPickerOpen(false);
+    setTagPickerOpen(false);
   }, [activeTab]);
+
+  // Close pickers on outside click
+  useEffect(() => {
+    function handleClick(e) {
+      if (toolPickerRef.current && !toolPickerRef.current.contains(e.target)) {
+        setToolPickerOpen(false);
+      }
+      if (tagPickerRef.current && !tagPickerRef.current.contains(e.target)) {
+        setTagPickerOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, []);
+
+  function handleClearAllFilters() {
+    setSearch('');
+    setToolsFilter(new Set());
+    setTagsFilter(new Set());
+  }
+
+  function toggleToolFilter(id) {
+    setToolsFilter((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleTagFilter(tag) {
+    setTagsFilter((prev) => {
+      const next = new Set(prev);
+      if (next.has(tag)) next.delete(tag); else next.add(tag);
+      return next;
+    });
+  }
 
   function toggleSelect(id) {
     setSelectedIds((prev) => {
@@ -701,6 +785,100 @@ export default function AgentsPage({
         </button>
       </div>
 
+      {isMyTab && isAuthenticated && (availableTools.length > 0 || availableTags.length > 0) && (
+        <div className="mp-filters my-agents-filters">
+          {availableTools.length > 0 && (
+            <div className="mp-filter-group" ref={toolPickerRef}>
+              <label className="mp-filter-label">Tools</label>
+              <button
+                type="button"
+                className={`mp-select mp-tool-btn${toolsFilter.size ? ' has-value' : ''}`}
+                onClick={() => { setToolPickerOpen((v) => !v); setTagPickerOpen(false); }}
+              >
+                {toolsFilter.size ? `${toolsFilter.size} tool${toolsFilter.size !== 1 ? 's' : ''} selected` : 'Any tools'}
+                <svg className="mp-select-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <polyline points="6 9 12 15 18 9" />
+                </svg>
+              </button>
+              {toolPickerOpen && (
+                <div className="mp-tool-picker">
+                  <div className="mp-tool-picker-header">
+                    <span>Filter by tool</span>
+                    {toolsFilter.size > 0 && (
+                      <button className="mp-clear-link" onClick={() => setToolsFilter(new Set())}>Clear</button>
+                    )}
+                  </div>
+                  <div className="mp-tool-picker-list">
+                    {availableTools.map((id) => {
+                      const meta = TOOL_META[id];
+                      return (
+                        <label key={id} className="mp-tool-option">
+                          <input
+                            type="checkbox"
+                            checked={toolsFilter.has(id)}
+                            onChange={() => toggleToolFilter(id)}
+                          />
+                          <span className="mp-tool-swatch" style={{ background: meta?.color || '#999' }} />
+                          {meta?.label || id}
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {availableTags.length > 0 && (
+            <div className="mp-filter-group" ref={tagPickerRef}>
+              <label className="mp-filter-label">Tags</label>
+              <button
+                type="button"
+                className={`mp-select mp-tool-btn${tagsFilter.size ? ' has-value' : ''}`}
+                onClick={() => { setTagPickerOpen((v) => !v); setToolPickerOpen(false); }}
+              >
+                {tagsFilter.size ? `${tagsFilter.size} tag${tagsFilter.size !== 1 ? 's' : ''} selected` : 'Any tags'}
+                <svg className="mp-select-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <polyline points="6 9 12 15 18 9" />
+                </svg>
+              </button>
+              {tagPickerOpen && (
+                <div className="mp-tool-picker">
+                  <div className="mp-tool-picker-header">
+                    <span>Filter by tag</span>
+                    {tagsFilter.size > 0 && (
+                      <button className="mp-clear-link" onClick={() => setTagsFilter(new Set())}>Clear</button>
+                    )}
+                  </div>
+                  <div className="mp-tool-picker-list">
+                    {availableTags.map((tag) => (
+                      <label key={tag} className="mp-tool-option">
+                        <input
+                          type="checkbox"
+                          checked={tagsFilter.has(tag)}
+                          onChange={() => toggleTagFilter(tag)}
+                        />
+                        {tag}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {(toolsFilter.size > 0 || tagsFilter.size > 0) && (
+            <button
+              className="mp-clear-link"
+              style={{ alignSelf: 'flex-end', paddingBottom: '7px' }}
+              onClick={handleClearAllFilters}
+            >
+              Clear all filters
+            </button>
+          )}
+        </div>
+      )}
+
       {isMyTab && selectionCount > 0 && (
         <div className="bulk-toolbar">
           <span className="bulk-toolbar-count">{selectionCount} selected</span>
@@ -795,6 +973,9 @@ export default function AgentsPage({
           loading={loadingMine}
           error={errorMine}
           search={search}
+          toolsFilter={toolsFilter}
+          tagsFilter={tagsFilter}
+          onClearFilters={handleClearAllFilters}
           onOpen={onOpen}
           onDownload={onDownload}
           onDelete={onDelete}
@@ -827,6 +1008,7 @@ export default function AgentsPage({
           loading={loadingPublic}
           error={errorPublic}
           search={search}
+          onClearFilters={() => setSearch('')}
           onOpen={onOpen}
           onDownload={onDownload}
           onDelete={null}
