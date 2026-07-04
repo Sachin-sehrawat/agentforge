@@ -1,6 +1,6 @@
 const BLOCKED_HOSTNAMES = new Set(['localhost', '127.0.0.1', '0.0.0.0', '::1', '169.254.169.254']);
 
-function isPrivateHostname(hostname) {
+export function isPrivateHostname(hostname) {
   if (BLOCKED_HOSTNAMES.has(hostname)) return true;
   if (/^10\./.test(hostname)) return true;
   if (/^192\.168\./.test(hostname)) return true;
