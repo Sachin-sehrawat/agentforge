@@ -4,6 +4,7 @@ import MarketplaceStrip from './landing/MarketplaceStrip.jsx';
 import StatsBar from './landing/StatsBar.jsx';
 import FeatureGrid from './landing/FeatureGrid.jsx';
 import HowItWorks from './landing/HowItWorks.jsx';
+import FinalCta from './landing/FinalCta.jsx';
 
 export default function LandingPage({ onGetStarted, onOpenAuth, onBrowseMarketplace, isAuthenticated, onFork }) {
   return (
@@ -39,7 +40,13 @@ export default function LandingPage({ onGetStarted, onOpenAuth, onBrowseMarketpl
       </section>
 
       {/* Final CTA */}
-      <section className="landing-cta" />
+      <section className="landing-cta">
+        <FinalCta
+          isAuthenticated={isAuthenticated}
+          onGetStarted={onGetStarted}
+          onOpenAuth={onOpenAuth}
+        />
+      </section>
     </main>
   );
 }
