@@ -272,6 +272,67 @@ WHERE tablename = 'agents' AND indexname = 'idx_agents_tags';
 
 ---
 
+## Adding `tier` Column and `usage_counters` Table to an Existing Deployment
+
+`backend/db/init/13_tier.sql` runs automatically on a **fresh** volume. For existing deployments apply the DDL manually:
+
+```sql
+-- Run against your PostgreSQL instance (psql, DBeaver, etc.)
+ALTER TABLE users ADD COLUMN IF NOT EXISTS tier TEXT NOT NULL DEFAULT 'free'
+  CONSTRAINT users_tier_check CHECK (tier IN ('free', 'paid'));
+
+CREATE TABLE IF NOT EXISTS usage_counters (
+  user_id  UUID    NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  action   TEXT    NOT NULL,
+  period   DATE    NOT NULL,
+  count    INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (user_id, action, period)
+);
+
+CREATE INDEX IF NOT EXISTS idx_usage_counters_user_today
+  ON usage_counters (user_id, action)
+  WHERE period = CURRENT_DATE;
+
+ANALYZE users;
+ANALYZE usage_counters;
+```
+
+**Notes:**
+
+- `tier` defaults to `'free'` — all existing users get the free tier automatically; no back-fill required.
+- A `CHECK` constraint enforces the allowed values (`'free'`, `'paid'`). Any future tier must be added to the constraint before use.
+- Counter increments **must** use the atomic upsert pattern — never read-then-write:
+
+```sql
+INSERT INTO usage_counters (user_id, action, period, count)
+VALUES ($1, $2, CURRENT_DATE, 1)
+ON CONFLICT (user_id, action, period)
+DO UPDATE SET count = usage_counters.count + 1;
+```
+
+- The partial index on `CURRENT_DATE` is rebuilt nightly by autovacuum/statistics; it accelerates the common quota-check query `WHERE user_id = $1 AND action = $2 AND period = CURRENT_DATE`.
+- Rows for past periods accumulate; prune them with a scheduled job (e.g. `DELETE FROM usage_counters WHERE period < CURRENT_DATE - INTERVAL '90 days'`) if long-term storage is a concern.
+
+**Verify after applying:**
+
+```sql
+-- Confirm tier column exists with correct default
+SELECT column_name, column_default, is_nullable
+FROM information_schema.columns
+WHERE table_name = 'users' AND column_name = 'tier';
+
+-- Confirm all existing users defaulted to 'free'
+SELECT tier, COUNT(*) FROM users GROUP BY tier;
+
+-- Confirm usage_counters table and index exist
+SELECT table_name FROM information_schema.tables
+WHERE table_schema = 'public' AND table_name = 'usage_counters';
+
+SELECT indexname FROM pg_indexes WHERE tablename = 'usage_counters';
+```
+
+---
+
 ## Related Documents
 
 - [Database Schema](database-schema.md) — PostgreSQL tables and MongoDB collections
