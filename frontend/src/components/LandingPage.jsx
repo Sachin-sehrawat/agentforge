@@ -1,10 +1,13 @@
 import React from 'react';
+import Hero from './landing/Hero.jsx';
 
-export default function LandingPage({ onGetStarted, onOpenAuth }) {
+export default function LandingPage({ onGetStarted, onOpenAuth, onBrowseMarketplace }) {
   return (
     <main className="landing-page">
-      {/* Hero */}
-      <section className="landing-hero" />
+      <Hero
+        onStartBuilding={onGetStarted}
+        onBrowseMarketplace={onBrowseMarketplace}
+      />
 
       {/* Marketplace preview */}
       <section className="landing-marketplace" />
