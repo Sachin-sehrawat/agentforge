@@ -8,6 +8,7 @@ import { toCanonical } from './serialization/agentSchema.js';
 import { parseJson, parseMarkdown } from './serialization/importAgent.js';
 import { getDb, healthCheck as mongoHealth } from './mongo.js';
 import { TOOL_CATALOG, TOOL_IDS } from './tools/toolDefinitions.js';
+import { isPrivateHostname } from './tools/httpRequest.js';
 import { validatePreferences, validateWorkspaceData, validateDraftInput, validateSignupInput, validateLoginInput, validateBuiltinSkillInput, validatePersonaCategoryInput, validatePersonaInput, validateAgentDefinition, validateTemplateInput, validateRatingInput, validateCategoryInput } from './validation.js';
 import { hashPassword, verifyPassword } from './auth/crypto.js';
 import { signAccessToken } from './auth/token.js';
@@ -87,6 +88,7 @@ app.use('/api/preferences', rateLimit);
 app.use('/api/workspace', rateLimit);
 app.use('/api/drafts', rateLimit);
 app.use('/api/subscriptions', rateLimit);
+app.use('/api/webhooks', rateLimit);
 
 // --- Event log helper -------------------------------------------------------
 // Fire-and-forget: failures are logged but never bubble up to callers.
@@ -1924,6 +1926,155 @@ app.get('/api/audit', requireAuth, async (req, res) => {
       total,
       hasMore: page * pageSize < total,
     });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --- Webhooks ---------------------------------------------------------------
+// Owner-scoped CRUD. Secret returned once on create; masked in all subsequent reads.
+// SSRF guard (hostname check) enforced at registration. Callers must re-apply
+// isPrivateHostname at delivery time to defend against DNS rebinding.
+
+const WEBHOOK_EVENTS_ALLOWLIST = new Set(['agent.subscribed', 'agent.shared', 'agent.forked']);
+const ALLOW_HTTP_WEBHOOKS = process.env.ALLOW_HTTP_WEBHOOKS === 'true';
+
+function validateWebhookUrl(url) {
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return 'url is not a valid URL';
+  }
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    return 'url must use http or https';
+  }
+  if (!ALLOW_HTTP_WEBHOOKS && parsed.protocol !== 'https:') {
+    return 'url must use https://';
+  }
+  if (isPrivateHostname(parsed.hostname)) {
+    return 'url must not resolve to a private, loopback, or link-local address';
+  }
+  return null;
+}
+
+function serializeWebhook(row, exposeSecret = false) {
+  return {
+    id: row.id,
+    ownerId: row.owner_id,
+    url: row.url,
+    events: row.events,
+    secret: exposeSecret ? row.secret : 'sk_***...',
+    active: row.active,
+    createdAt: row.created_at,
+  };
+}
+
+app.post('/api/webhooks', requireAuth, async (req, res) => {
+  const body = req.body ?? {};
+  const url = typeof body.url === 'string' ? body.url.trim() : '';
+  if (!url) return res.status(400).json({ error: 'url is required' });
+  const urlError = validateWebhookUrl(url);
+  if (urlError) return res.status(400).json({ error: urlError });
+
+  if (!Array.isArray(body.events) || body.events.length === 0) {
+    return res.status(400).json({ error: 'events must be a non-empty array' });
+  }
+  const invalidEvents = body.events.filter((e) => !WEBHOOK_EVENTS_ALLOWLIST.has(e));
+  if (invalidEvents.length > 0) {
+    return res.status(400).json({
+      error: `Invalid events: ${invalidEvents.join(', ')}. Allowed: ${[...WEBHOOK_EVENTS_ALLOWLIST].join(', ')}`,
+    });
+  }
+
+  const secret = crypto.randomBytes(32).toString('hex');
+  try {
+    const { rows } = await db.query(
+      `INSERT INTO webhooks (owner_id, url, events, secret)
+       VALUES ($1, $2, $3, $4)
+       RETURNING *`,
+      [req.user.userId, url, body.events, secret]
+    );
+    res.status(201).json(serializeWebhook(rows[0], true));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/webhooks', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await db.query(
+      'SELECT * FROM webhooks WHERE owner_id = $1 ORDER BY created_at DESC',
+      [req.user.userId]
+    );
+    res.json(rows.map((r) => serializeWebhook(r, false)));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/webhooks/:id', requireAuth, async (req, res) => {
+  const ownerId = req.user.userId;
+  const body = req.body ?? {};
+
+  try {
+    const { rows: existing } = await db.query(
+      'SELECT * FROM webhooks WHERE id = $1',
+      [req.params.id]
+    );
+    if (!existing[0]) return res.status(404).json({ error: 'Webhook not found' });
+    if (existing[0].owner_id !== ownerId) return res.status(403).json({ error: 'Forbidden' });
+
+    const current = existing[0];
+    let url = current.url;
+    let events = current.events;
+
+    if (body.url !== undefined) {
+      const urlStr = typeof body.url === 'string' ? body.url.trim() : '';
+      if (!urlStr) return res.status(400).json({ error: 'url is required' });
+      const urlError = validateWebhookUrl(urlStr);
+      if (urlError) return res.status(400).json({ error: urlError });
+      url = urlStr;
+    }
+
+    if (body.events !== undefined) {
+      if (!Array.isArray(body.events) || body.events.length === 0) {
+        return res.status(400).json({ error: 'events must be a non-empty array' });
+      }
+      const invalidEvents = body.events.filter((e) => !WEBHOOK_EVENTS_ALLOWLIST.has(e));
+      if (invalidEvents.length > 0) {
+        return res.status(400).json({
+          error: `Invalid events: ${invalidEvents.join(', ')}. Allowed: ${[...WEBHOOK_EVENTS_ALLOWLIST].join(', ')}`,
+        });
+      }
+      events = body.events;
+    }
+
+    const active = typeof body.active === 'boolean' ? body.active : current.active;
+    const rotateSecret = body.rotateSecret === true;
+    const secret = rotateSecret ? crypto.randomBytes(32).toString('hex') : current.secret;
+
+    const { rows } = await db.query(
+      `UPDATE webhooks SET url = $1, events = $2, active = $3, secret = $4 WHERE id = $5 RETURNING *`,
+      [url, events, active, secret, req.params.id]
+    );
+    res.json(serializeWebhook(rows[0], rotateSecret));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/webhooks/:id', requireAuth, async (req, res) => {
+  const ownerId = req.user.userId;
+  try {
+    const { rows } = await db.query(
+      'SELECT owner_id FROM webhooks WHERE id = $1',
+      [req.params.id]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Webhook not found' });
+    if (rows[0].owner_id !== ownerId) return res.status(403).json({ error: 'Forbidden' });
+    await db.query('DELETE FROM webhooks WHERE id = $1', [req.params.id]);
+    res.status(204).end();
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
