@@ -6,13 +6,11 @@ import { getDb } from './mongo.js';
 const COLLECTIONS = [
   {
     name: 'user_preferences',
-    indexes: [{ key: { userId: 1 }, options: { unique: true, sparse: true } }],
+    indexes: [{ key: { userId: 1 }, options: { unique: true } }],
   },
   {
     name: 'workspace_state',
-    // Keyed by workspaceId, not userId — a workspace is a canvas session.
-    // sparse: true prevents duplicate-null errors from stale dev/test documents.
-    indexes: [{ key: { workspaceId: 1 }, options: { unique: true, sparse: true } }],
+    indexes: [{ key: { workspaceId: 1 }, options: { unique: true } }],
   },
   {
     name: 'draft_agents',

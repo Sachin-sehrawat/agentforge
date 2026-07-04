@@ -996,6 +996,8 @@ export default function App() {
           onGetStarted={() => handleSetView('builder')}
           onBrowseMarketplace={() => handleSetView('marketplace')}
           onOpenAuth={(tab) => setAuthModal({ tab, onSuccess: () => handleSetView('builder') })}
+          isAuthenticated={isAuthenticated}
+          onFork={onFork}
         />
       ) : view === 'agents' && analyticsAgent ? (
         <AgentAnalytics
