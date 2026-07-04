@@ -47,6 +47,8 @@ const DEFAULT_AGENT = {
   positions: {},
   skills: [],
   instructions: [],
+  tags: [],
+  categoryId: null,
 };
 
 // Single workspace per installation; no multi-user auth yet.
@@ -117,6 +119,7 @@ export default function App() {
   const [view, setView] = useState('builder');
   const [builtinSkills, setBuiltinSkills] = useState([]);
   const [personaCategories, setPersonaCategories] = useState([]);
+  const [agentCategories, setAgentCategories] = useState([]);
   const [templates, setTemplates] = useState([]);
   const [customSkills, setCustomSkills] = useState([]);
   const [loadingWorkspace, setLoadingWorkspace] = useState(true);
@@ -171,6 +174,7 @@ export default function App() {
   useEffect(() => {
     api.listBuiltinSkills().then(setBuiltinSkills).catch(() => {});
     api.listPersonaCategories().then(setPersonaCategories).catch(() => {});
+    api.listCategories().then(setAgentCategories).catch(() => {});
     api.listTemplates().then(setTemplates).catch(() => {});
     refreshPublicAgents();
     refreshCustomSkills(false); // initial fetch is unauthenticated; auth effect re-fetches with ownership
@@ -436,6 +440,8 @@ export default function App() {
         positions: agent.positions,
         skills: agent.skills,
         instructions: agent.instructions,
+        tags: agent.tags ?? [],
+        categoryId: agent.categoryId ?? null,
       };
       const result = agent.id ? await api.updateAgent(agent.id, payload) : await api.createAgent(payload);
       setAgent((prev) => ({ ...prev, id: result.id }));
@@ -950,6 +956,7 @@ export default function App() {
           onBulkDelete={onBulkDelete}
           onBulkExport={onBulkExport}
           onAnalytics={(agent) => setAnalyticsAgent({ id: agent.id, name: agent.name })}
+          categories={agentCategories}
         />
       ) : view === 'skills' ? (
         <SkillsPage
@@ -1019,6 +1026,7 @@ export default function App() {
                   onToggleSkill={onToggleSkill}
                   onToggleInstruction={onToggleInstruction}
                   allSkills={allSkills}
+                  agentCategories={agentCategories}
                   zoom={canvasView.zoom}
                   pan={canvasView.pan}
                   onZoomPanChange={handleCanvasViewChange}

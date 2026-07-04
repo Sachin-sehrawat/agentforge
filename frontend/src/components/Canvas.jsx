@@ -19,6 +19,7 @@ export default function Canvas({
   onToggleSkill,
   onToggleInstruction,
   allSkills,
+  agentCategories = [],
   zoom = 1,
   pan = { x: 0, y: 0 },
   onZoomPanChange,
@@ -205,6 +206,7 @@ export default function Canvas({
           onToggleSkill={onToggleSkill}
           onToggleInstruction={onToggleInstruction}
           allSkills={allSkills}
+          categories={agentCategories}
           fieldIssues={validationState ? agentFieldIssues : null}
           onViewSource={onViewSource}
         />

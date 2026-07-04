@@ -31,7 +31,7 @@ function Badge({ label, color }) {
   );
 }
 
-function AgentCard({ agent, onOpen, onDownload, onDelete, onSubscribe, onToggleVisibility, onAnalytics, onDuplicate, isSelected, onToggleSelect }) {
+function AgentCard({ agent, categories = [], onOpen, onDownload, onDelete, onSubscribe, onToggleVisibility, onAnalytics, onDuplicate, isSelected, onToggleSelect }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [confirmPublish, setConfirmPublish] = useState(false);
   const [duplicating, setDuplicating] = useState(false);
@@ -127,6 +127,10 @@ function AgentCard({ agent, onOpen, onDownload, onDelete, onSubscribe, onToggleV
             />
           )}
           {agent.isSubscribed && !agent.isOwned && <Badge label="Subscribed" color="#8b5cf6" />}
+          {(() => {
+            const cat = agent.categoryId ? categories.find((c) => c.id === agent.categoryId) : null;
+            return cat ? <Badge label={cat.label} color={cat.color || '#64748b'} /> : null;
+          })()}
           {hasStats && (
             <>
               <StatPill count={toolCount} label="tool" color="#6366f1" />
@@ -234,7 +238,7 @@ function AgentCard({ agent, onOpen, onDownload, onDelete, onSubscribe, onToggleV
   );
 }
 
-function AgentsList({ agents, search, toolsFilter, tagsFilter, onClearFilters, onOpen, onDownload, onDelete, canDelete, onSubscribe, onToggleVisibility, onAnalytics, onDuplicate, emptyNode, selectedIds, onToggleSelect, onToggleSelectAll }) {
+function AgentsList({ agents, search, toolsFilter, tagsFilter, categoryFilter, categories, onClearFilters, onOpen, onDownload, onDelete, canDelete, onSubscribe, onToggleVisibility, onAnalytics, onDuplicate, emptyNode, selectedIds, onToggleSelect, onToggleSelectAll }) {
   const q = search.trim().toLowerCase();
   const filtered = agents.filter((a) => {
     if (q && !(
@@ -248,6 +252,9 @@ function AgentsList({ agents, search, toolsFilter, tagsFilter, onClearFilters, o
     if (tagsFilter && tagsFilter.size > 0) {
       const agentTags = a.tags || [];
       if (![...tagsFilter].some((t) => agentTags.includes(t))) return false;
+    }
+    if (categoryFilter) {
+      if (a.categoryId !== categoryFilter) return false;
     }
     return true;
   });
@@ -298,6 +305,7 @@ function AgentsList({ agents, search, toolsFilter, tagsFilter, onClearFilters, o
           <AgentCard
             key={agent.id}
             agent={agent}
+            categories={categories}
             onOpen={onOpen}
             onDownload={onDownload}
             onDelete={canDelete && canDelete(agent) ? onDelete : null}
@@ -314,7 +322,7 @@ function AgentsList({ agents, search, toolsFilter, tagsFilter, onClearFilters, o
   );
 }
 
-function TabContent({ agents, loading, error, search, toolsFilter, tagsFilter, onClearFilters, onOpen, onDownload, onDelete, canDelete, onSubscribe, onToggleVisibility, onAnalytics, onDuplicate, emptyNode, selectedIds, onToggleSelect, onToggleSelectAll }) {
+function TabContent({ agents, loading, error, search, toolsFilter, tagsFilter, categoryFilter, categories, onClearFilters, onOpen, onDownload, onDelete, canDelete, onSubscribe, onToggleVisibility, onAnalytics, onDuplicate, emptyNode, selectedIds, onToggleSelect, onToggleSelectAll }) {
   if (loading) {
     return <div className="agents-loading">Loading…</div>;
   }
@@ -327,6 +335,8 @@ function TabContent({ agents, loading, error, search, toolsFilter, tagsFilter, o
       search={search}
       toolsFilter={toolsFilter}
       tagsFilter={tagsFilter}
+      categoryFilter={categoryFilter}
+      categories={categories}
       onClearFilters={onClearFilters}
       onOpen={onOpen}
       onDownload={onDownload}
@@ -524,6 +534,7 @@ export default function AgentsPage({
   errorMine = null,
   errorFavorites = null,
   isAuthenticated = false,
+  categories = [],
   onOpen,
   onDownload,
   onDelete,
@@ -546,6 +557,7 @@ export default function AgentsPage({
   const [bulkBusy, setBulkBusy] = useState(false);
   const [toolsFilter, setToolsFilter] = useState(() => new Set());
   const [tagsFilter, setTagsFilter] = useState(() => new Set());
+  const [categoryFilter, setCategoryFilter] = useState(null);
   const [toolPickerOpen, setToolPickerOpen] = useState(false);
   const [tagPickerOpen, setTagPickerOpen] = useState(false);
   const toolPickerRef = useRef(null);
@@ -577,6 +589,7 @@ export default function AgentsPage({
     setExportPickerOpen(false);
     setToolsFilter(new Set());
     setTagsFilter(new Set());
+    setCategoryFilter(null);
     setToolPickerOpen(false);
     setTagPickerOpen(false);
   }, [activeTab]);
@@ -599,6 +612,7 @@ export default function AgentsPage({
     setSearch('');
     setToolsFilter(new Set());
     setTagsFilter(new Set());
+    setCategoryFilter(null);
   }
 
   function toggleToolFilter(id) {
@@ -785,7 +799,7 @@ export default function AgentsPage({
         </button>
       </div>
 
-      {isMyTab && isAuthenticated && (availableTools.length > 0 || availableTags.length > 0) && (
+      {isMyTab && isAuthenticated && (availableTools.length > 0 || availableTags.length > 0 || categories.length > 0) && (
         <div className="mp-filters my-agents-filters">
           {availableTools.length > 0 && (
             <div className="mp-filter-group" ref={toolPickerRef}>
@@ -867,7 +881,23 @@ export default function AgentsPage({
             </div>
           )}
 
-          {(toolsFilter.size > 0 || tagsFilter.size > 0) && (
+          {categories.length > 0 && (
+            <div className="mp-filter-group">
+              <label className="mp-filter-label">Category</label>
+              <select
+                className="mp-select"
+                value={categoryFilter ?? ''}
+                onChange={(e) => setCategoryFilter(e.target.value || null)}
+              >
+                <option value="">Any category</option>
+                {categories.map((cat) => (
+                  <option key={cat.id} value={cat.id}>{cat.label}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {(toolsFilter.size > 0 || tagsFilter.size > 0 || categoryFilter) && (
             <button
               className="mp-clear-link"
               style={{ alignSelf: 'flex-end', paddingBottom: '7px' }}
@@ -975,6 +1005,8 @@ export default function AgentsPage({
           search={search}
           toolsFilter={toolsFilter}
           tagsFilter={tagsFilter}
+          categoryFilter={categoryFilter}
+          categories={categories}
           onClearFilters={handleClearAllFilters}
           onOpen={onOpen}
           onDownload={onDownload}
@@ -1008,6 +1040,7 @@ export default function AgentsPage({
           loading={loadingPublic}
           error={errorPublic}
           search={search}
+          categories={categories}
           onClearFilters={() => setSearch('')}
           onOpen={onOpen}
           onDownload={onDownload}
