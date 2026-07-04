@@ -16,6 +16,7 @@ import { requireAuth, optionalAuth } from './middleware/auth.js';
 import { enforceQuota, nextMidnightUTC } from './middleware/quota.js';
 import { QUOTA } from './quotaConfig.js';
 import { writeAudit } from './audit.js';
+import { enqueueJob } from './jobs.js';
 
 const app = express();
 app.use(cors());
@@ -99,6 +100,22 @@ function emitEvent(agentId, actorId, type, meta) {
     [agentId, actorId ?? null, type, meta ? JSON.stringify(meta) : null]
   ).catch((err) => {
     console.error(`[event] failed to emit ${type} for agent ${agentId}:`, err.message);
+  });
+}
+
+// Fire-and-forget: enqueue one webhook_delivery job per active matching webhook for the owner.
+function enqueueWebhookJobs(ownerId, event, agentId) {
+  db.query(
+    `SELECT id FROM webhooks WHERE owner_id = $1 AND active = true AND $2 = ANY(events)`,
+    [ownerId, event]
+  ).then(({ rows }) => {
+    for (const { id: webhookId } of rows) {
+      enqueueJob('webhook_delivery', { webhookId, event, agentId }).catch((err) => {
+        console.error(`[webhook] Failed to enqueue ${event} delivery for webhook ${webhookId}:`, err.message);
+      });
+    }
+  }).catch((err) => {
+    console.error(`[webhook] Failed to query webhooks for event ${event}:`, err.message);
   });
 }
 
@@ -769,6 +786,9 @@ app.patch('/api/agents/:id', requireAuth, async (req, res) => {
       after: { visibility: updatedAgent.visibility },
       ip: req.headers['x-forwarded-for'] || req.ip,
     });
+    if (oldVisibility !== 'public' && visibility === 'public') {
+      enqueueWebhookJobs(req.user.userId, 'agent.shared', req.params.id);
+    }
     res.json(serializeAgent(updatedAgent));
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -951,7 +971,7 @@ app.post('/api/agents/:id/subscribe', requireAuth, async (req, res) => {
   const agentId = req.params.id;
   const userId = req.user.userId;
   try {
-    const { rows } = await db.query('SELECT visibility FROM agents WHERE id = $1', [agentId]);
+    const { rows } = await db.query('SELECT visibility, owner_id FROM agents WHERE id = $1', [agentId]);
     if (!rows[0]) return res.status(404).json({ error: 'Agent not found' });
     if (rows[0].visibility !== 'public') {
       return res.status(403).json({ error: 'Cannot subscribe to a private agent' });
@@ -961,6 +981,7 @@ app.post('/api/agents/:id/subscribe', requireAuth, async (req, res) => {
       [userId, agentId]
     );
     emitEvent(agentId, userId, 'subscribe', null);
+    enqueueWebhookJobs(rows[0].owner_id, 'agent.subscribed', agentId);
     res.status(200).json({ userId, agentId });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1148,7 +1169,7 @@ app.post('/api/agents/:id/fork', requireAuth, async (req, res) => {
   const callerId = req.user.userId;
 
   try {
-    const { newAgent, skillWarnings, sourceName } = await withClient(async (client) => {
+    const { newAgent, skillWarnings, sourceName, sourceOwnerId } = await withClient(async (client) => {
       const { rows: sourceRows } = await client.query(
         'SELECT * FROM agents WHERE id = $1',
         [sourceId]
@@ -1214,10 +1235,11 @@ app.post('/api/agents/:id/fork', requireAuth, async (req, res) => {
         [newId, hash, JSON.stringify(canonical), `Forked from ${sourceId}`, callerId]
       );
 
-      return { newAgent: agent, skillWarnings: warnings, sourceName: source.name };
+      return { newAgent: agent, skillWarnings: warnings, sourceName: source.name, sourceOwnerId: source.owner_id };
     });
 
     emitEvent(sourceId, callerId, 'fork', null);
+    enqueueWebhookJobs(sourceOwnerId, 'agent.forked', sourceId);
     res.status(201).json({ ...serializeAgent({ ...newAgent, forked_from_name: sourceName }), skillWarnings });
   } catch (err) {
     if (err.statusCode === 404) return res.status(404).json({ error: err.message });
