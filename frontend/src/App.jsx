@@ -983,6 +983,7 @@ export default function App() {
           onPersonaCategoriesChange={setPersonaCategories}
           onTemplatesChange={setTemplates}
           isAuthenticated={isAuthenticated}
+          user={user}
           onOpenAuth={(tab) => setAuthModal({ tab, onSuccess: null })}
         />
       ) : (

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { api } from '../api.js';
 
 // ── Color presets (shared between skill and category forms) ─────────────────
@@ -633,8 +633,253 @@ function PersonasTab({ categories, onCategoriesChange, isAuthenticated, onOpenAu
   );
 }
 
+// ── JSON diff helper ────────────────────────────────────────────────────────
+function JsonDiff({ before, after }) {
+  if (before == null && after == null) return <span className="audit-no-diff">—</span>;
+
+  const allKeys = new Set([
+    ...Object.keys(before ?? {}),
+    ...Object.keys(after ?? {}),
+  ]);
+
+  const changed = [...allKeys].filter(
+    (k) => JSON.stringify((before ?? {})[k]) !== JSON.stringify((after ?? {})[k])
+  );
+
+  if (changed.length === 0) {
+    return <span className="audit-no-diff">No field changes</span>;
+  }
+
+  return (
+    <table className="audit-diff-table">
+      <thead>
+        <tr>
+          <th>Field</th>
+          <th>Before</th>
+          <th>After</th>
+        </tr>
+      </thead>
+      <tbody>
+        {changed.map((k) => (
+          <tr key={k}>
+            <td className="audit-diff-key">{k}</td>
+            <td className="audit-diff-before">
+              {before != null && k in before
+                ? <code>{JSON.stringify((before)[k], null, 2)}</code>
+                : <span className="audit-absent">—</span>}
+            </td>
+            <td className="audit-diff-after">
+              {after != null && k in after
+                ? <code>{JSON.stringify((after)[k], null, 2)}</code>
+                : <span className="audit-absent">—</span>}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+// ── Audit log tab ────────────────────────────────────────────────────────────
+const ACTION_OPTIONS = [
+  '', 'agent.create', 'agent.update', 'agent.delete', 'agent.visibility_change',
+  'skill.create', 'skill.update', 'skill.delete',
+];
+const ENTITY_OPTIONS = ['', 'agent', 'skill', 'user'];
+
+function AuditLogTab({ user }) {
+  const [filters, setFilters] = useState({ action: '', entityType: '', from: '', to: '' });
+  const [page, setPage] = useState(1);
+  const [result, setResult] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [expanded, setExpanded] = useState(null);
+
+  const load = useCallback(async (f, p) => {
+    setLoading(true);
+    setError('');
+    try {
+      const data = await api.getAuditLog({ ...f, page: p, pageSize: 20 });
+      setResult(data);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    load(filters, page);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function handleFilter(e) {
+    e.preventDefault();
+    setPage(1);
+    setExpanded(null);
+    load(filters, 1);
+  }
+
+  function handlePageChange(next) {
+    setPage(next);
+    setExpanded(null);
+    load(filters, next);
+  }
+
+  function toggleExpand(id) {
+    setExpanded((prev) => (prev === id ? null : id));
+  }
+
+  if (!user?.isAdmin) {
+    return <p className="filter-empty">Access restricted to administrators.</p>;
+  }
+
+  return (
+    <div>
+      <div className="agents-page-header">
+        <div>
+          <h2 className="agents-page-title">Audit Log</h2>
+          {result && (
+            <p className="agents-page-sub">{result.total} record{result.total !== 1 ? 's' : ''}</p>
+          )}
+        </div>
+      </div>
+
+      <form className="audit-filters" onSubmit={handleFilter}>
+        <div className="audit-filter-row">
+          <div className="field-group audit-filter-field">
+            <label className="field-label">Action</label>
+            <select
+              className="field-input"
+              value={filters.action}
+              onChange={(e) => setFilters((f) => ({ ...f, action: e.target.value }))}
+            >
+              {ACTION_OPTIONS.map((a) => (
+                <option key={a} value={a}>{a || 'All actions'}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="field-group audit-filter-field">
+            <label className="field-label">Entity type</label>
+            <select
+              className="field-input"
+              value={filters.entityType}
+              onChange={(e) => setFilters((f) => ({ ...f, entityType: e.target.value }))}
+            >
+              {ENTITY_OPTIONS.map((t) => (
+                <option key={t} value={t}>{t || 'All types'}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="field-group audit-filter-field">
+            <label className="field-label">From</label>
+            <input
+              type="date"
+              className="field-input"
+              value={filters.from}
+              onChange={(e) => setFilters((f) => ({ ...f, from: e.target.value }))}
+            />
+          </div>
+
+          <div className="field-group audit-filter-field">
+            <label className="field-label">To</label>
+            <input
+              type="date"
+              className="field-input"
+              value={filters.to}
+              onChange={(e) => setFilters((f) => ({ ...f, to: e.target.value }))}
+            />
+          </div>
+
+          <div className="audit-filter-actions">
+            <button type="submit" className="btn primary" disabled={loading}>
+              {loading ? 'Loading…' : 'Apply'}
+            </button>
+            <button
+              type="button"
+              className="btn"
+              onClick={() => {
+                const cleared = { action: '', entityType: '', from: '', to: '' };
+                setFilters(cleared);
+                setPage(1);
+                setExpanded(null);
+                load(cleared, 1);
+              }}
+            >
+              Clear
+            </button>
+          </div>
+        </div>
+      </form>
+
+      {error && <p className="field-error-msg" style={{ marginBottom: 12 }}>{error}</p>}
+
+      {result && result.items.length === 0 && (
+        <p className="filter-empty">No audit records match the current filters.</p>
+      )}
+
+      {result && result.items.length > 0 && (
+        <>
+          <div className="audit-list">
+            {result.items.map((item) => (
+              <div key={item.id} className="audit-row">
+                <button
+                  className="audit-row-summary"
+                  onClick={() => toggleExpand(item.id)}
+                  type="button"
+                >
+                  <span className="audit-action">{item.action}</span>
+                  <span className="audit-entity">{item.entityType} <code className="audit-id">{item.entityId}</code></span>
+                  <span className="audit-actor">
+                    {item.actorEmailSnapshot || item.actorId || 'system'}
+                  </span>
+                  <span className="audit-time">
+                    {new Date(item.createdAt).toLocaleString()}
+                  </span>
+                  <span className="audit-chevron">{expanded === item.id ? '▲' : '▼'}</span>
+                </button>
+
+                {expanded === item.id && (
+                  <div className="audit-detail">
+                    <div className="audit-detail-meta">
+                      <span><strong>ID:</strong> {item.id}</span>
+                      {item.ip && <span><strong>IP:</strong> {item.ip}</span>}
+                    </div>
+                    <JsonDiff before={item.before} after={item.after} />
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+
+          <div className="audit-pagination">
+            <button
+              className="btn"
+              disabled={page <= 1}
+              onClick={() => handlePageChange(page - 1)}
+            >
+              ← Prev
+            </button>
+            <span className="audit-page-info">
+              Page {page} of {Math.ceil(result.total / result.pageSize) || 1}
+            </span>
+            <button
+              className="btn"
+              disabled={!result.hasMore}
+              onClick={() => handlePageChange(page + 1)}
+            >
+              Next →
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 // ── AdminPage root ───────────────────────────────────────────────────────────
-export default function AdminPage({ builtinSkills, personaCategories, templates, onBuiltinSkillsChange, onPersonaCategoriesChange, onTemplatesChange, isAuthenticated, onOpenAuth }) {
+export default function AdminPage({ builtinSkills, personaCategories, templates, onBuiltinSkillsChange, onPersonaCategoriesChange, onTemplatesChange, isAuthenticated, user, onOpenAuth }) {
   const [tab, setTab] = useState('skills');
 
   return (
@@ -656,6 +901,11 @@ export default function AdminPage({ builtinSkills, personaCategories, templates,
         <button className={`admin-tab${tab === 'templates' ? ' active' : ''}`} onClick={() => setTab('templates')}>
           Templates
         </button>
+        {user?.isAdmin && (
+          <button className={`admin-tab${tab === 'audit' ? ' active' : ''}`} onClick={() => setTab('audit')}>
+            Audit Log
+          </button>
+        )}
       </div>
 
       <div className="admin-tab-content">
@@ -673,6 +923,8 @@ export default function AdminPage({ builtinSkills, personaCategories, templates,
             isAuthenticated={isAuthenticated}
             onOpenAuth={onOpenAuth}
           />
+        ) : tab === 'audit' ? (
+          <AuditLogTab user={user} />
         ) : (
           <TemplatesTab
             templates={templates}

@@ -1837,6 +1837,96 @@ app.delete('/api/categories/:id', requireAuth, async (req, res) => {
   }
 });
 
+// --- Audit log query (admin-only) -----------------------------------------
+// Supports filtering by actorId, entityType, entityId, action, from/to dates.
+// Paginated newest-first; exposes actorEmailSnapshot only to admins.
+
+const UUID_RE_AUDIT = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+app.get('/api/audit', requireAuth, async (req, res) => {
+  try {
+    const { rows: userRows } = await db.query(
+      'SELECT is_admin FROM users WHERE id = $1',
+      [req.user.userId]
+    );
+    if (!userRows[0]?.is_admin) return res.status(403).json({ error: 'Forbidden' });
+
+    const { actorId, entityType, entityId, action, from, to } = req.query;
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const pageSize = Math.min(100, Math.max(1, parseInt(req.query.pageSize, 10) || 20));
+    const offset = (page - 1) * pageSize;
+
+    const conditions = [];
+    const filterParams = [];
+
+    if (actorId && UUID_RE_AUDIT.test(actorId)) {
+      filterParams.push(actorId);
+      conditions.push(`actor_id = $${filterParams.length}`);
+    }
+    if (entityType && typeof entityType === 'string') {
+      filterParams.push(entityType.trim());
+      conditions.push(`entity_type = $${filterParams.length}`);
+    }
+    if (entityId && UUID_RE_AUDIT.test(entityId)) {
+      filterParams.push(entityId);
+      conditions.push(`entity_id = $${filterParams.length}`);
+    }
+    if (action && typeof action === 'string') {
+      filterParams.push(action.trim());
+      conditions.push(`action = $${filterParams.length}`);
+    }
+    if (from) {
+      const d = new Date(from);
+      if (!isNaN(d)) { filterParams.push(d.toISOString()); conditions.push(`created_at >= $${filterParams.length}`); }
+    }
+    if (to) {
+      const d = new Date(to);
+      if (!isNaN(d)) { filterParams.push(d.toISOString()); conditions.push(`created_at <= $${filterParams.length}`); }
+    }
+
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    const dataParams = [...filterParams];
+    dataParams.push(pageSize);
+    const pageSizeRef = `$${dataParams.length}`;
+    dataParams.push(offset);
+    const offsetRef = `$${dataParams.length}`;
+
+    const [{ rows }, { rows: countRows }] = await Promise.all([
+      db.query(
+        `SELECT id, actor_id, actor_email_snapshot, action, entity_type, entity_id, before, after, ip, created_at
+         FROM audit_log ${where}
+         ORDER BY created_at DESC
+         LIMIT ${pageSizeRef} OFFSET ${offsetRef}`,
+        dataParams
+      ),
+      db.query(`SELECT COUNT(*)::int AS total FROM audit_log ${where}`, filterParams),
+    ]);
+
+    const total = countRows[0].total;
+    res.json({
+      items: rows.map((r) => ({
+        id: String(r.id),
+        actorId: r.actor_id,
+        actorEmailSnapshot: r.actor_email_snapshot,
+        action: r.action,
+        entityType: r.entity_type,
+        entityId: r.entity_id,
+        before: r.before,
+        after: r.after,
+        ip: r.ip,
+        createdAt: r.created_at,
+      })),
+      page,
+      pageSize,
+      total,
+      hasMore: page * pageSize < total,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // --- Health checks --------------------------------------------------------
 
 app.get('/api/health', async (req, res) => {
@@ -2146,6 +2236,7 @@ function serializeUser(row) {
     email: row.email,
     displayName: row.display_name,
     authProvider: row.auth_provider,
+    isAdmin: row.is_admin ?? false,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
