@@ -17,6 +17,7 @@ import VersionHistoryPanel from './components/VersionHistoryPanel.jsx';
 import ValidationPanel from './components/ValidationPanel.jsx';
 import ErrorBoundary from './components/ErrorBoundary.jsx';
 import ShortcutsOverlay from './components/ShortcutsOverlay.jsx';
+import QuotaUpgradeModal from './components/QuotaUpgradeModal.jsx';
 import { api } from './api.js';
 import { useAuth } from './AuthContext.jsx';
 import { TOOL_META } from './toolMeta.jsx';
@@ -139,6 +140,8 @@ export default function App() {
 
   const [validationState, setValidationState] = useState(null);
   const [toasts, setToasts] = useState([]);
+  const [quota, setQuota] = useState(null);
+  const [quotaError, setQuotaError] = useState(null);
 
   const isRestoredRef = useRef(false);
   const autosaveTimerRef = useRef(null);
@@ -274,6 +277,22 @@ export default function App() {
       refreshCustomSkills(false);
     }
   }, [isAuthenticated]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Fetch quota for free users; clear it on logout or when user upgrades.
+  useEffect(() => {
+    if (!isAuthenticated || user?.tier !== 'free') {
+      setQuota(null);
+      api.invalidateQuota();
+      return;
+    }
+    api.getQuota().then(setQuota).catch(() => {});
+  }, [isAuthenticated, user?.tier]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function refreshQuota() {
+    if (!isAuthenticated || user?.tier !== 'free') return;
+    api.invalidateQuota();
+    api.getQuota().then(setQuota).catch(() => {});
+  }
 
   function refreshPublicAgents() {
     setLoadingPublic(true);
@@ -448,8 +467,13 @@ export default function App() {
       refreshSavedAgents();
       // Clear workspace draft after a successful save
       api.saveWorkspaceData(WORKSPACE_ID, { agent: { ...payload, id: result.id } });
+      refreshQuota();
     } catch (err) {
-      console.error('Could not save:', err.message);
+      if (err.status === 429 && err.quotaInfo) {
+        setQuotaError({ action: 'save', ...err.quotaInfo });
+      } else {
+        console.error('Could not save:', err.message);
+      }
     } finally {
       setSaving(false);
     }
@@ -670,17 +694,34 @@ export default function App() {
     }
   };
 
+  const doExport = async (target) => {
+    if (isAuthenticated && target.id) {
+      try {
+        await api.recordExportEvent(target.id);
+        refreshQuota();
+      } catch (err) {
+        if (err.status === 429 && err.quotaInfo) {
+          setQuotaError({ action: 'export', ...err.quotaInfo });
+          return;
+        }
+        // Non-quota errors: log but don't block the download
+        console.error('Export event failed:', err.message);
+      }
+    }
+    downloadMd(target);
+  };
+
   const onDownload = (agentData) => {
     const target = agentData || agent;
     // Only validate the current canvas agent, not saved agents opened from the list
     if (!agentData || agentData === agent) {
       const { errors, warnings } = validateAgentDefinition(target, buildValidationOpts());
       if (errors.length > 0 || warnings.length > 0) {
-        setValidationState({ errors, warnings, action: 'export', onConfirm: () => downloadMd(target) });
+        setValidationState({ errors, warnings, action: 'export', onConfirm: () => doExport(target) });
         return;
       }
     }
-    downloadMd(target);
+    doExport(target);
   };
 
   const handleValidationItemClick = useCallback((issue) => {
@@ -867,6 +908,7 @@ export default function App() {
         isAuthenticated={isAuthenticated}
         theme={theme}
         onThemeChange={handleThemeChange}
+        quota={quota}
       />
 
       {importOpen && (
@@ -908,6 +950,16 @@ export default function App() {
 
       {shortcutsOpen && (
         <ShortcutsOverlay onClose={() => setShortcutsOpen(false)} />
+      )}
+
+      {quotaError && (
+        <QuotaUpgradeModal
+          action={quotaError.action}
+          limit={quotaError.limit}
+          used={quotaError.used}
+          resetsAt={quotaError.resetsAt}
+          onClose={() => setQuotaError(null)}
+        />
       )}
 
       {validationState && (

@@ -2220,6 +2220,32 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
+app.get('/api/me/quota', requireAuth, async (req, res) => {
+  const userId = req.user.userId;
+  try {
+    const { rows: userRows } = await db.query('SELECT tier FROM users WHERE id = $1', [userId]);
+    const tier = userRows[0]?.tier ?? 'free';
+    const tierLimits = QUOTA[tier] ?? QUOTA.free;
+
+    const { rows } = await db.query(
+      'SELECT action, count FROM usage_counters WHERE user_id = $1 AND period = CURRENT_DATE',
+      [userId]
+    );
+
+    const usageMap = Object.fromEntries(rows.map((r) => [r.action, r.count]));
+    const resetsAt = nextMidnightUTC();
+
+    const buildUsage = (action) => {
+      const limit = tierLimits[action];
+      return { used: usageMap[action] ?? 0, limit: limit === Infinity ? null : limit, resetsAt };
+    };
+
+    res.json({ tier, usage: { save: buildUsage('save'), export: buildUsage('export') } });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/auth/me', requireAuth, async (req, res) => {
   try {
     const { rows } = await db.query('SELECT * FROM users WHERE id = $1', [req.user.userId]);

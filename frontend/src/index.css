@@ -274,6 +274,52 @@ button {
   color: var(--accent-violet);
   box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.1);
 }
+.quota-badge {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  background: rgba(99, 102, 241, 0.12);
+  color: var(--text-muted);
+  border-radius: 999px;
+  padding: 1px 6px;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+.quota-badge.quota-badge-warn {
+  background: rgba(245, 158, 11, 0.15);
+  color: #d97706;
+}
+.quota-upgrade-body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 24px 8px 8px;
+  text-align: center;
+}
+.quota-upgrade-icon {
+  font-size: 36px;
+  line-height: 1;
+}
+.quota-upgrade-message {
+  font-size: 15px;
+  color: var(--text);
+  margin: 0;
+}
+.quota-upgrade-reset {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin: 0;
+}
+.quota-upgrade-cta-text {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin: 0;
+}
+.quota-upgrade-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
 .btn.subtle {
   background: transparent;
   border-color: transparent;

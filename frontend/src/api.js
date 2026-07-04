@@ -30,14 +30,19 @@ async function request(path, options = {}) {
 
   if (!res.ok) {
     let message = `Request failed (${res.status})`;
+    let quotaInfo = null;
     try {
       const data = await res.json();
       if (data?.error) message = data.error;
+      if (res.status === 429) {
+        quotaInfo = { limit: data.limit, used: data.used, resetsAt: data.resetsAt, tier: data.tier };
+      }
     } catch {
       // ignore parse errors
     }
     const err = new Error(message);
     err.status = res.status;
+    if (quotaInfo) err.quotaInfo = quotaInfo;
 
     if (res.status === 401) {
       const hadToken = !!_token;
@@ -78,10 +83,33 @@ function cacheDelete(key) {
 // Tracks server-side updatedAt timestamps for workspace conflict detection
 const _serverTimestamps = new Map();
 
+// Separate quota cache with 60s TTL
+const _quotaCache = { value: undefined, ts: 0 };
+const QUOTA_TTL_MS = 60_000;
+
+function quotaCacheGet() {
+  if (_quotaCache.value === undefined) return undefined;
+  if (Date.now() - _quotaCache.ts > QUOTA_TTL_MS) {
+    _quotaCache.value = undefined;
+    return undefined;
+  }
+  return _quotaCache.value;
+}
+
+function quotaCacheSet(value) {
+  _quotaCache.value = value;
+  _quotaCache.ts = Date.now();
+}
+
+function quotaCacheDelete() {
+  _quotaCache.value = undefined;
+}
+
 // Exposed so tests can reset module-level state between runs
 export function _clearCache() {
   _cache.clear();
   _serverTimestamps.clear();
+  quotaCacheDelete();
   _token = null;
   _on401Handler = null;
 }
@@ -230,6 +258,18 @@ export const api = {
   createPersona: (categoryId, persona) => request(`/personas/${categoryId}/personas`, { method: 'POST', body: JSON.stringify(persona) }),
   updatePersona: (categoryId, personaId, persona) => request(`/personas/${categoryId}/personas/${personaId}`, { method: 'PUT', body: JSON.stringify(persona) }),
   deletePersona: (categoryId, personaId) => request(`/personas/${categoryId}/personas/${personaId}`, { method: 'DELETE' }),
+
+  // --- Quota ---------------------------------------------------------------
+  getQuota: async () => {
+    const cached = quotaCacheGet();
+    if (cached !== undefined) return cached;
+    const data = await request('/me/quota');
+    quotaCacheSet(data);
+    return data;
+  },
+  invalidateQuota: () => quotaCacheDelete(),
+  recordExportEvent: (agentId) =>
+    request(`/agents/${agentId}/export-event`, { method: 'POST' }),
 
   // --- Auth ----------------------------------------------------------------
   signup: (email, password, display_name) =>
