@@ -1,6 +1,7 @@
 import React from 'react';
 import Hero from './landing/Hero.jsx';
 import MarketplaceStrip from './landing/MarketplaceStrip.jsx';
+import StatsBar from './landing/StatsBar.jsx';
 
 export default function LandingPage({ onGetStarted, onOpenAuth, onBrowseMarketplace, isAuthenticated, onFork }) {
   return (
@@ -24,7 +25,9 @@ export default function LandingPage({ onGetStarted, onOpenAuth, onBrowseMarketpl
       <section className="landing-features" />
 
       {/* Stats */}
-      <section className="landing-stats" />
+      <section className="landing-stats">
+        <StatsBar />
+      </section>
 
       {/* How it works */}
       <section className="landing-how-it-works" />

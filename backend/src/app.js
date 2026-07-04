@@ -2222,6 +2222,25 @@ app.get('/api/metrics', (req, res) => {
   });
 });
 
+// --- Platform stats --------------------------------------------------------
+
+app.get('/api/stats', async (req, res) => {
+  try {
+    const [agents, forks, skills] = await Promise.all([
+      query('SELECT COUNT(*) FROM agents WHERE visibility = $1', ['public']),
+      query('SELECT COALESCE(SUM(fork_count), 0) AS total FROM agents'),
+      query('SELECT COUNT(*) FROM custom_skills WHERE visibility = $1', ['public']),
+    ]);
+    res.json({
+      agentsPublished: parseInt(agents.rows[0].count, 10),
+      forksMade:       parseInt(forks.rows[0].total, 10),
+      skillsShared:    parseInt(skills.rows[0].count, 10),
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch stats' });
+  }
+});
+
 // --- User Preferences (MongoDB) -------------------------------------------
 
 app.get('/api/preferences/:userId', async (req, res) => {
