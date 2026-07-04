@@ -51,7 +51,13 @@ export default function Topbar({
   isAuthenticated,
   theme = 'system',
   onThemeChange,
+  quota,
 }) {
+  const isFree = user?.tier === 'free';
+  const exportUsage = isFree && quota?.usage?.export;
+  const saveUsage = isFree && quota?.usage?.save;
+  const exportRemaining = exportUsage ? exportUsage.limit - exportUsage.used : null;
+  const saveRemaining = saveUsage ? saveUsage.limit - saveUsage.used : null;
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef(null);
 
@@ -222,10 +228,20 @@ export default function Topbar({
               <line x1="12" y1="15" x2="12" y2="3" />
             </svg>
             Export MD
+            {exportRemaining !== null && (
+              <span className={`quota-badge${exportRemaining <= 2 ? ' quota-badge-warn' : ''}`}>
+                {exportRemaining} left
+              </span>
+            )}
           </button>
           <button className="btn" onClick={onNew}>New</button>
           <button className="btn primary" onClick={onSave} disabled={saving}>
             {saving ? 'Saving…' : 'Save agent'}
+            {!saving && saveRemaining !== null && (
+              <span className={`quota-badge${saveRemaining <= 5 ? ' quota-badge-warn' : ''}`}>
+                {saveRemaining} left
+              </span>
+            )}
           </button>
         </div>
       )}
