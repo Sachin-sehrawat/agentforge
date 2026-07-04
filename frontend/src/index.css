@@ -5122,3 +5122,215 @@ button {
     animation: none;
   }
 }
+
+/* === Landing: Marketplace Strip === */
+
+.marketplace-strip {
+  padding: 56px 48px 64px;
+  max-width: 1200px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.marketplace-strip__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 24px;
+  gap: 16px;
+}
+
+.marketplace-strip__title {
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text);
+  margin: 0;
+}
+
+.marketplace-strip__view-all {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--accent);
+  padding: 0;
+  transition: opacity 0.15s;
+  white-space: nowrap;
+}
+
+.marketplace-strip__view-all:hover {
+  opacity: 0.75;
+}
+
+.marketplace-strip__carousel {
+  display: flex;
+  gap: 16px;
+  overflow-x: auto;
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  padding-bottom: 8px;
+}
+
+.marketplace-strip__carousel::-webkit-scrollbar {
+  display: none;
+}
+
+/* === Strip card (extends agent-card pattern) === */
+
+.marketplace-strip__card {
+  flex: 0 0 240px;
+  min-width: 240px;
+  background: var(--panel);
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s;
+}
+
+.marketplace-strip__card::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    30deg,
+    transparent 30%,
+    rgba(255, 255, 255, 0.12) 50%,
+    transparent 70%
+  );
+  background-size: 200% 100%;
+  background-position: -200% 0;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.1s;
+}
+
+.marketplace-strip__card:hover {
+  transform: scale(1.02);
+  border-color: rgba(99, 102, 241, 0.3);
+  box-shadow: 0 6px 20px rgba(99, 102, 241, 0.14), 0 1px 4px rgba(0, 0, 0, 0.06);
+}
+
+.marketplace-strip__card:hover::after {
+  opacity: 1;
+  animation: strip-card-shimmer 0.4s ease forwards;
+}
+
+@keyframes strip-card-shimmer {
+  from { background-position: -200% 0; }
+  to   { background-position: 200% 0; }
+}
+
+.marketplace-strip__card-body {
+  flex: 1;
+  padding: 16px 16px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.marketplace-strip__card-name {
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.marketplace-strip__card-persona {
+  font-size: 12px;
+  color: var(--text-muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  line-height: 1.45;
+}
+
+.marketplace-strip__card-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.marketplace-strip__card-footer {
+  padding: 10px 16px 14px;
+}
+
+.marketplace-strip__fork-btn {
+  width: 100%;
+  justify-content: center;
+}
+
+/* === Skeleton loader === */
+
+.marketplace-strip__skeleton {
+  flex: 0 0 240px;
+  min-width: 240px;
+  background: var(--panel);
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.marketplace-strip__skeleton-line {
+  border-radius: 4px;
+  background: var(--border-soft);
+  animation: strip-skeleton-pulse 1.6s ease-in-out infinite;
+}
+
+.marketplace-strip__skeleton-line--title {
+  height: 14px;
+  width: 70%;
+}
+
+.marketplace-strip__skeleton-line--sub {
+  height: 11px;
+  width: 90%;
+}
+
+.marketplace-strip__skeleton-chips {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.marketplace-strip__skeleton-chip {
+  height: 20px;
+  width: 56px;
+  border-radius: 4px;
+  background: var(--border-soft);
+  animation: strip-skeleton-pulse 1.6s ease-in-out infinite;
+}
+
+.marketplace-strip__skeleton-chip:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+@keyframes strip-skeleton-pulse {
+  0%, 100% { opacity: 0.5; }
+  50%       { opacity: 1; }
+}
+
+@media (max-width: 640px) {
+  .marketplace-strip {
+    padding: 40px 20px 48px;
+  }
+
+  .marketplace-strip__card,
+  .marketplace-strip__skeleton {
+    flex: 0 0 200px;
+    min-width: 200px;
+  }
+}
