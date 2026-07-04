@@ -322,6 +322,21 @@ export const api = {
     return request(`/audit${qs.toString() ? `?${qs}` : ''}`);
   },
 
+  // --- Webhooks ------------------------------------------------------------
+  listWebhooks: () => request('/webhooks'),
+  createWebhook: (data) => request('/webhooks', { method: 'POST', body: JSON.stringify(data) }),
+  updateWebhook: (id, data) => request(`/webhooks/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteWebhook: (id) => request(`/webhooks/${id}`, { method: 'DELETE' }),
+  rotateWebhookSecret: (id) =>
+    request(`/webhooks/${id}`, { method: 'PUT', body: JSON.stringify({ rotateSecret: true }) }),
+  getWebhookDeliveries: (id, params = {}) => {
+    const qs = new URLSearchParams();
+    if (params.page > 1) qs.set('page', String(params.page));
+    if (params.limit) qs.set('limit', String(params.limit));
+    return request(`/webhooks/${id}/deliveries${qs.toString() ? `?${qs}` : ''}`);
+  },
+  sendWebhookTest: (id) => request(`/webhooks/${id}/test`, { method: 'POST' }),
+
   // --- Health ---------------------------------------------------------------
   health: () => request('/health'),
 

@@ -2102,6 +2102,80 @@ app.delete('/api/webhooks/:id', requireAuth, async (req, res) => {
   }
 });
 
+// Paginated delivery log for a single webhook (owner-only).
+app.get('/api/webhooks/:id/deliveries', requireAuth, async (req, res) => {
+  const ownerId = req.user.userId;
+  const limit = Math.min(50, Math.max(1, parseInt(req.query.limit, 10) || 20));
+  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const offset = (page - 1) * limit;
+
+  try {
+    const { rows: wh } = await db.query(
+      'SELECT owner_id FROM webhooks WHERE id = $1',
+      [req.params.id]
+    );
+    if (!wh[0]) return res.status(404).json({ error: 'Webhook not found' });
+    if (wh[0].owner_id !== ownerId) return res.status(403).json({ error: 'Forbidden' });
+
+    const [{ rows }, { rows: countRows }] = await Promise.all([
+      db.query(
+        `SELECT id, event, agent_id, delivery_id, attempt, status_code, error, created_at
+         FROM webhook_deliveries
+         WHERE webhook_id = $1
+         ORDER BY created_at DESC
+         LIMIT $2 OFFSET $3`,
+        [req.params.id, limit, offset]
+      ),
+      db.query(
+        'SELECT COUNT(*)::int AS total FROM webhook_deliveries WHERE webhook_id = $1',
+        [req.params.id]
+      ),
+    ]);
+
+    res.json({
+      items: rows.map((r) => ({
+        id: r.id,
+        event: r.event,
+        agentId: r.agent_id,
+        deliveryId: r.delivery_id,
+        attempt: r.attempt,
+        statusCode: r.status_code,
+        error: r.error,
+        createdAt: r.created_at,
+      })),
+      total: countRows[0].total,
+      page,
+      limit,
+      hasMore: page * limit < countRows[0].total,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Enqueue a sample agent.subscribed delivery so the owner can verify their endpoint.
+app.post('/api/webhooks/:id/test', requireAuth, async (req, res) => {
+  const ownerId = req.user.userId;
+  try {
+    const { rows } = await db.query(
+      'SELECT owner_id, active FROM webhooks WHERE id = $1',
+      [req.params.id]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Webhook not found' });
+    if (rows[0].owner_id !== ownerId) return res.status(403).json({ error: 'Forbidden' });
+    if (!rows[0].active) return res.status(400).json({ error: 'Webhook is disabled' });
+
+    await enqueueJob('webhook_delivery', {
+      webhookId: req.params.id,
+      event: 'agent.subscribed',
+      agentId: null,
+    });
+    res.status(202).json({ queued: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // --- Health checks --------------------------------------------------------
 
 app.get('/api/health', async (req, res) => {

@@ -111,6 +111,14 @@ export default function Topbar({
         </button>
         {isAuthenticated && (
           <button
+            className={`topbar-nav-item${view === 'developer' ? ' active' : ''}`}
+            onClick={() => onSetView('developer')}
+          >
+            Developer
+          </button>
+        )}
+        {isAuthenticated && (
+          <button
             className={`topbar-nav-item${view === 'admin' ? ' active' : ''}`}
             onClick={() => onSetView('admin')}
           >
