@@ -342,6 +342,7 @@ app.get('/api/agents/marketplace', optionalAuth, async (req, res) => {
   const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
   const model = typeof req.query.model === 'string' ? req.query.model.trim() : '';
   const toolsRaw = typeof req.query.tools === 'string' ? req.query.tools.trim() : '';
+  const categoryId = typeof req.query.categoryId === 'string' ? req.query.categoryId.trim() : '';
   const sort = ['recent', 'popular', 'top_rated', 'most_forked'].includes(req.query.sort)
     ? req.query.sort
     : 'recent';
@@ -383,6 +384,11 @@ app.get('/api/agents/marketplace', optionalAuth, async (req, res) => {
     );
   }
 
+  if (categoryId) {
+    filterParams.push(categoryId);
+    conditions.push(`a.category_id = $${filterParams.length}`);
+  }
+
   const where = conditions.join(' AND ');
 
   const orderBy = {
@@ -418,7 +424,7 @@ app.get('/api/agents/marketplace', optionalAuth, async (req, res) => {
     const [{ rows }, { rows: countRows }] = await Promise.all([
       db.query(
         `SELECT
-           a.id, a.name, a.persona, a.model, a.tools,
+           a.id, a.name, a.persona, a.model, a.tools, a.category_id,
            a.fork_count, a.favorite_count, a.rating_sum, a.rating_count,
            CASE WHEN a.rating_count > 0
                 THEN a.rating_sum::float / a.rating_count
@@ -447,6 +453,7 @@ app.get('/api/agents/marketplace', optionalAuth, async (req, res) => {
         persona: r.persona,
         model: r.model,
         tools: r.tools ?? [],
+        categoryId: r.category_id ?? null,
         ownerDisplayName: r.owner_display_name ?? null,
         avgRating: r.avg_rating != null ? Number(r.avg_rating) : null,
         ratingCount: r.rating_count,

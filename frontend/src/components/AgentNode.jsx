@@ -10,7 +10,7 @@ const TAG_MAX_LENGTH = 30;
 const TAG_MAX_COUNT = 10;
 
 const AgentNode = React.forwardRef(function AgentNode(
-  { position, agent, onChange, onHeaderPointerDown, onToggleSkill, onToggleInstruction, allSkills, fieldIssues, onViewSource },
+  { position, agent, onChange, onHeaderPointerDown, onToggleSkill, onToggleInstruction, allSkills, categories = [], fieldIssues, onViewSource },
   ref
 ) {
   const [expandedSkill, setExpandedSkill] = useState(null);
@@ -150,6 +150,23 @@ const AgentNode = React.forwardRef(function AgentNode(
           </div>
           {tagError && <span className="field-error">{tagError}</span>}
         </div>
+
+        {categories.length > 0 && (
+          <div>
+            <label className="field-label" htmlFor="agent-category">Category</label>
+            <select
+              id="agent-category"
+              className="field-input"
+              value={agent.categoryId ?? ''}
+              onChange={(e) => onChange('categoryId', e.target.value || null)}
+            >
+              <option value="">None</option>
+              {categories.map((cat) => (
+                <option key={cat.id} value={cat.id}>{cat.label}</option>
+              ))}
+            </select>
+          </div>
+        )}
 
         {agent.forkedFrom && (
           <div className="agent-provenance">

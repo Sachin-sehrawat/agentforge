@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api.js';
 import { TOOL_META } from '../toolMeta.jsx';
 
@@ -50,7 +50,7 @@ function StarRating({ value, onChange, readonly = false }) {
   );
 }
 
-function MarketplaceCard({ agent, isAuthenticated, onView, onSubscribe, onFavorite, onFork, onRate, onOpenAuth }) {
+function MarketplaceCard({ agent, categoriesMap = {}, isAuthenticated, onView, onSubscribe, onFavorite, onFork, onRate, onOpenAuth }) {
   const [localAgent, setLocalAgent] = useState(agent);
   const [busySubscribe, setBusySubscribe] = useState(false);
   const [busyFavorite, setBusyFavorite] = useState(false);
@@ -146,6 +146,15 @@ function MarketplaceCard({ agent, isAuthenticated, onView, onSubscribe, onFavori
 
         {localAgent.persona && (
           <div className="agent-card-persona">{localAgent.persona}</div>
+        )}
+
+        {localAgent.categoryId && categoriesMap[localAgent.categoryId] && (
+          <span
+            className="agent-card-stat"
+            style={{ '--stat-color': categoriesMap[localAgent.categoryId].color || '#64748b' }}
+          >
+            {categoriesMap[localAgent.categoryId].label}
+          </span>
         )}
 
         <div className="mp-card-meta">
@@ -264,10 +273,21 @@ export default function MarketplacePage({
   const [sort, setSort] = useState('recent');
   const [minRating, setMinRating] = useState(0);
   const [selectedTools, setSelectedTools] = useState([]);
+  const [selectedCategoryId, setSelectedCategoryId] = useState('');
+  const [categories, setCategories] = useState([]);
   const [toolPickerOpen, setToolPickerOpen] = useState(false);
   const toolPickerRef = useRef(null);
 
   const searchTimerRef = useRef(null);
+  const categoriesMap = useMemo(
+    () => Object.fromEntries(categories.map((c) => [c.id, c])),
+    [categories]
+  );
+
+  // Fetch categories once on mount
+  useEffect(() => {
+    api.listCategories().then(setCategories).catch(() => {});
+  }, []);
 
   // Debounce search input 350ms
   useEffect(() => {
@@ -297,6 +317,7 @@ export default function MarketplacePage({
         sort,
         minRating,
         tools: selectedTools,
+        categoryId: selectedCategoryId || undefined,
         page: pg,
         pageSize: 20,
       });
@@ -309,7 +330,7 @@ export default function MarketplacePage({
     } finally {
       setLoading(false);
     }
-  }, [debouncedSearch, sort, minRating, selectedTools]);
+  }, [debouncedSearch, sort, minRating, selectedTools, selectedCategoryId]);
 
   // Reset to page 1 whenever filters change
   useEffect(() => {
@@ -450,6 +471,22 @@ export default function MarketplacePage({
           )}
         </div>
 
+        {categories.length > 0 && (
+          <div className="mp-filter-group">
+            <label className="mp-filter-label">Category</label>
+            <select
+              className="mp-select"
+              value={selectedCategoryId}
+              onChange={(e) => setSelectedCategoryId(e.target.value)}
+            >
+              <option value="">Any category</option>
+              {categories.map((cat) => (
+                <option key={cat.id} value={cat.id}>{cat.label}</option>
+              ))}
+            </select>
+          </div>
+        )}
+
         <div className="mp-filter-group mp-rating-filter">
           <label className="mp-filter-label">
             Min rating
@@ -466,7 +503,7 @@ export default function MarketplacePage({
           />
         </div>
 
-        {(debouncedSearch || selectedTools.length > 0 || minRating > 0 || sort !== 'recent') && (
+        {(debouncedSearch || selectedTools.length > 0 || minRating > 0 || sort !== 'recent' || selectedCategoryId) && (
           <button
             className="mp-clear-filters"
             onClick={() => {
@@ -475,6 +512,7 @@ export default function MarketplacePage({
               setSelectedTools([]);
               setMinRating(0);
               setSort('recent');
+              setSelectedCategoryId('');
             }}
           >
             Clear filters
@@ -500,6 +538,7 @@ export default function MarketplacePage({
             setSelectedTools([]);
             setMinRating(0);
             setSort('recent');
+            setSelectedCategoryId('');
           }}>
             Clear filters
           </button>
@@ -512,6 +551,7 @@ export default function MarketplacePage({
             <MarketplaceCard
               key={agent.id}
               agent={agent}
+              categoriesMap={categoriesMap}
               isAuthenticated={isAuthenticated}
               onView={onView}
               onSubscribe={handleSubscribe}

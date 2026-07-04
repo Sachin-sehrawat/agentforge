@@ -163,7 +163,7 @@ export const api = {
   bulkDeleteAgents: (ids) => request('/agents/bulk-delete', { method: 'POST', body: JSON.stringify({ ids }) }),
   bulkExportAgents: (ids, format) => request('/agents/bulk-export', { method: 'POST', body: JSON.stringify({ ids, format }) }),
 
-  // Marketplace listing — accepts { q, model, tools, sort, minRating, page, pageSize }
+  // Marketplace listing — accepts { q, model, tools, sort, minRating, categoryId, page, pageSize }
   listMarketplace: (params = {}) => {
     const qs = new URLSearchParams();
     if (params.q) qs.set('q', params.q);
@@ -171,11 +171,15 @@ export const api = {
     if (params.tools?.length) qs.set('tools', params.tools.join(','));
     if (params.sort) qs.set('sort', params.sort);
     if (params.minRating > 0) qs.set('minRating', String(params.minRating));
+    if (params.categoryId) qs.set('categoryId', params.categoryId);
     if (params.page > 1) qs.set('page', String(params.page));
     if (params.pageSize) qs.set('pageSize', String(params.pageSize));
     const path = `/agents/marketplace${qs.toString() ? `?${qs}` : ''}`;
     return request(path);
   },
+
+  // --- Categories (PostgreSQL) ---------------------------------------------
+  listCategories: () => request('/categories'),
 
   // Rating — PUT /agents/:id/rating  { rating: 1-5 }
   rateAgent: (id, rating) =>
