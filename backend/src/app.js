@@ -12,6 +12,7 @@ import { validatePreferences, validateWorkspaceData, validateDraftInput, validat
 import { hashPassword, verifyPassword } from './auth/crypto.js';
 import { signAccessToken } from './auth/token.js';
 import { requireAuth, optionalAuth } from './middleware/auth.js';
+import { enforceQuota } from './middleware/quota.js';
 import { writeAudit } from './audit.js';
 
 const app = express();
@@ -570,7 +571,7 @@ app.post('/api/agents/validate', optionalAuth, async (req, res) => {
   res.json({ errors, warnings });
 });
 
-app.post('/api/agents', requireAuth, async (req, res) => {
+app.post('/api/agents', requireAuth, enforceQuota('save'), async (req, res) => {
   const agent = validateAgentInput(req.body);
   if (agent.error) return res.status(400).json({ error: agent.error });
 
@@ -640,7 +641,7 @@ app.post('/api/agents', requireAuth, async (req, res) => {
   }
 });
 
-app.put('/api/agents/:id', requireAuth, async (req, res) => {
+app.put('/api/agents/:id', requireAuth, enforceQuota('save'), async (req, res) => {
   const agent = validateAgentInput(req.body);
   if (agent.error) return res.status(400).json({ error: agent.error });
 
@@ -1291,7 +1292,7 @@ app.post('/api/agents/:id/duplicate', requireAuth, async (req, res) => {
 // Called client-side when a user downloads a Markdown export.
 // Increments the export count for the agent; anonymous exports are recorded with actor_id = null.
 
-app.post('/api/agents/:id/export-event', optionalAuth, async (req, res) => {
+app.post('/api/agents/:id/export-event', optionalAuth, enforceQuota('export'), async (req, res) => {
   const agentId = req.params.id;
   const actorId = req.user?.userId ?? null;
   try {
