@@ -63,6 +63,8 @@
 
   --radius: 12px;
   --radius-sm: 8px;
+
+  --ease-landing: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 [data-theme="dark"] {
@@ -4818,6 +4820,7 @@ button {
   top: -120px;
   left: -100px;
   animation: hero-orb-indigo 10s ease-in-out infinite alternate;
+  will-change: transform;
 }
 
 .hero-orb--violet {
@@ -4827,6 +4830,7 @@ button {
   bottom: -80px;
   right: 60px;
   animation: hero-orb-violet 12s ease-in-out infinite alternate;
+  will-change: transform;
 }
 
 /* Hero inner layout */
@@ -4858,7 +4862,7 @@ button {
   color: var(--text);
   margin: 0;
   letter-spacing: -0.02em;
-  animation: hero-fade-up 0.65s ease-out both;
+  animation: hero-fade-up 0.65s var(--ease-landing) both;
   animation-delay: 0ms;
 }
 
@@ -4868,7 +4872,7 @@ button {
   color: var(--text-muted);
   margin: 0;
   max-width: 440px;
-  animation: hero-fade-up 0.65s ease-out both;
+  animation: hero-fade-up 0.65s var(--ease-landing) both;
   animation-delay: 60ms;
 }
 
@@ -4877,7 +4881,7 @@ button {
   align-items: center;
   gap: 14px;
   flex-wrap: wrap;
-  animation: hero-fade-up 0.65s ease-out both;
+  animation: hero-fade-up 0.65s var(--ease-landing) both;
   animation-delay: 120ms;
 }
 
@@ -4893,7 +4897,7 @@ button {
   color: #ffffff;
   cursor: pointer;
   letter-spacing: 0.01em;
-  transition: background 0.18s, transform 0.1s, box-shadow 0.18s;
+  transition: background 0.18s var(--ease-landing), transform 0.1s var(--ease-landing), box-shadow 0.18s var(--ease-landing);
   animation: hero-glow-pulse 2s ease-out infinite;
 }
 
@@ -4920,7 +4924,7 @@ button {
   color: var(--text-muted);
   cursor: pointer;
   letter-spacing: 0.01em;
-  transition: border-color 0.18s, color 0.18s, background 0.18s;
+  transition: border-color 0.18s var(--ease-landing), color 0.18s var(--ease-landing), background 0.18s var(--ease-landing);
 }
 
 .hero-cta-ghost:hover {
@@ -4935,7 +4939,7 @@ button {
   flex-shrink: 0;
   width: 500px;
   height: 270px;
-  animation: hero-fade-up 0.8s ease-out both;
+  animation: hero-fade-up 0.8s var(--ease-landing) both;
   animation-delay: 200ms;
   background: color-mix(in srgb, var(--panel) 80%, transparent);
   border: 1px solid var(--border-soft);
@@ -4973,6 +4977,7 @@ button {
   top: 65px;
   animation: hero-card-bob 3s ease-in-out infinite alternate;
   animation-delay: 0s;
+  will-change: transform;
 }
 
 .hero-node-card--tool {
@@ -4984,6 +4989,7 @@ button {
   top: 40px;
   animation: hero-card-bob 3s ease-in-out infinite alternate;
   animation-delay: 0.5s;
+  will-change: transform;
 }
 
 .hero-node-card--tool-2 {
@@ -4991,6 +4997,7 @@ button {
   top: 175px;
   animation: hero-card-bob 3s ease-in-out infinite alternate;
   animation-delay: 1.2s;
+  will-change: transform;
 }
 
 .hero-node-header {
@@ -5124,19 +5131,6 @@ button {
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .hero-bg-grid,
-  .hero-orb,
-  .hero-node-card,
-  .hero-headline,
-  .hero-sub,
-  .hero-ctas,
-  .hero-canvas-mock,
-  .hero-cta-primary {
-    animation: none;
-  }
-}
-
 @media (max-width: 768px) {
   .hero-inner {
     flex-direction: column;
@@ -5247,7 +5241,7 @@ button {
   flex-direction: column;
   overflow: hidden;
   position: relative;
-  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s, background-color 0.25s ease;
+  transition: transform 0.15s var(--ease-landing), box-shadow 0.15s var(--ease-landing), border-color 0.15s var(--ease-landing), background-color 0.25s ease;
   scroll-snap-align: start;
 }
 
@@ -5558,13 +5552,13 @@ button {
   border-radius: var(--radius);
   padding: 28px 24px 24px;
   text-align: left;
-  transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+  transition: transform 0.2s var(--ease-landing), border-color 0.2s var(--ease-landing), box-shadow 0.2s var(--ease-landing);
   /* Hidden until section enters view */
   opacity: 0;
 }
 
 .feature-grid--visible .feature-card {
-  animation: feature-card-in 0.45s ease both;
+  animation: feature-card-in 0.45s var(--ease-landing) both;
   animation-delay: calc(var(--stagger) * 60ms);
 }
 
@@ -5665,7 +5659,7 @@ button {
   text-align: center;
   opacity: 0;
   transform: translateY(20px);
-  transition: opacity 0.55s ease, transform 0.55s ease;
+  transition: opacity 0.55s var(--ease-landing), transform 0.55s var(--ease-landing);
 }
 
 .how-it-works--visible {
@@ -5712,7 +5706,7 @@ button {
 .how-it-works__connector line {
   stroke-dasharray: 600;
   stroke-dashoffset: 600;
-  transition: stroke-dashoffset 1s ease 0.35s;
+  transition: stroke-dashoffset 1s var(--ease-landing) 0.35s;
 }
 
 .how-it-works__connector--animate line {
@@ -5865,6 +5859,7 @@ button {
   left: -60px;
   filter: blur(70px);
   animation: hero-orb-indigo 10s ease-in-out infinite alternate;
+  will-change: transform;
 }
 
 .final-cta__orb--violet {
@@ -5875,6 +5870,7 @@ button {
   right: 40px;
   filter: blur(70px);
   animation: hero-orb-violet 12s ease-in-out infinite alternate;
+  will-change: transform;
 }
 
 .final-cta__inner {
@@ -5917,7 +5913,7 @@ button {
   color: #ffffff;
   cursor: pointer;
   letter-spacing: 0.01em;
-  transition: background 0.18s, transform 0.1s, box-shadow 0.18s;
+  transition: background 0.18s var(--ease-landing), transform 0.1s var(--ease-landing), box-shadow 0.18s var(--ease-landing);
   animation: hero-glow-pulse 2s ease-out infinite;
 }
 
@@ -5943,7 +5939,7 @@ button {
   color: rgba(255, 255, 255, 0.75);
   cursor: pointer;
   letter-spacing: 0.01em;
-  transition: border-color 0.18s, color 0.18s, background 0.18s;
+  transition: border-color 0.18s var(--ease-landing), color 0.18s var(--ease-landing), background 0.18s var(--ease-landing);
 }
 
 .final-cta__btn-ghost:hover {
@@ -5981,9 +5977,72 @@ button {
   }
 }
 
+/* Landing page: prefers-reduced-motion — disables all motion from Issues 2–7 */
 @media (prefers-reduced-motion: reduce) {
-  .final-cta__orb,
+  /* Hero: dot-grid pan, orb drift, node bob, entrance fade-ups, glow pulse */
+  .hero-bg-grid,
+  .hero-orb {
+    animation: none;
+  }
+
+  .hero-node-card {
+    animation: none;
+    will-change: auto;
+  }
+
+  .hero-headline,
+  .hero-sub,
+  .hero-ctas,
+  .hero-canvas-mock {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+
+  .hero-cta-primary {
+    animation: none;
+    box-shadow: 0 2px 8px rgba(99, 102, 241, 0.3);
+  }
+
+  /* Marketplace strip: shimmer sweep on hover, skeleton pulse */
+  .marketplace-strip__card::after {
+    display: none;
+  }
+
+  .marketplace-strip__skeleton-line,
+  .marketplace-strip__skeleton-chip {
+    animation: none;
+    opacity: 1;
+  }
+
+  /* Feature grid: staggered entrance fade-ups */
+  .feature-card,
+  .feature-grid--visible .feature-card {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+
+  /* How It Works: section fade-up, connector stroke draw */
+  .how-it-works {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+
+  .how-it-works__connector line {
+    transition: none;
+    stroke-dashoffset: 0;
+  }
+
+  /* Final CTA: orb drift, glow pulse */
+  .final-cta__orb {
+    animation: none;
+    will-change: auto;
+  }
+
   .final-cta__btn-primary {
     animation: none;
+    box-shadow: 0 2px 8px rgba(99, 102, 241, 0.3);
   }
 }
