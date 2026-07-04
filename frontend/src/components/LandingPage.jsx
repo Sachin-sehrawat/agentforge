@@ -3,6 +3,7 @@ import Hero from './landing/Hero.jsx';
 import MarketplaceStrip from './landing/MarketplaceStrip.jsx';
 import StatsBar from './landing/StatsBar.jsx';
 import FeatureGrid from './landing/FeatureGrid.jsx';
+import HowItWorks from './landing/HowItWorks.jsx';
 
 export default function LandingPage({ onGetStarted, onOpenAuth, onBrowseMarketplace, isAuthenticated, onFork }) {
   return (
@@ -33,7 +34,9 @@ export default function LandingPage({ onGetStarted, onOpenAuth, onBrowseMarketpl
       </section>
 
       {/* How it works */}
-      <section className="landing-how-it-works" />
+      <section className="landing-how-it-works">
+        <HowItWorks />
+      </section>
 
       {/* Final CTA */}
       <section className="landing-cta" />
