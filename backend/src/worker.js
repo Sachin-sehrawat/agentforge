@@ -16,7 +16,9 @@ async function processJob(client, job) {
   if (!handler) {
     throw new Error(`No handler registered for job type "${job.type}"`);
   }
-  await handler(job.payload);
+  // job.attempts is the pre-increment value; the DB was already bumped by 1 before this call.
+  const ctx = { jobId: job.id, attemptNo: job.attempts + 1, maxAttempts: job.max_attempts };
+  await handler(job.payload, ctx);
 }
 
 async function tick() {
