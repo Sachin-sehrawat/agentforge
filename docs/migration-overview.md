@@ -333,6 +333,65 @@ SELECT indexname FROM pg_indexes WHERE tablename = 'usage_counters';
 
 ---
 
+## Adding `categories` Table and `category_id` Column to an Existing Deployment
+
+`backend/db/init/14_categories.sql` runs automatically on a **fresh** volume. For existing deployments apply the DDL manually:
+
+```sql
+-- Run against your PostgreSQL instance (psql, DBeaver, etc.)
+CREATE TABLE IF NOT EXISTS categories (
+  id         UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  slug       TEXT        UNIQUE NOT NULL,
+  label      TEXT        NOT NULL,
+  color      TEXT        NOT NULL DEFAULT '#6366f1',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+INSERT INTO categories (slug, label) VALUES
+  ('marketing',       'Marketing'),
+  ('support',         'Support'),
+  ('research',        'Research'),
+  ('productivity',    'Productivity'),
+  ('education',       'Education'),
+  ('developer-tools', 'Developer Tools')
+ON CONFLICT (slug) DO NOTHING;
+
+ALTER TABLE agents
+  ADD COLUMN IF NOT EXISTS category_id UUID REFERENCES categories(id) ON DELETE SET NULL;
+
+CREATE INDEX IF NOT EXISTS idx_agents_category ON agents(category_id);
+
+ANALYZE categories;
+ANALYZE agents;
+```
+
+**Notes:**
+
+- `category_id` is nullable — existing agents automatically become "uncategorized" with no back-fill required.
+- `ON DELETE SET NULL` means deleting a category nulls `category_id` on all affected agents; no orphaned references are created.
+- `GET /api/categories` is public (no auth required) — used by filter dropdowns in the frontend.
+- `POST`, `PUT`, and `DELETE /api/categories` require authentication.
+- Submitting an invalid (non-existent) `categoryId` on `POST/PUT /api/agents` returns a `400` error.
+- The slug must be lowercase and may only contain letters, digits, and hyphens.
+
+**Verify after applying:**
+
+```sql
+-- Confirm categories table and seed rows
+SELECT slug, label FROM categories ORDER BY label;
+
+-- Confirm category_id column on agents
+SELECT column_name, is_nullable
+FROM information_schema.columns
+WHERE table_name = 'agents' AND column_name = 'category_id';
+
+-- Confirm index
+SELECT indexname FROM pg_indexes
+WHERE tablename = 'agents' AND indexname = 'idx_agents_category';
+```
+
+---
+
 ## Related Documents
 
 - [Database Schema](database-schema.md) — PostgreSQL tables and MongoDB collections

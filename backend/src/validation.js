@@ -266,6 +266,35 @@ export function validateDraftInput(body) {
 }
 
 // ---------------------------------------------------------------------------
+// Category validation
+// ---------------------------------------------------------------------------
+
+/**
+ * Validates a category payload (POST/PUT /api/categories).
+ * Required: slug, label. Optional: color.
+ */
+export function validateCategoryInput(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return { error: 'Request body must be a JSON object' };
+  }
+  const slug = typeof body.slug === 'string' ? body.slug.trim().toLowerCase() : '';
+  if (!slug) return { error: 'slug is required' };
+  if (!/^[a-z0-9-]+$/.test(slug)) {
+    return { error: 'slug may only contain lowercase letters, digits, and hyphens' };
+  }
+  const label = typeof body.label === 'string' ? body.label.trim() : '';
+  if (!label) return { error: 'label is required' };
+
+  return {
+    data: {
+      slug,
+      label,
+      color: typeof body.color === 'string' && body.color ? body.color : '#6366f1',
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Rating validation
 // ---------------------------------------------------------------------------
 

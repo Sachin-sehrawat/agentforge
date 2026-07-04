@@ -8,7 +8,7 @@ import { toCanonical } from './serialization/agentSchema.js';
 import { parseJson, parseMarkdown } from './serialization/importAgent.js';
 import { getDb, healthCheck as mongoHealth } from './mongo.js';
 import { TOOL_CATALOG, TOOL_IDS } from './tools/toolDefinitions.js';
-import { validatePreferences, validateWorkspaceData, validateDraftInput, validateSignupInput, validateLoginInput, validateBuiltinSkillInput, validatePersonaCategoryInput, validatePersonaInput, validateAgentDefinition, validateTemplateInput, validateRatingInput } from './validation.js';
+import { validatePreferences, validateWorkspaceData, validateDraftInput, validateSignupInput, validateLoginInput, validateBuiltinSkillInput, validatePersonaCategoryInput, validatePersonaInput, validateAgentDefinition, validateTemplateInput, validateRatingInput, validateCategoryInput } from './validation.js';
 import { hashPassword, verifyPassword } from './auth/crypto.js';
 import { signAccessToken } from './auth/token.js';
 import { requireAuth, optionalAuth } from './middleware/auth.js';
@@ -582,10 +582,15 @@ app.post('/api/agents', requireAuth, async (req, res) => {
     const existingNames = nameRows.map((r) => r.name);
     const { warnings } = validateAgentDefinition(agent, { existingNames });
 
+    if (agent.categoryId) {
+      const { rows: catRows } = await db.query('SELECT id FROM categories WHERE id = $1', [agent.categoryId]);
+      if (!catRows[0]) return res.status(400).json({ error: 'categoryId does not reference an existing category' });
+    }
+
     const newRow = await withClient(async (client) => {
       const { rows } = await client.query(
-        `INSERT INTO agents (id, name, persona, system_prompt, model, tools, positions, skills, instructions, visibility, tags, owner_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        `INSERT INTO agents (id, name, persona, system_prompt, model, tools, positions, skills, instructions, visibility, tags, category_id, owner_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
          RETURNING *`,
         [
           id,
@@ -599,6 +604,7 @@ app.post('/api/agents', requireAuth, async (req, res) => {
           JSON.stringify(agent.instructions),
           agent.visibility,
           JSON.stringify(agent.tags),
+          agent.categoryId ?? null,
           owner_id,
         ]
       );
@@ -629,6 +635,11 @@ app.put('/api/agents/:id', requireAuth, async (req, res) => {
 
   try {
     // Fetch peer names for the duplicate-name warning (exclude this agent's current name).
+    if (agent.categoryId) {
+      const { rows: catRows } = await db.query('SELECT id FROM categories WHERE id = $1', [agent.categoryId]);
+      if (!catRows[0]) return res.status(400).json({ error: 'categoryId does not reference an existing category' });
+    }
+
     const { rows: nameRows } = await db.query(
       'SELECT name FROM agents WHERE owner_id = $1 AND id != $2',
       [req.user.userId, req.params.id]
@@ -648,8 +659,8 @@ app.put('/api/agents/:id', requireAuth, async (req, res) => {
         `UPDATE agents
          SET name = $1, persona = $2, system_prompt = $3, model = $4,
              tools = $5, positions = $6, skills = $7, instructions = $8,
-             tags = $9, visibility = $10, updated_at = NOW()
-         WHERE id = $11
+             tags = $9, visibility = $10, category_id = $11, updated_at = NOW()
+         WHERE id = $12
          RETURNING *`,
         [
           agent.name,
@@ -662,6 +673,7 @@ app.put('/api/agents/:id', requireAuth, async (req, res) => {
           JSON.stringify(agent.instructions),
           JSON.stringify(agent.tags),
           agent.visibility,
+          agent.categoryId ?? null,
           req.params.id,
         ]
       );
@@ -1711,6 +1723,64 @@ app.delete('/api/personas/:categoryId/personas/:personaId', requireAuth, async (
   }
 });
 
+// --- Categories (PostgreSQL) ----------------------------------------------
+// GET is public (no auth) — used for filter dropdowns.
+// POST/PUT/DELETE require authentication (admin-managed).
+
+app.get('/api/categories', async (req, res) => {
+  try {
+    const { rows } = await db.query('SELECT * FROM categories ORDER BY label ASC');
+    res.json(rows.map(serializeCategory));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/categories', requireAuth, async (req, res) => {
+  const validation = validateCategoryInput(req.body);
+  if (validation.error) return res.status(400).json({ error: validation.error });
+
+  const { slug, label, color } = validation.data;
+  try {
+    const { rows } = await db.query(
+      'INSERT INTO categories (slug, label, color) VALUES ($1, $2, $3) RETURNING *',
+      [slug, label, color]
+    );
+    res.status(201).json(serializeCategory(rows[0]));
+  } catch (err) {
+    if (err.code === '23505') return res.status(409).json({ error: 'A category with that slug already exists' });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/categories/:id', requireAuth, async (req, res) => {
+  const validation = validateCategoryInput(req.body);
+  if (validation.error) return res.status(400).json({ error: validation.error });
+
+  const { slug, label, color } = validation.data;
+  try {
+    const { rows } = await db.query(
+      'UPDATE categories SET slug = $1, label = $2, color = $3 WHERE id = $4 RETURNING *',
+      [slug, label, color, req.params.id]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Category not found' });
+    res.json(serializeCategory(rows[0]));
+  } catch (err) {
+    if (err.code === '23505') return res.status(409).json({ error: 'A category with that slug already exists' });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/categories/:id', requireAuth, async (req, res) => {
+  try {
+    const { rowCount } = await db.query('DELETE FROM categories WHERE id = $1', [req.params.id]);
+    if (rowCount === 0) return res.status(404).json({ error: 'Category not found' });
+    res.status(204).end();
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // --- Health checks --------------------------------------------------------
 
 app.get('/api/health', async (req, res) => {
@@ -2037,6 +2107,7 @@ function serializeAgent(row) {
     skills: row.skills ?? [],
     instructions: row.instructions ?? [],
     tags: row.tags ?? [],
+    categoryId: row.category_id ?? null,
     ownerId: row.owner_id ?? null,
     visibility: row.visibility ?? 'private',
     forkedFrom: row.forked_from ?? null,
@@ -2088,6 +2159,16 @@ function serializePersonaCategory(doc) {
     })),
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
+  };
+}
+
+function serializeCategory(row) {
+  return {
+    id: row.id,
+    slug: row.slug,
+    label: row.label,
+    color: row.color,
+    createdAt: row.created_at,
   };
 }
 
@@ -2150,6 +2231,15 @@ export function validateAgentInput(body) {
     return { error: 'A maximum of 10 tags is allowed' };
   }
 
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  let categoryId = null;
+  if (body.categoryId != null) {
+    if (typeof body.categoryId !== 'string' || !UUID_RE.test(body.categoryId)) {
+      return { error: 'categoryId must be a valid UUID' };
+    }
+    categoryId = body.categoryId;
+  }
+
   return {
     name,
     persona: typeof body.persona === 'string' ? body.persona : '',
@@ -2161,6 +2251,7 @@ export function validateAgentInput(body) {
     instructions: Array.isArray(body.instructions) ? body.instructions.filter((s) => typeof s === 'string') : [],
     visibility,
     tags: uniqueTags,
+    categoryId,
   };
 }
 
