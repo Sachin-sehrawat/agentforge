@@ -9,6 +9,7 @@ import AgentsPage from './components/AgentsPage.jsx';
 import AgentAnalytics from './components/AgentAnalytics.jsx';
 import SkillsPage from './components/SkillsPage.jsx';
 import AdminPage from './components/AdminPage.jsx';
+import WebhookSettings from './components/WebhookSettings.jsx';
 import MarketplacePage from './components/MarketplacePage.jsx';
 import AuthModal from './components/AuthModal.jsx';
 import ImportModal from './components/ImportModal.jsx';
@@ -191,7 +192,7 @@ export default function App() {
         localStorage.setItem('theme', prefs.theme);
         applyTheme(prefs.theme);
       }
-      if (prefs.view && ['builder', 'agents', 'skills', 'admin', 'marketplace'].includes(prefs.view)) {
+      if (prefs.view && ['builder', 'agents', 'skills', 'admin', 'marketplace', 'developer'].includes(prefs.view)) {
         setView(prefs.view);
       }
       if (typeof prefs.canvas_zoom === 'number' || prefs.canvas_pan) {
@@ -1024,6 +1025,11 @@ export default function App() {
           isAuthenticated={isAuthenticated}
           onView={onLoad}
           onFork={onFork}
+          onOpenAuth={(tab) => setAuthModal({ tab, onSuccess: null })}
+        />
+      ) : view === 'developer' ? (
+        <WebhookSettings
+          isAuthenticated={isAuthenticated}
           onOpenAuth={(tab) => setAuthModal({ tab, onSuccess: null })}
         />
       ) : view === 'admin' ? (
