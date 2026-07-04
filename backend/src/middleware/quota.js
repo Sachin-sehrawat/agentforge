@@ -2,7 +2,7 @@ import db from '../db.js';
 import { QUOTA } from '../quotaConfig.js';
 
 // Returns midnight UTC of the next day as an ISO string.
-function nextMidnightUTC() {
+export function nextMidnightUTC() {
   const d = new Date();
   d.setUTCHours(24, 0, 0, 0);
   return d.toISOString();

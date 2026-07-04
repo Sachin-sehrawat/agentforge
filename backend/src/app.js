@@ -12,7 +12,8 @@ import { validatePreferences, validateWorkspaceData, validateDraftInput, validat
 import { hashPassword, verifyPassword } from './auth/crypto.js';
 import { signAccessToken } from './auth/token.js';
 import { requireAuth, optionalAuth } from './middleware/auth.js';
-import { enforceQuota } from './middleware/quota.js';
+import { enforceQuota, nextMidnightUTC } from './middleware/quota.js';
+import { QUOTA } from './quotaConfig.js';
 import { writeAudit } from './audit.js';
 
 const app = express();
@@ -2238,6 +2239,7 @@ function serializeUser(row) {
     displayName: row.display_name,
     authProvider: row.auth_provider,
     isAdmin: row.is_admin ?? false,
+    tier: row.tier ?? 'free',
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
