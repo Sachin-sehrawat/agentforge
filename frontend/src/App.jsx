@@ -994,6 +994,7 @@ export default function App() {
       {view === null ? null : view === 'landing' ? (
         <LandingPage
           onGetStarted={() => handleSetView('builder')}
+          onBrowseMarketplace={() => handleSetView('marketplace')}
           onOpenAuth={(tab) => setAuthModal({ tab, onSuccess: () => handleSetView('builder') })}
         />
       ) : view === 'agents' && analyticsAgent ? (
