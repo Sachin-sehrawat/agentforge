@@ -12,6 +12,7 @@ import { validatePreferences, validateWorkspaceData, validateDraftInput, validat
 import { hashPassword, verifyPassword } from './auth/crypto.js';
 import { signAccessToken } from './auth/token.js';
 import { requireAuth, optionalAuth } from './middleware/auth.js';
+import { writeAudit } from './audit.js';
 
 const app = express();
 app.use(cors());
@@ -625,6 +626,14 @@ app.post('/api/agents', requireAuth, async (req, res) => {
       );
       return row;
     });
+    writeAudit({
+      actor: { id: owner_id },
+      action: 'agent.create',
+      entityType: 'agent',
+      entityId: newRow.id,
+      after: serializeAgent(newRow),
+      ip: req.headers['x-forwarded-for'] || req.ip,
+    });
     res.status(201).json({ ...serializeAgent(newRow), warnings });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -654,13 +663,15 @@ app.put('/api/agents/:id', requireAuth, async (req, res) => {
     const existingNames = nameRows.map((r) => r.name);
     const { warnings } = validateAgentDefinition(agent, { existingNames });
 
+    let preImageForAudit = null;
     const updatedRow = await withClient(async (client) => {
       const { rows: existing } = await client.query(
-        'SELECT owner_id FROM agents WHERE id = $1',
+        'SELECT * FROM agents WHERE id = $1',
         [req.params.id]
       );
       if (!existing[0]) { const e = new Error('Agent not found'); e.statusCode = 404; throw e; }
       if (existing[0].owner_id !== req.user.userId) { const e = new Error('Forbidden'); e.statusCode = 403; throw e; }
+      preImageForAudit = serializeAgent(existing[0]);
 
       const { rows } = await client.query(
         `UPDATE agents
@@ -707,6 +718,15 @@ app.put('/api/agents/:id', requireAuth, async (req, res) => {
       return row;
     });
 
+    writeAudit({
+      actor: { id: req.user.userId },
+      action: 'agent.update',
+      entityType: 'agent',
+      entityId: updatedRow.id,
+      before: preImageForAudit,
+      after: serializeAgent(updatedRow),
+      ip: req.headers['x-forwarded-for'] || req.ip,
+    });
     res.json({ ...serializeAgent(updatedRow), warnings });
   } catch (err) {
     if (err.statusCode === 404) return res.status(404).json({ error: err.message });
@@ -724,17 +744,28 @@ app.patch('/api/agents/:id', requireAuth, async (req, res) => {
 
   try {
     const { rows: existing } = await db.query(
-      'SELECT owner_id FROM agents WHERE id = $1',
+      'SELECT * FROM agents WHERE id = $1',
       [req.params.id]
     );
     if (!existing[0]) return res.status(404).json({ error: 'Agent not found' });
     if (existing[0].owner_id !== req.user.userId) return res.status(403).json({ error: 'Forbidden' });
+    const oldVisibility = existing[0].visibility;
 
     const { rows } = await db.query(
       `UPDATE agents SET visibility = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
       [visibility, req.params.id]
     );
-    res.json(serializeAgent(rows[0]));
+    const updatedAgent = rows[0];
+    writeAudit({
+      actor: { id: req.user.userId },
+      action: 'agent.visibility_change',
+      entityType: 'agent',
+      entityId: req.params.id,
+      before: { visibility: oldVisibility },
+      after: { visibility: updatedAgent.visibility },
+      ip: req.headers['x-forwarded-for'] || req.ip,
+    });
+    res.json(serializeAgent(updatedAgent));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -743,13 +774,22 @@ app.patch('/api/agents/:id', requireAuth, async (req, res) => {
 app.delete('/api/agents/:id', requireAuth, async (req, res) => {
   try {
     const { rows } = await db.query(
-      'SELECT owner_id FROM agents WHERE id = $1',
+      'SELECT * FROM agents WHERE id = $1',
       [req.params.id]
     );
     if (!rows[0]) return res.status(404).json({ error: 'Agent not found' });
     if (rows[0].owner_id !== req.user.userId) return res.status(403).json({ error: 'Forbidden' });
+    const deletedSnapshot = serializeAgent(rows[0]);
 
     await db.query('DELETE FROM agents WHERE id = $1', [req.params.id]);
+    writeAudit({
+      actor: { id: req.user.userId },
+      action: 'agent.delete',
+      entityType: 'agent',
+      entityId: req.params.id,
+      before: deletedSnapshot,
+      ip: req.headers['x-forwarded-for'] || req.ip,
+    });
     res.status(204).end();
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1455,13 +1495,22 @@ app.put('/api/skills/:id', requireAuth, async (req, res) => {
 app.delete('/api/skills/:id', requireAuth, async (req, res) => {
   try {
     const { rows } = await db.query(
-      'SELECT owner_id FROM custom_skills WHERE id = $1',
+      'SELECT * FROM custom_skills WHERE id = $1',
       [req.params.id]
     );
     if (!rows[0]) return res.status(404).json({ error: 'Skill not found' });
     if (rows[0].owner_id !== req.user.userId) return res.status(403).json({ error: 'Forbidden' });
+    const deletedSnapshot = serializeSkill(rows[0]);
 
     await db.query('DELETE FROM custom_skills WHERE id = $1', [req.params.id]);
+    writeAudit({
+      actor: { id: req.user.userId },
+      action: 'skill.delete',
+      entityType: 'skill',
+      entityId: req.params.id,
+      before: deletedSnapshot,
+      ip: req.headers['x-forwarded-for'] || req.ip,
+    });
     res.status(204).end();
   } catch (err) {
     res.status(500).json({ error: err.message });
