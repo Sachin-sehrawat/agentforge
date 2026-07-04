@@ -13,10 +13,9 @@ CREATE TABLE IF NOT EXISTS usage_counters (
   PRIMARY KEY (user_id, action, period)
 );
 
--- Partial index speeds up per-user quota checks for today's bucket.
-CREATE INDEX IF NOT EXISTS idx_usage_counters_user_today
-  ON usage_counters (user_id, action)
-  WHERE period = CURRENT_DATE;
+-- Index speeds up per-user quota checks (period column included for date filtering).
+CREATE INDEX IF NOT EXISTS idx_usage_counters_user_period
+  ON usage_counters (user_id, action, period);
 
 ANALYZE users;
 ANALYZE usage_counters;

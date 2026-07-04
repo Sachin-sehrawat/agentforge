@@ -11,6 +11,7 @@ import SkillsPage from './components/SkillsPage.jsx';
 import AdminPage from './components/AdminPage.jsx';
 import WebhookSettings from './components/WebhookSettings.jsx';
 import MarketplacePage from './components/MarketplacePage.jsx';
+import LandingPage from './components/LandingPage.jsx';
 import AuthModal from './components/AuthModal.jsx';
 import ImportModal from './components/ImportModal.jsx';
 import TemplateGallery from './components/TemplateGallery.jsx';
@@ -118,7 +119,7 @@ export default function App() {
   const [errorMine, setErrorMine] = useState(null);
   const [errorFavorites, setErrorFavorites] = useState(null);
   const [saving, setSaving] = useState(false);
-  const [view, setView] = useState('builder');
+  const [view, setView] = useState(null);
   const [builtinSkills, setBuiltinSkills] = useState([]);
   const [personaCategories, setPersonaCategories] = useState([]);
   const [agentCategories, setAgentCategories] = useState([]);
@@ -192,8 +193,18 @@ export default function App() {
         localStorage.setItem('theme', prefs.theme);
         applyTheme(prefs.theme);
       }
-      if (prefs.view && ['builder', 'agents', 'skills', 'admin', 'marketplace', 'developer'].includes(prefs.view)) {
-        setView(prefs.view);
+      const hasMeaningfulAgent = wsData.agent &&
+        typeof wsData.agent === 'object' &&
+        (wsData.agent.persona || wsData.agent.systemPrompt || wsData.agent.tools?.length > 0);
+
+      if (isAuthenticated || hasMeaningfulAgent) {
+        if (prefs.view && ['builder', 'agents', 'skills', 'admin', 'marketplace', 'developer'].includes(prefs.view)) {
+          setView(prefs.view);
+        } else {
+          setView('builder');
+        }
+      } else {
+        setView('landing');
       }
       if (typeof prefs.canvas_zoom === 'number' || prefs.canvas_pan) {
         setCanvasView({
@@ -242,7 +253,9 @@ export default function App() {
   const handleSetView = useCallback((nextView) => {
     setView(nextView);
     setAnalyticsAgent(null);
-    api.saveUserPreferences(USER_ID, { view: nextView });
+    if (nextView !== 'landing') {
+      api.saveUserPreferences(USER_ID, { view: nextView });
+    }
   }, []);
 
   const handleThemeChange = useCallback((newTheme) => {
@@ -978,7 +991,12 @@ export default function App() {
         />
       )}
 
-      {view === 'agents' && analyticsAgent ? (
+      {view === null ? null : view === 'landing' ? (
+        <LandingPage
+          onGetStarted={() => handleSetView('builder')}
+          onOpenAuth={(tab) => setAuthModal({ tab, onSuccess: () => handleSetView('builder') })}
+        />
+      ) : view === 'agents' && analyticsAgent ? (
         <AgentAnalytics
           agentId={analyticsAgent.id}
           agentName={analyticsAgent.name}

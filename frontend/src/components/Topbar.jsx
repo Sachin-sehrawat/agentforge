@@ -70,6 +70,37 @@ export default function Topbar({
     return () => window.removeEventListener('mousedown', onClick);
   }, [menuOpen]);
 
+  if (view === 'landing') {
+    return (
+      <header className="topbar">
+        <div className="brand">
+          <span className="brand-mark">
+            <AGENT_ICON />
+          </span>
+          AgentForge
+        </div>
+
+        <div className="topbar-spacer" />
+
+        <button
+          className="theme-toggle"
+          onClick={() => onThemeChange(THEME_CYCLE[theme])}
+          title={`${THEME_LABEL[theme]} (click to switch)`}
+          aria-label={THEME_LABEL[theme]}
+        >
+          {THEME_ICON[theme]}
+        </button>
+
+        <div className="topbar-divider" />
+
+        <div className="topbar-auth">
+          <button className="btn subtle" onClick={() => onOpenAuth('login')}>Sign in</button>
+          <button className="btn primary" onClick={() => onOpenAuth('signup')}>Sign up</button>
+        </div>
+      </header>
+    );
+  }
+
   return (
     <header className="topbar">
       <div className="brand">
