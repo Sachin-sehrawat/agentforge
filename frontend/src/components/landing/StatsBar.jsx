@@ -26,7 +26,11 @@ function StatItem({ label, value, animate }) {
   useEffect(() => {
     if (animate && value !== null && !hasAnimated.current) {
       hasAnimated.current = true;
-      animateCount(0, value, DURATION_MS, setDisplayed);
+      if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        setDisplayed(value);
+      } else {
+        animateCount(0, value, DURATION_MS, setDisplayed);
+      }
     }
   }, [animate, value]);
 
