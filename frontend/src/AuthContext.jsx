@@ -1,10 +1,11 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
-import { api, setToken, onUnauthorized } from './api.js';
+import { api, setToken, onUnauthorized, getStoredToken } from './api.js';
 
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
+  const [authReady, setAuthReady] = useState(false);
 
   const clearAuth = useCallback(() => {
     setToken(null);
@@ -17,6 +18,18 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     onUnauthorized(clearAuth);
   }, [clearAuth]);
+
+  // Restore session from persisted token on mount.
+  useEffect(() => {
+    if (!getStoredToken()) {
+      setAuthReady(true);
+      return;
+    }
+    api.me()
+      .then((u) => setUser(u))
+      .catch(() => setToken(null))
+      .finally(() => setAuthReady(true));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const login = useCallback(async (email, password) => {
     const { token, user: u } = await api.login(email, password);
@@ -37,7 +50,7 @@ export function AuthProvider({ children }) {
   }, [clearAuth]);
 
   return (
-    <AuthContext.Provider value={{ user, isAuthenticated: user !== null, login, signup, logout }}>
+    <AuthContext.Provider value={{ user, isAuthenticated: user !== null, authReady, login, signup, logout }}>
       {children}
     </AuthContext.Provider>
   );

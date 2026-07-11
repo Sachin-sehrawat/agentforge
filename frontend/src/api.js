@@ -4,11 +4,21 @@ const BASE = '/api';
 
 // --- Auth state --------------------------------------------------------------
 
-let _token = null;
+const TOKEN_KEY = 'auth_token';
+let _token = localStorage.getItem(TOKEN_KEY) || null;
 let _on401Handler = null;
 
 export function setToken(token) {
   _token = token;
+  if (token) {
+    localStorage.setItem(TOKEN_KEY, token);
+  } else {
+    localStorage.removeItem(TOKEN_KEY);
+  }
+}
+
+export function getStoredToken() {
+  return _token;
 }
 
 // Register a callback invoked when any authenticated request receives 401.
@@ -163,7 +173,7 @@ function validatePreferences(prefs) {
 }
 
 const DEFAULT_PREFERENCES = Object.freeze({
-  theme: 'system',
+  theme: 'dark',
   canvas_zoom: 1,
   canvas_pan: { x: 0, y: 0 },
   sidebar_width: 280,

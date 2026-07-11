@@ -338,7 +338,7 @@ function RegisterForm({ onCreated }) {
 }
 
 // ── Main page ────────────────────────────────────────────────────────────────
-export default function WebhookSettings({ isAuthenticated, onOpenAuth }) {
+export default function WebhookSettings({ isAuthenticated, onOpenAuth, onNavigate }) {
   const [webhooks, setWebhooks] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -386,9 +386,9 @@ export default function WebhookSettings({ isAuthenticated, onOpenAuth }) {
           <h1 className="wh-page-title">Webhooks</h1>
           <p className="wh-page-desc">
             Receive real-time HTTP POST notifications when events happen on your agents.{' '}
-            <a className="wh-docs-link" href="/docs/webhook-signatures.md" target="_blank" rel="noreferrer">
+            <button className="wh-docs-link" onClick={() => onNavigate && onNavigate('docs/webhook-signatures')}>
               Signature verification guide →
-            </a>
+            </button>
           </p>
         </div>
       </div>

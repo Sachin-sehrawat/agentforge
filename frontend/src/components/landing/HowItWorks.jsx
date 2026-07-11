@@ -4,8 +4,8 @@ import useInViewport from '../../hooks/useInViewport.js';
 const STEPS = [
   {
     number: '01',
-    label: 'Build on the canvas',
-    desc: 'Drag-and-drop agent nodes, connect tools, and configure behavior visually — no config files or boilerplate.',
+    label: 'Design on the canvas',
+    desc: 'Drag agent, tool, and persona nodes; wire connections that define behavior — no config files or boilerplate.',
     icon: (
       <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
         <rect x="3" y="3" width="7" height="7" rx="1" />
@@ -18,26 +18,25 @@ const STEPS = [
   },
   {
     number: '02',
-    label: 'Publish to marketplace',
-    desc: 'Share your agent with the community in one click — public, unlisted, or scoped to your team.',
+    label: 'Attach skills & personas',
+    desc: 'Pick from the library or write your own — reasoning, tone, and tool access all in one place.',
     icon: (
       <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M12 2L4.5 7.5v9L12 22l7.5-5.5v-9L12 2z" />
-        <path d="M12 2v20M4.5 7.5L12 13l7.5-5.5" />
+        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+        <circle cx="9" cy="7" r="4" />
+        <path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
       </svg>
     ),
   },
   {
     number: '03',
-    label: 'Fork & remix',
-    desc: 'Find an agent you love, fork it in one click, and make it yours — build on the community's best work.',
+    label: 'Export as Markdown',
+    desc: 'One click produces a portable, human-readable .md spec any provider can run — zero lock-in.',
     icon: (
       <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
-        <circle cx="6" cy="6" r="2" />
-        <circle cx="18" cy="6" r="2" />
-        <circle cx="12" cy="18" r="2" />
-        <path d="M6 8v2a3 3 0 0 0 3 3h6a3 3 0 0 0 3-3V8" />
-        <line x1="12" y1="13" x2="12" y2="16" />
+        <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" />
+        <polyline points="14 2 14 8 20 8" />
+        <path d="M9 13l2 2 4-4" />
       </svg>
     ),
   },
@@ -51,7 +50,8 @@ export default function HowItWorks() {
       className={`how-it-works${inView ? ' how-it-works--visible' : ''}`}
       ref={sectionRef}
     >
-      <h2 className="how-it-works__heading">How it works</h2>
+      <div className="how-it-works__eyebrow">HOW IT WORKS</div>
+      <h2 className="how-it-works__heading">Three steps from idea to spec</h2>
       <p className="how-it-works__sub">From idea to live agent in three steps.</p>
 
       <div className="how-it-works__track">

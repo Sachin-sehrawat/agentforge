@@ -3,11 +3,9 @@ import React from 'react';
 export default function FinalCta({ isAuthenticated, onGetStarted, onOpenAuth }) {
   return (
     <div className="final-cta">
-      <div className="final-cta__orb final-cta__orb--indigo" />
-      <div className="final-cta__orb final-cta__orb--violet" />
-
       <div className="final-cta__inner">
-        <h2 className="final-cta__headline">Ready to build your first agent?</h2>
+        <h2 className="final-cta__headline">Ready to design your first agent?</h2>
+        <p className="final-cta__sub">Free to start. Export as many specs as you like.</p>
 
         <div className="final-cta__actions">
           {isAuthenticated ? (
@@ -20,13 +18,7 @@ export default function FinalCta({ isAuthenticated, onGetStarted, onOpenAuth }) 
                 className="final-cta__btn-primary"
                 onClick={() => onOpenAuth('signup')}
               >
-                Sign up free
-              </button>
-              <button
-                className="final-cta__btn-ghost"
-                onClick={() => onOpenAuth('login')}
-              >
-                Log in
+                Start building free
               </button>
             </>
           )}

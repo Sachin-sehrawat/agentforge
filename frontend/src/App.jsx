@@ -10,6 +10,7 @@ import AgentAnalytics from './components/AgentAnalytics.jsx';
 import SkillsPage from './components/SkillsPage.jsx';
 import AdminPage from './components/AdminPage.jsx';
 import WebhookSettings from './components/WebhookSettings.jsx';
+import WebhookSignaturesDoc from './components/docs/WebhookSignaturesDoc.jsx';
 import MarketplacePage from './components/MarketplacePage.jsx';
 import LandingPage from './components/LandingPage.jsx';
 import AuthModal from './components/AuthModal.jsx';
@@ -106,8 +107,26 @@ _Created with AgentForge · ${date}_
 `;
 }
 
+const VIEW_TO_PATH = {
+  landing:                  '/',
+  builder:                  '/builder',
+  agents:                   '/agents',
+  skills:                   '/skills',
+  marketplace:              '/marketplace',
+  developer:                '/developer',
+  admin:                    '/admin',
+  'docs/webhook-signatures': '/docs/webhook-signatures',
+};
+const PATH_TO_VIEW = Object.fromEntries(
+  Object.entries(VIEW_TO_PATH).map(([v, p]) => [p, v])
+);
+
+function pathToView(pathname) {
+  return PATH_TO_VIEW[pathname] || null;
+}
+
 export default function App() {
-  const { user, isAuthenticated, logout } = useAuth();
+  const { user, isAuthenticated, authReady, logout } = useAuth();
   const [agent, setAgent] = useState(DEFAULT_AGENT);
   const [publicAgents, setPublicAgents] = useState([]);
   const [myAgents, setMyAgents] = useState([]);
@@ -135,7 +154,7 @@ export default function App() {
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [theme, setTheme] = useState(() => {
     const stored = localStorage.getItem('theme');
-    return VALID_THEMES.includes(stored) ? stored : 'system';
+    return VALID_THEMES.includes(stored) ? stored : 'dark';
   });
 
   const [analyticsAgent, setAnalyticsAgent] = useState(null);
@@ -175,14 +194,19 @@ export default function App() {
     [personaCategories]
   );
 
-  // On mount: load public agents, custom skills, user preferences, and the last workspace state.
+  // On mount (after auth is restored): load public agents, skills, preferences, and workspace state.
   useEffect(() => {
+    if (!authReady) return;
+
     api.listBuiltinSkills().then(setBuiltinSkills).catch(() => {});
     api.listPersonaCategories().then(setPersonaCategories).catch(() => {});
     api.listCategories().then(setAgentCategories).catch(() => {});
     api.listTemplates().then(setTemplates).catch(() => {});
     refreshPublicAgents();
-    refreshCustomSkills(false); // initial fetch is unauthenticated; auth effect re-fetches with ownership
+    refreshCustomSkills(isAuthenticated); // auth is already known at this point; auth effect handles changes
+
+    // URL takes priority: if the user landed on /builder, /marketplace etc., honour it.
+    const urlView = pathToView(window.location.pathname);
 
     Promise.all([
       api.getUserPreferences(USER_ID),
@@ -197,15 +221,23 @@ export default function App() {
         typeof wsData.agent === 'object' &&
         (wsData.agent.persona || wsData.agent.systemPrompt || wsData.agent.tools?.length > 0);
 
-      if (isAuthenticated || hasMeaningfulAgent) {
-        if (prefs.view && ['builder', 'agents', 'skills', 'admin', 'marketplace', 'developer'].includes(prefs.view)) {
-          setView(prefs.view);
-        } else {
-          setView('builder');
-        }
+      let resolvedView;
+      if (urlView && urlView !== 'landing') {
+        // Deep-linked to an app view — go straight there.
+        resolvedView = urlView;
+      } else if (urlView === 'landing' || (!isAuthenticated && !hasMeaningfulAgent)) {
+        resolvedView = 'landing';
+      } else if (prefs.view && ['builder', 'agents', 'skills', 'admin', 'marketplace', 'developer'].includes(prefs.view)) {
+        resolvedView = prefs.view;
       } else {
-        setView('landing');
+        resolvedView = 'builder';
       }
+
+      setView(resolvedView);
+      // Sync URL to the resolved view so back/forward history starts clean.
+      const path = VIEW_TO_PATH[resolvedView] || '/';
+      window.history.replaceState({ view: resolvedView }, '', path);
+
       if (typeof prefs.canvas_zoom === 'number' || prefs.canvas_pan) {
         setCanvasView({
           zoom: typeof prefs.canvas_zoom === 'number' ? prefs.canvas_zoom : 1,
@@ -225,7 +257,7 @@ export default function App() {
     }).finally(() => {
       setLoadingWorkspace(false);
     });
-  }, []);
+  }, [authReady]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const scheduleWorkspaceAutosave = useCallback((agentState) => {
     if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
@@ -253,9 +285,24 @@ export default function App() {
   const handleSetView = useCallback((nextView) => {
     setView(nextView);
     setAnalyticsAgent(null);
+    const path = VIEW_TO_PATH[nextView] || '/';
+    if (window.location.pathname !== path) {
+      window.history.pushState({ view: nextView }, '', path);
+    }
     if (nextView !== 'landing') {
       api.saveUserPreferences(USER_ID, { view: nextView });
     }
+  }, []);
+
+  // Sync view when browser back/forward is used.
+  useEffect(() => {
+    const onPop = (e) => {
+      const v = (e.state && e.state.view) || pathToView(window.location.pathname) || 'landing';
+      setView(v);
+      setAnalyticsAgent(null);
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
   }, []);
 
   const handleThemeChange = useCallback((newTheme) => {
@@ -1048,10 +1095,13 @@ export default function App() {
           onFork={onFork}
           onOpenAuth={(tab) => setAuthModal({ tab, onSuccess: null })}
         />
+      ) : view === 'docs/webhook-signatures' ? (
+        <WebhookSignaturesDoc onBack={() => handleSetView('developer')} />
       ) : view === 'developer' ? (
         <WebhookSettings
           isAuthenticated={isAuthenticated}
           onOpenAuth={(tab) => setAuthModal({ tab, onSuccess: null })}
+          onNavigate={handleSetView}
         />
       ) : view === 'admin' ? (
         <AdminPage

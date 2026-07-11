@@ -72,13 +72,20 @@ export default function Topbar({
 
   if (view === 'landing') {
     return (
-      <header className="topbar">
+      <header className="topbar topbar--landing">
         <div className="brand">
           <span className="brand-mark">
             <AGENT_ICON />
           </span>
           AgentForge
         </div>
+
+        <nav className="topbar-landing-nav">
+          <button className="topbar-landing-nav__item" onClick={() => onSetView('builder')}>Product</button>
+          <button className="topbar-landing-nav__item" onClick={() => onSetView('builder')}>Templates</button>
+          <button className="topbar-landing-nav__item" onClick={() => onSetView('marketplace')}>Marketplace</button>
+          <a href="#" className="topbar-landing-nav__item">Docs</a>
+        </nav>
 
         <div className="topbar-spacer" />
 
@@ -95,7 +102,7 @@ export default function Topbar({
 
         <div className="topbar-auth">
           <button className="btn subtle" onClick={() => onOpenAuth('login')}>Sign in</button>
-          <button className="btn primary" onClick={() => onOpenAuth('signup')}>Sign up</button>
+          <button className="btn primary" onClick={() => onOpenAuth('signup')}>Start building free</button>
         </div>
       </header>
     );
