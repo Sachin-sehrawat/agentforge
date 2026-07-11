@@ -66,6 +66,51 @@ export async function fetchGitHubUser(accessToken) {
   return resp.json(); // { login, id, ... }
 }
 
+export async function fetchGitHubRepos(accessToken) {
+  const results = [];
+  let url = 'https://api.github.com/user/repos?per_page=100&sort=updated&affiliation=owner,collaborator,organization_member';
+  while (url) {
+    const resp = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: 'application/vnd.github+json',
+        'User-Agent': 'AgentForge',
+      },
+    });
+    if (!resp.ok) throw new Error(`GitHub repos fetch HTTP error: ${resp.status}`);
+    const page = await resp.json();
+    for (const r of page) {
+      results.push({ fullName: r.full_name, defaultBranch: r.default_branch, private: r.private });
+    }
+    const link = resp.headers.get('link') || '';
+    const next = link.match(/<([^>]+)>;\s*rel="next"/);
+    url = next ? next[1] : null;
+  }
+  return results;
+}
+
+export async function fetchGitHubBranches(accessToken, owner, repo) {
+  const results = [];
+  let url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/branches?per_page=100`;
+  while (url) {
+    const resp = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: 'application/vnd.github+json',
+        'User-Agent': 'AgentForge',
+      },
+    });
+    if (resp.status === 404) throw Object.assign(new Error('Repository not found'), { statusCode: 404 });
+    if (!resp.ok) throw new Error(`GitHub branches fetch HTTP error: ${resp.status}`);
+    const page = await resp.json();
+    for (const b of page) results.push(b.name);
+    const link = resp.headers.get('link') || '';
+    const next = link.match(/<([^>]+)>;\s*rel="next"/);
+    url = next ? next[1] : null;
+  }
+  return results;
+}
+
 export async function revokeGitHubToken(accessToken) {
   const clientId = process.env.GITHUB_CLIENT_ID;
   const clientSecret = process.env.GITHUB_CLIENT_SECRET;

@@ -13,7 +13,7 @@ import { zipSync, strToU8 } from 'fflate';
 import { getDb, healthCheck as mongoHealth } from './mongo.js';
 import { TOOL_CATALOG, TOOL_IDS } from './tools/toolDefinitions.js';
 import { isPrivateHostname } from './tools/httpRequest.js';
-import { validatePreferences, validateWorkspaceData, validateDraftInput, validateSignupInput, validateLoginInput, validateBuiltinSkillInput, validatePersonaCategoryInput, validatePersonaInput, validateAgentDefinition, validateTemplateInput, validateRatingInput, validateCategoryInput } from './validation.js';
+import { validatePreferences, validateWorkspaceData, validateDraftInput, validateSignupInput, validateLoginInput, validateBuiltinSkillInput, validatePersonaCategoryInput, validatePersonaInput, validateAgentDefinition, validateTemplateInput, validateRatingInput, validateCategoryInput, validateGitHubSyncConfig } from './validation.js';
 import { hashPassword, verifyPassword } from './auth/crypto.js';
 import { signAccessToken } from './auth/token.js';
 import { requireAuth, optionalAuth } from './middleware/auth.js';
@@ -27,6 +27,8 @@ import {
   exchangeCodeForToken,
   fetchGitHubUser,
   revokeGitHubToken,
+  fetchGitHubRepos,
+  fetchGitHubBranches,
 } from './integrations/github.js';
 
 const app = express();
@@ -2676,6 +2678,112 @@ app.delete('/api/integrations/github', requireAuth, async (req, res) => {
     }
 
     await db.query('DELETE FROM github_connections WHERE user_id = $1', [req.user.userId]);
+    res.status(204).end();
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// List the authenticated user's repos (server-side proxy, token never exposed).
+app.get('/api/integrations/github/repos', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await db.query(
+      'SELECT access_token_encrypted FROM github_connections WHERE user_id = $1',
+      [req.user.userId]
+    );
+    if (!rows[0]) return res.status(403).json({ error: 'GitHub account not connected' });
+    const token = decryptToken(rows[0].access_token_encrypted);
+    const repos = await fetchGitHubRepos(token);
+    res.json(repos);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// List branches for a specific repo (server-side proxy).
+app.get('/api/integrations/github/repos/:owner/:repo/branches', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await db.query(
+      'SELECT access_token_encrypted FROM github_connections WHERE user_id = $1',
+      [req.user.userId]
+    );
+    if (!rows[0]) return res.status(403).json({ error: 'GitHub account not connected' });
+    const token = decryptToken(rows[0].access_token_encrypted);
+    const branches = await fetchGitHubBranches(token, req.params.owner, req.params.repo);
+    res.json(branches);
+  } catch (err) {
+    const status = err.statusCode || 500;
+    res.status(status).json({ error: err.message });
+  }
+});
+
+// --- Agent GitHub sync config ------------------------------------------------
+
+// GET — return the current sync config for an agent (owner only).
+app.get('/api/agents/:id/github-sync-config', requireAuth, async (req, res) => {
+  try {
+    const { rows: agentRows } = await db.query(
+      'SELECT owner_id FROM agents WHERE id = $1',
+      [req.params.id]
+    );
+    if (!agentRows[0]) return res.status(404).json({ error: 'Agent not found' });
+    if (agentRows[0].owner_id !== req.user.userId) return res.status(403).json({ error: 'Forbidden' });
+
+    const { rows } = await db.query(
+      'SELECT repo_full_name, branch, path_template, auto_sync, format, updated_at FROM agent_github_sync WHERE agent_id = $1',
+      [req.params.id]
+    );
+    if (!rows[0]) return res.json(null);
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT — upsert the sync config for an agent (owner only).
+app.put('/api/agents/:id/github-sync-config', requireAuth, async (req, res) => {
+  const validation = validateGitHubSyncConfig(req.body);
+  if (validation.error) return res.status(400).json({ error: validation.error });
+
+  try {
+    const { rows: agentRows } = await db.query(
+      'SELECT owner_id FROM agents WHERE id = $1',
+      [req.params.id]
+    );
+    if (!agentRows[0]) return res.status(404).json({ error: 'Agent not found' });
+    if (agentRows[0].owner_id !== req.user.userId) return res.status(403).json({ error: 'Forbidden' });
+
+    const { repo_full_name, branch, path_template, auto_sync, format } = validation.data;
+    const { rows } = await db.query(
+      `INSERT INTO agent_github_sync (agent_id, repo_full_name, branch, path_template, auto_sync, format, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, NOW())
+       ON CONFLICT (agent_id) DO UPDATE SET
+         repo_full_name = EXCLUDED.repo_full_name,
+         branch         = EXCLUDED.branch,
+         path_template  = EXCLUDED.path_template,
+         auto_sync      = EXCLUDED.auto_sync,
+         format         = EXCLUDED.format,
+         updated_at     = NOW()
+       RETURNING *`,
+      [req.params.id, repo_full_name, branch, path_template, auto_sync, format]
+    );
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE — remove the sync config for an agent (owner only).
+app.delete('/api/agents/:id/github-sync-config', requireAuth, async (req, res) => {
+  try {
+    const { rows: agentRows } = await db.query(
+      'SELECT owner_id FROM agents WHERE id = $1',
+      [req.params.id]
+    );
+    if (!agentRows[0]) return res.status(404).json({ error: 'Agent not found' });
+    if (agentRows[0].owner_id !== req.user.userId) return res.status(403).json({ error: 'Forbidden' });
+
+    await db.query('DELETE FROM agent_github_sync WHERE agent_id = $1', [req.params.id]);
     res.status(204).end();
   } catch (err) {
     res.status(500).json({ error: err.message });
