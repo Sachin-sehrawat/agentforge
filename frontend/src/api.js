@@ -381,6 +381,22 @@ export const api = {
   getGitHubStatus: () => request('/integrations/github/status'),
   startGitHubConnect: () => request('/integrations/github/connect', { method: 'POST' }),
   disconnectGitHub: () => request('/integrations/github', { method: 'DELETE' }),
+  getGitHubRepos: () => request('/integrations/github/repos'),
+  getGitHubBranches: (owner, repo) =>
+    request(`/integrations/github/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/branches`),
+
+  // Per-agent GitHub sync config
+  getAgentSyncConfig: (agentId) => request(`/agents/${agentId}/github-sync-config`),
+  setAgentSyncConfig: (agentId, config) =>
+    request(`/agents/${agentId}/github-sync-config`, { method: 'PUT', body: JSON.stringify(config) }),
+  deleteAgentSyncConfig: (agentId) =>
+    request(`/agents/${agentId}/github-sync-config`, { method: 'DELETE' }),
+
+  // Sync trigger and status (wired in by PR #129 commit-on-save)
+  triggerAgentSync: (agentId) =>
+    request(`/agents/${agentId}/github-sync`, { method: 'POST' }),
+  getAgentSyncStatus: (agentId) =>
+    request(`/agents/${agentId}/github-sync-status`),
 
   // --- Health ---------------------------------------------------------------
   health: () => request('/health'),
