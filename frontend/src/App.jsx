@@ -670,6 +670,39 @@ export default function App() {
     }
   };
 
+  const onExportMcp = async (agentData) => {
+    const target = agentData || agent;
+
+    if (!target.id) {
+      showToast('Save the agent before exporting as MCP server.', 'warning');
+      return;
+    }
+
+    if (!target.tools || target.tools.length === 0) {
+      showToast('Add at least one tool to export as an MCP server.', 'warning');
+      return;
+    }
+
+    try {
+      const blob = await api.exportAgentAsMcp(target.id);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${(target.name || 'agent').replace(/[^a-z0-9]/gi, '-').toLowerCase()}-mcp-server.zip`;
+      a.click();
+      URL.revokeObjectURL(url);
+      refreshQuota();
+    } catch (err) {
+      if (err.status === 422) {
+        showToast(`Cannot export as MCP: ${err.message}`, 'warning');
+      } else if (err.status === 429 && err.quotaInfo) {
+        setQuotaError({ action: 'export', ...err.quotaInfo });
+      } else {
+        showToast(`MCP export failed: ${err.message}`, 'error');
+      }
+    }
+  };
+
   const onBulkExport = async (ids, format) => {
     try {
       const result = await api.bulkExportAgents(ids, format);
@@ -1019,6 +1052,7 @@ export default function App() {
           isAuthenticated={isAuthenticated}
           onOpen={onLoad}
           onDownload={onDownload}
+          onExportMcp={onExportMcp}
           onDelete={onDelete}
           onNew={onNew}
           onOpenAuth={(tab) => setAuthModal({ tab, onSuccess: null })}

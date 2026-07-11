@@ -6,6 +6,8 @@ import { ObjectId } from 'mongodb';
 import db, { pool, withClient } from './db.js';
 import { toCanonical } from './serialization/agentSchema.js';
 import { parseJson, parseMarkdown } from './serialization/importAgent.js';
+import { generateMcpBundle } from './serialization/mcpExport.js';
+import { zipSync, strToU8 } from 'fflate';
 import { getDb, healthCheck as mongoHealth } from './mongo.js';
 import { TOOL_CATALOG, TOOL_IDS } from './tools/toolDefinitions.js';
 import { isPrivateHostname } from './tools/httpRequest.js';
@@ -1327,6 +1329,63 @@ app.post('/api/agents/:id/export-event', optionalAuth, enforceQuota('export'), a
     res.status(204).end();
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// --- MCP server export -------------------------------------------------------
+// Generates a ready-to-run MCP server zip from the agent definition.
+// Public agents are freely exportable; private agents require ownership.
+// The export is counted against the same quota as Markdown export.
+
+app.post('/api/agents/:id/export-mcp', optionalAuth, enforceQuota('export'), async (req, res) => {
+  const agentId = req.params.id;
+  const actorId = req.user?.userId ?? null;
+
+  try {
+    const { rows } = await db.query('SELECT * FROM agents WHERE id = $1', [agentId]);
+    if (!rows[0]) return res.status(404).json({ error: 'Agent not found' });
+
+    const agent = rows[0];
+
+    if (agent.visibility !== 'public' && agent.owner_id !== actorId) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+
+    // Validation: agent must be ready for MCP export
+    const validationErrors = [];
+    if (!agent.name?.trim()) validationErrors.push('Agent must have a name');
+    if (!agent.persona?.trim() && !agent.system_prompt?.trim()) {
+      validationErrors.push('Agent must have a description (persona or system prompt) for the MCP README');
+    }
+    if (!Array.isArray(agent.tools) || agent.tools.length === 0) {
+      validationErrors.push('Agent must have at least one tool to export as an MCP server');
+    }
+    if (validationErrors.length > 0) {
+      return res.status(422).json({ error: 'Agent is not ready for MCP export', details: validationErrors });
+    }
+
+    const serialized = serializeAgent(agent);
+    const files = generateMcpBundle(serialized, TOOL_CATALOG);
+
+    // Build zip in memory using fflate (pure-JS, ESM-compatible)
+    const zipEntries = {};
+    for (const [filename, content] of Object.entries(files)) {
+      zipEntries[filename] = strToU8(content);
+    }
+    const zipped = zipSync(zipEntries, { level: 6 });
+
+    const slug = (agent.name || 'agent').replace(/[^a-z0-9]/gi, '-').toLowerCase();
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="${slug}-mcp-server.zip"`);
+    res.setHeader('Content-Length', String(zipped.length));
+    res.end(Buffer.from(zipped));
+
+    // Fire-and-forget analytics event
+    emitEvent(agentId, actorId, 'export', { format: 'mcp' });
+  } catch (err) {
+    if (!res.headersSent) {
+      res.status(500).json({ error: err.message });
+    }
   }
 });
 

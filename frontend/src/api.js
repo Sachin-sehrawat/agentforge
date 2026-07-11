@@ -271,6 +271,30 @@ export const api = {
   recordExportEvent: (agentId) =>
     request(`/agents/${agentId}/export-event`, { method: 'POST' }),
 
+  // Download agent as a ready-to-run MCP server zip.
+  // Returns a Blob suitable for URL.createObjectURL.
+  exportAgentAsMcp: async (agentId) => {
+    const headers = {};
+    if (_token) headers['Authorization'] = `Bearer ${_token}`;
+    const res = await fetch(`${BASE}/agents/${agentId}/export-mcp`, { method: 'POST', headers });
+    if (!res.ok) {
+      let message = `MCP export failed (${res.status})`;
+      let quotaInfo = null;
+      try {
+        const data = await res.json();
+        if (data?.error) message = data.error;
+        if (res.status === 429) {
+          quotaInfo = { limit: data.limit, used: data.used, resetsAt: data.resetsAt, tier: data.tier };
+        }
+      } catch { /* ignore parse errors */ }
+      const err = new Error(message);
+      err.status = res.status;
+      if (quotaInfo) err.quotaInfo = quotaInfo;
+      throw err;
+    }
+    return res.blob();
+  },
+
   // --- Auth ----------------------------------------------------------------
   signup: (email, password, display_name) =>
     request('/auth/signup', { method: 'POST', body: JSON.stringify({ email, password, display_name }) }),
