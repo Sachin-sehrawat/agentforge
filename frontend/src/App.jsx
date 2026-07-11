@@ -7,6 +7,7 @@ import PersonaPanel from './components/PersonaPanel.jsx';
 import SkillsBar from './components/SkillsBar.jsx';
 import AgentsPage from './components/AgentsPage.jsx';
 import AgentAnalytics from './components/AgentAnalytics.jsx';
+import ExportFormatModal from './components/ExportFormatModal.jsx';
 import SkillsPage from './components/SkillsPage.jsx';
 import AdminPage from './components/AdminPage.jsx';
 import WebhookSettings from './components/WebhookSettings.jsx';
@@ -158,6 +159,7 @@ export default function App() {
   });
 
   const [analyticsAgent, setAnalyticsAgent] = useState(null);
+  const [exportPanelAgent, setExportPanelAgent] = useState(null);
 
   const [validationState, setValidationState] = useState(null);
   const [toasts, setToasts] = useState([]);
@@ -1086,33 +1088,43 @@ export default function App() {
           onBack={() => setAnalyticsAgent(null)}
         />
       ) : view === 'agents' ? (
-        <AgentsPage
-          publicAgents={publicAgents}
-          myAgents={myAgents}
-          favoriteAgents={favoriteAgents}
-          loadingPublic={loadingPublic}
-          loadingMine={loadingMine}
-          loadingFavorites={loadingFavorites}
-          errorPublic={errorPublic}
-          errorMine={errorMine}
-          errorFavorites={errorFavorites}
-          isAuthenticated={isAuthenticated}
-          onOpen={onLoad}
-          onDownload={onDownload}
-          onExportMcp={onExportMcp}
-          onDelete={onDelete}
-          onNew={onNew}
-          onOpenAuth={(tab) => setAuthModal({ tab, onSuccess: null })}
-          onSubscribe={onSubscribe}
-          onToggleVisibility={onToggleVisibility}
-          onFork={onFork}
-          onUnfavorite={onUnfavorite}
-          onDuplicate={onDuplicate}
-          onBulkDelete={onBulkDelete}
-          onBulkExport={onBulkExport}
-          onAnalytics={(agent) => setAnalyticsAgent({ id: agent.id, name: agent.name })}
-          categories={agentCategories}
-        />
+        <>
+          <AgentsPage
+            publicAgents={publicAgents}
+            myAgents={myAgents}
+            favoriteAgents={favoriteAgents}
+            loadingPublic={loadingPublic}
+            loadingMine={loadingMine}
+            loadingFavorites={loadingFavorites}
+            errorPublic={errorPublic}
+            errorMine={errorMine}
+            errorFavorites={errorFavorites}
+            isAuthenticated={isAuthenticated}
+            onOpen={onLoad}
+            onDownload={onDownload}
+            onExportMcp={onExportMcp}
+            onDelete={onDelete}
+            onNew={onNew}
+            onOpenAuth={(tab) => setAuthModal({ tab, onSuccess: null })}
+            onSubscribe={onSubscribe}
+            onToggleVisibility={onToggleVisibility}
+            onFork={onFork}
+            onUnfavorite={onUnfavorite}
+            onDuplicate={onDuplicate}
+            onBulkDelete={onBulkDelete}
+            onBulkExport={onBulkExport}
+            onAnalytics={(agent) => setAnalyticsAgent({ id: agent.id, name: agent.name })}
+            onExportFormat={(agent) => setExportPanelAgent(agent)}
+            categories={agentCategories}
+          />
+          {exportPanelAgent && (
+            <ExportFormatModal
+              agent={exportPanelAgent}
+              getMarkdown={(a) => generateMarkdown(a, allSkills, personaLookup)}
+              onClose={() => setExportPanelAgent(null)}
+            />
+          )}
+        </>
       ) : view === 'skills' ? (
         <SkillsPage
           allSkills={allSkills}

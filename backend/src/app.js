@@ -7,6 +7,8 @@ import db, { pool, withClient } from './db.js';
 import { toCanonical } from './serialization/agentSchema.js';
 import { parseJson, parseMarkdown } from './serialization/importAgent.js';
 import { generateMcpBundle } from './serialization/mcpExport.js';
+import { toAnthropicPayload } from './export/toAnthropic.js';
+import { toOpenAIPayload } from './export/toOpenAI.js';
 import { zipSync, strToU8 } from 'fflate';
 import { getDb, healthCheck as mongoHealth } from './mongo.js';
 import { TOOL_CATALOG, TOOL_IDS } from './tools/toolDefinitions.js';
@@ -1386,6 +1388,57 @@ app.post('/api/agents/:id/export-mcp', optionalAuth, enforceQuota('export'), asy
     if (!res.headersSent) {
       res.status(500).json({ error: err.message });
     }
+  }
+});
+
+// --- Format export (Anthropic / OpenAI) ------------------------------------
+// Returns a ready-to-use API request body for the specified provider format.
+// Uses the canonical serializer as input; never reads raw DB fields directly.
+// Counts against the same export quota as Markdown/MCP exports.
+
+app.post('/api/agents/:id/export-format', optionalAuth, enforceQuota('export'), async (req, res) => {
+  const agentId = req.params.id;
+  const actorId = req.user?.userId ?? null;
+
+  const { format, modelOverride } = req.body ?? {};
+
+  if (!['anthropic', 'openai'].includes(format)) {
+    return res.status(400).json({ error: 'format must be "anthropic" or "openai"' });
+  }
+
+  // Security: reject modelOverride values that look like API keys or are unreasonably long
+  if (modelOverride != null) {
+    if (typeof modelOverride !== 'string' || modelOverride.length > 200) {
+      return res.status(400).json({ error: 'Invalid modelOverride' });
+    }
+    if (/sk-[A-Za-z0-9_-]{20,}/.test(modelOverride) || /key-[A-Za-z0-9_-]{20,}/.test(modelOverride)) {
+      return res.status(400).json({ error: 'modelOverride must be a model name, not an API key' });
+    }
+  }
+
+  try {
+    const { rows } = await db.query('SELECT * FROM agents WHERE id = $1', [agentId]);
+    if (!rows[0]) return res.status(404).json({ error: 'Agent not found' });
+
+    const agent = rows[0];
+    if (agent.visibility !== 'public' && agent.owner_id !== actorId) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+
+    const canonical = serializeAgent(agent);
+
+    let payload, warnings;
+    if (format === 'anthropic') {
+      payload = toAnthropicPayload(canonical);
+      warnings = [];
+    } else {
+      ({ payload, warnings } = toOpenAIPayload(canonical, { modelOverride: modelOverride || undefined }));
+    }
+
+    emitEvent(agentId, actorId, 'export', { format });
+    res.json({ payload, warnings });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
