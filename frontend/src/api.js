@@ -377,6 +377,11 @@ export const api = {
   },
   sendWebhookTest: (id) => request(`/webhooks/${id}/test`, { method: 'POST' }),
 
+  // --- GitHub integration ---------------------------------------------------
+  getGitHubStatus: () => request('/integrations/github/status'),
+  startGitHubConnect: () => request('/integrations/github/connect', { method: 'POST' }),
+  disconnectGitHub: () => request('/integrations/github', { method: 'DELETE' }),
+
   // --- Health ---------------------------------------------------------------
   health: () => request('/health'),
 

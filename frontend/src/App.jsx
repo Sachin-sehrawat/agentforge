@@ -250,6 +250,13 @@ export default function App() {
       }
       if (wsData.agent && typeof wsData.agent === 'object') {
         const restored = { ...DEFAULT_AGENT, ...wsData.agent };
+        // Verify the saved agent ID still exists in the DB; clear it if stale
+        // (e.g. after a DB reset) so the user can re-save cleanly.
+        if (restored.id) {
+          api.getAgent(restored.id).catch(() => {
+            setAgent((prev) => ({ ...prev, id: null }));
+          });
+        }
         setAgent(restored);
         isRestoredRef.current = true;
         if (restored.persona || restored.systemPrompt || restored.tools?.length > 0) {
@@ -742,7 +749,12 @@ export default function App() {
       URL.revokeObjectURL(url);
       refreshQuota();
     } catch (err) {
-      if (err.status === 422) {
+      if (err.status === 404) {
+        // Agent ID is stale (e.g. after a DB reset). Clear the ID so the user
+        // can re-save as a fresh record, then export.
+        setAgent((prev) => ({ ...prev, id: null }));
+        showToast('Agent not found in database — please save the agent first, then export.', 'warning');
+      } else if (err.status === 422) {
         showToast(`Cannot export as MCP: ${err.message}`, 'warning');
       } else if (err.status === 429 && err.quotaInfo) {
         setQuotaError({ action: 'export', ...err.quotaInfo });
