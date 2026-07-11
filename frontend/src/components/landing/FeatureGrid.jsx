@@ -85,7 +85,8 @@ export default function FeatureGrid() {
 
   return (
     <section className="feature-grid-section" ref={ref}>
-      <h2 className="feature-grid-section__heading">Everything you need to build great agents</h2>
+      <div className="feature-grid-section__eyebrow">FEATURES</div>
+      <h2 className="feature-grid-section__heading">Everything to design and ship an agent</h2>
       <p className="feature-grid-section__sub">
         One canvas. Six superpowers.
       </p>

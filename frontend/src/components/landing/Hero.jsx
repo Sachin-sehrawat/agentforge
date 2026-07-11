@@ -9,19 +9,18 @@ export default function Hero({ onStartBuilding, onBrowseMarketplace }) {
 
       <div className="hero-inner">
         <div className="hero-text">
+          <div className="hero-pill">● provider-agnostic agent specs</div>
           <h1 className="hero-headline">
-            Build agents.<br />
-            Share them.<br />
-            Fork what you love.
+            Design AI agents visually. Export a spec anyone can run.
           </h1>
           <p className="hero-sub">
-            AgentForge is a visual drag-and-drop builder for AI agents — design
-            your workflow on the canvas, then publish it to the marketplace for
-            others to discover and fork.
+            Drag agent, tool, and persona nodes onto a canvas, wire them
+            together, and download a portable Markdown spec — no code, no
+            lock-in.
           </p>
           <div className="hero-ctas">
             <button className="hero-cta-primary" onClick={onStartBuilding}>
-              Start Building →
+              Start building free
             </button>
             <button className="hero-cta-ghost" onClick={onBrowseMarketplace}>
               Browse Marketplace

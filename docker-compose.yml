@@ -79,6 +79,18 @@ services:
     networks:
       - agentforge-net
 
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - agentforge-net
+
 volumes:
   postgres_data:
   mongo_data:
