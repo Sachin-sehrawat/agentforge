@@ -21,6 +21,13 @@ import { enforceQuota, nextMidnightUTC } from './middleware/quota.js';
 import { QUOTA } from './quotaConfig.js';
 import { writeAudit } from './audit.js';
 import { enqueueJob } from './jobs.js';
+import {
+  encryptToken,
+  decryptToken,
+  exchangeCodeForToken,
+  fetchGitHubUser,
+  revokeGitHubToken,
+} from './integrations/github.js';
 
 const app = express();
 app.use(cors());
@@ -94,6 +101,7 @@ app.use('/api/workspace', rateLimit);
 app.use('/api/drafts', rateLimit);
 app.use('/api/subscriptions', rateLimit);
 app.use('/api/webhooks', rateLimit);
+app.use('/api/integrations', rateLimit);
 
 // --- Event log helper -------------------------------------------------------
 // Fire-and-forget: failures are logged but never bubble up to callers.
@@ -2550,6 +2558,125 @@ app.get('/api/subscriptions/:agentId', requireAuth, async (req, res) => {
       [userId, req.params.agentId]
     );
     res.json({ subscribed: rows.length > 0 });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --- GitHub OAuth integration -----------------------------------------------
+// CSRF state store: maps random state token → {userId, expiresAt}.
+// Entries expire after 10 minutes and are cleaned up every minute.
+const _githubStates = new Map();
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, v] of _githubStates) {
+    if (now > v.expiresAt) _githubStates.delete(k);
+  }
+}, 60_000).unref();
+
+// Step 1 — initiate connect (called from frontend JSON API).
+// Returns the GitHub authorization URL; frontend navigates there.
+app.post('/api/integrations/github/connect', requireAuth, (req, res) => {
+  const clientId = process.env.GITHUB_CLIENT_ID;
+  if (!clientId) {
+    return res.status(503).json({ error: 'GitHub OAuth is not configured on this server' });
+  }
+  const state = crypto.randomBytes(24).toString('hex');
+  _githubStates.set(state, { userId: req.user.userId, expiresAt: Date.now() + 10 * 60_000 });
+
+  const url = new URL('https://github.com/login/oauth/authorize');
+  url.searchParams.set('client_id', clientId);
+  url.searchParams.set('scope', 'repo');
+  url.searchParams.set('state', state);
+  res.json({ url: url.toString() });
+});
+
+// Step 2 — OAuth callback from GitHub.
+// Verifies CSRF state, exchanges code for token, encrypts, upserts into DB,
+// then redirects the browser to the frontend settings page.
+app.get('/integrations/github/callback', async (req, res) => {
+  const { code, state, error: ghError } = req.query;
+
+  const frontendBase = process.env.FRONTEND_URL || 'http://localhost:5173';
+  const failRedirect = (msg) =>
+    res.redirect(`${frontendBase}/settings?tab=integrations&github=error&msg=${encodeURIComponent(msg)}`);
+
+  if (ghError) return failRedirect(ghError);
+  if (typeof state !== 'string' || !_githubStates.has(state)) {
+    return failRedirect('Invalid or expired state. Please try connecting again.');
+  }
+
+  const { userId, expiresAt } = _githubStates.get(state);
+  _githubStates.delete(state); // one-time use
+
+  if (Date.now() > expiresAt) {
+    return failRedirect('OAuth session expired. Please try connecting again.');
+  }
+
+  if (typeof code !== 'string' || !code) {
+    return failRedirect('No authorization code received from GitHub.');
+  }
+
+  try {
+    const tokenData = await exchangeCodeForToken(code);
+    const ghUser = await fetchGitHubUser(tokenData.access_token);
+    const encrypted = encryptToken(tokenData.access_token);
+
+    await db.query(
+      `INSERT INTO github_connections (user_id, github_login, access_token_encrypted, scopes, connected_at)
+       VALUES ($1, $2, $3, $4, NOW())
+       ON CONFLICT (user_id)
+       DO UPDATE SET
+         github_login           = EXCLUDED.github_login,
+         access_token_encrypted = EXCLUDED.access_token_encrypted,
+         scopes                 = EXCLUDED.scopes,
+         connected_at           = NOW()`,
+      [userId, ghUser.login, encrypted, tokenData.scope ?? null]
+    );
+
+    res.redirect(`${frontendBase}/settings?tab=integrations&github=connected`);
+  } catch (err) {
+    console.error('[github] OAuth callback error:', err.message);
+    failRedirect('GitHub connection failed. Please try again.');
+  }
+});
+
+// Status endpoint — never returns the token or encrypted bytes.
+app.get('/api/integrations/github/status', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await db.query(
+      'SELECT github_login, scopes, connected_at FROM github_connections WHERE user_id = $1',
+      [req.user.userId]
+    );
+    if (!rows[0]) return res.json({ connected: false });
+    res.json({ connected: true, githubLogin: rows[0].github_login, scopes: rows[0].scopes, connectedAt: rows[0].connected_at });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Disconnect — revokes the GitHub token before deleting the row.
+app.delete('/api/integrations/github', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await db.query(
+      'SELECT access_token_encrypted FROM github_connections WHERE user_id = $1',
+      [req.user.userId]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'No GitHub connection found' });
+
+    let plaintext;
+    try {
+      plaintext = decryptToken(rows[0].access_token_encrypted);
+    } catch {
+      console.error('[github] Failed to decrypt token for revocation — deleting row anyway');
+    }
+
+    if (plaintext) {
+      await revokeGitHubToken(plaintext);
+    }
+
+    await db.query('DELETE FROM github_connections WHERE user_id = $1', [req.user.userId]);
+    res.status(204).end();
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
