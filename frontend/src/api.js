@@ -281,6 +281,12 @@ export const api = {
   recordExportEvent: (agentId) =>
     request(`/agents/${agentId}/export-event`, { method: 'POST' }),
 
+  exportAgentFormat: (agentId, format, modelOverride) => {
+    const body = { format };
+    if (modelOverride) body.modelOverride = modelOverride;
+    return request(`/agents/${agentId}/export-format`, { method: 'POST', body: JSON.stringify(body) });
+  },
+
   // Download agent as a ready-to-run MCP server zip.
   // Returns a Blob suitable for URL.createObjectURL.
   exportAgentAsMcp: async (agentId) => {

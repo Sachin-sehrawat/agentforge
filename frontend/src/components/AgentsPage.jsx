@@ -31,7 +31,7 @@ function Badge({ label, color }) {
   );
 }
 
-function AgentCard({ agent, categories = [], onOpen, onDownload, onExportMcp, onDelete, onSubscribe, onToggleVisibility, onAnalytics, onDuplicate, isSelected, onToggleSelect }) {
+function AgentCard({ agent, categories = [], onOpen, onDownload, onExportMcp, onExportFormat, onDelete, onSubscribe, onToggleVisibility, onAnalytics, onDuplicate, isSelected, onToggleSelect }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [confirmPublish, setConfirmPublish] = useState(false);
   const [duplicating, setDuplicating] = useState(false);
@@ -182,6 +182,15 @@ function AgentCard({ agent, categories = [], onOpen, onDownload, onExportMcp, on
               MCP
             </button>
           )}
+          {onExportFormat && (
+            <button className="btn subtle" onClick={() => onExportFormat(agent)} title="Export as Anthropic / OpenAI payload">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="16 18 22 12 16 6" />
+                <polyline points="8 6 2 12 8 18" />
+              </svg>
+              API
+            </button>
+          )}
           {onToggleVisibility && (
             <button
               className={`btn${confirmPublish ? ' danger' : ' subtle'}`}
@@ -247,7 +256,7 @@ function AgentCard({ agent, categories = [], onOpen, onDownload, onExportMcp, on
   );
 }
 
-function AgentsList({ agents, search, toolsFilter, tagsFilter, categoryFilter, categories, onClearFilters, onOpen, onDownload, onExportMcp, onDelete, canDelete, onSubscribe, onToggleVisibility, onAnalytics, onDuplicate, emptyNode, selectedIds, onToggleSelect, onToggleSelectAll }) {
+function AgentsList({ agents, search, toolsFilter, tagsFilter, categoryFilter, categories, onClearFilters, onOpen, onDownload, onExportMcp, onExportFormat, onDelete, canDelete, onSubscribe, onToggleVisibility, onAnalytics, onDuplicate, emptyNode, selectedIds, onToggleSelect, onToggleSelectAll }) {
   const q = search.trim().toLowerCase();
   const filtered = agents.filter((a) => {
     if (q && !(
@@ -318,6 +327,7 @@ function AgentsList({ agents, search, toolsFilter, tagsFilter, categoryFilter, c
             onOpen={onOpen}
             onDownload={onDownload}
             onExportMcp={onExportMcp || null}
+            onExportFormat={onExportFormat || null}
             onDelete={canDelete && canDelete(agent) ? onDelete : null}
             onSubscribe={onSubscribe || null}
             onToggleVisibility={onToggleVisibility && agent.isOwned ? onToggleVisibility : null}
@@ -332,7 +342,7 @@ function AgentsList({ agents, search, toolsFilter, tagsFilter, categoryFilter, c
   );
 }
 
-function TabContent({ agents, loading, error, search, toolsFilter, tagsFilter, categoryFilter, categories, onClearFilters, onOpen, onDownload, onExportMcp, onDelete, canDelete, onSubscribe, onToggleVisibility, onAnalytics, onDuplicate, emptyNode, selectedIds, onToggleSelect, onToggleSelectAll }) {
+function TabContent({ agents, loading, error, search, toolsFilter, tagsFilter, categoryFilter, categories, onClearFilters, onOpen, onDownload, onExportMcp, onExportFormat, onDelete, canDelete, onSubscribe, onToggleVisibility, onAnalytics, onDuplicate, emptyNode, selectedIds, onToggleSelect, onToggleSelectAll }) {
   if (loading) {
     return <div className="agents-loading">Loading…</div>;
   }
@@ -351,6 +361,7 @@ function TabContent({ agents, loading, error, search, toolsFilter, tagsFilter, c
       onOpen={onOpen}
       onDownload={onDownload}
       onExportMcp={onExportMcp}
+      onExportFormat={onExportFormat}
       onDelete={onDelete}
       canDelete={canDelete}
       onSubscribe={onSubscribe}
@@ -549,6 +560,7 @@ export default function AgentsPage({
   onOpen,
   onDownload,
   onExportMcp,
+  onExportFormat,
   onDelete,
   onNew,
   onOpenAuth,
@@ -1023,6 +1035,7 @@ export default function AgentsPage({
           onOpen={onOpen}
           onDownload={onDownload}
           onExportMcp={onExportMcp}
+          onExportFormat={onExportFormat}
           onDelete={onDelete}
           canDelete={(agent) => agent.isOwned}
           onToggleVisibility={onToggleVisibility}
@@ -1058,6 +1071,7 @@ export default function AgentsPage({
           onOpen={onOpen}
           onDownload={onDownload}
           onExportMcp={onExportMcp}
+          onExportFormat={onExportFormat}
           onDelete={null}
           onSubscribe={handlePublicSubscribe}
           emptyNode={
