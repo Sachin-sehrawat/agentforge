@@ -1,6 +1,441 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { TOOL_META } from '../toolMeta.jsx';
 import { api } from '../api.js';
+
+// ── GitHub sync status badge ─────────────────────────────────────────────────
+
+function SyncStatusBadge({ status, onClick }) {
+  if (!status) return null;
+  if (status.state === 'ok') {
+    return (
+      <button type="button" className="gh-sync-badge gh-sync-badge--ok" onClick={onClick} title="GitHub sync OK — click to configure">
+        <span className="gh-sync-dot" />
+        {status.fileUrl ? (
+          <a
+            href={status.fileUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+          >
+            Synced {status.syncedAt ? timeAgo(status.syncedAt) : ''}
+          </a>
+        ) : (
+          <span>Synced {status.syncedAt ? timeAgo(status.syncedAt) : ''}</span>
+        )}
+      </button>
+    );
+  }
+  if (status.state === 'conflict') {
+    return (
+      <button type="button" className="gh-sync-badge gh-sync-badge--conflict" onClick={onClick} title="Remote conflict — click to review">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+          <line x1="12" y1="9" x2="12" y2="13" />
+          <line x1="12" y1="17" x2="12.01" y2="17" />
+        </svg>
+        Conflict
+        {status.fileUrl && (
+          <a
+            href={status.fileUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+          >
+            View on GitHub
+          </a>
+        )}
+      </button>
+    );
+  }
+  if (status.state === 'error') {
+    return (
+      <button type="button" className="gh-sync-badge gh-sync-badge--error" onClick={onClick} title="Sync error — click to configure">
+        <span className="gh-sync-dot" />
+        {status.errorMessage || 'Sync error'}
+      </button>
+    );
+  }
+  if (status.state === 'pending') {
+    return (
+      <span className="gh-sync-badge gh-sync-badge--pending">
+        <svg className="gh-sync-spinner" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+        </svg>
+        Syncing…
+      </span>
+    );
+  }
+  return null;
+}
+
+// ── Per-agent GitHub sync config modal ───────────────────────────────────────
+
+function AgentGitHubSyncModal({ agent, githubLogin, onClose }) {
+  const [repos, setRepos] = useState([]);
+  const [loadingRepos, setLoadingRepos] = useState(true);
+  const [reposError, setReposError] = useState(null);
+
+  const [selectedRepo, setSelectedRepo] = useState('');
+  const [branches, setBranches] = useState([]);
+  const [loadingBranches, setLoadingBranches] = useState(false);
+  const [selectedBranch, setSelectedBranch] = useState('');
+  const [pathTemplate, setPathTemplate] = useState('agents/{slug}.md');
+  const [format, setFormat] = useState('markdown');
+  const [autoSync, setAutoSync] = useState(false);
+
+  const [syncStatus, setSyncStatus] = useState(null);
+  const [loadingStatus, setLoadingStatus] = useState(true);
+
+  const [saving, setSaving] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const [saveError, setSaveError] = useState(null);
+  const [saveSuccess, setSaveSuccess] = useState(false);
+
+  const agentSlug = (agent.name || 'agent').replace(/[^a-z0-9]/gi, '-').toLowerCase();
+
+  // Load current sync config and status on mount
+  useEffect(() => {
+    let cancelled = false;
+    api.getAgentSyncConfig(agent.id)
+      .then((cfg) => {
+        if (cancelled) return;
+        if (cfg) {
+          const [owner, repo] = (cfg.repo_full_name || '').split('/');
+          setSelectedRepo(cfg.repo_full_name || '');
+          setSelectedBranch(cfg.branch || '');
+          setPathTemplate(cfg.path_template || 'agents/{slug}.md');
+          setFormat(cfg.format || 'markdown');
+          setAutoSync(Boolean(cfg.auto_sync));
+          if (owner && repo) loadBranches(cfg.repo_full_name);
+        }
+      })
+      .catch(() => {});
+
+    api.getAgentSyncStatus(agent.id)
+      .then((s) => { if (!cancelled) setSyncStatus(s); })
+      .catch(() => { if (!cancelled) setSyncStatus(null); })
+      .finally(() => { if (!cancelled) setLoadingStatus(false); });
+
+    return () => { cancelled = true; };
+  }, [agent.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Load repos on mount
+  useEffect(() => {
+    setLoadingRepos(true);
+    api.getGitHubRepos()
+      .then((data) => setRepos(data || []))
+      .catch((err) => setReposError(err.message || 'Failed to load repositories'))
+      .finally(() => setLoadingRepos(false));
+  }, []);
+
+  function loadBranches(repoFullName) {
+    if (!repoFullName) { setBranches([]); return; }
+    const [owner, repo] = repoFullName.split('/');
+    if (!owner || !repo) return;
+    setLoadingBranches(true);
+    setBranches([]);
+    api.getGitHubBranches(owner, repo)
+      .then((data) => setBranches(data || []))
+      .catch(() => setBranches([]))
+      .finally(() => setLoadingBranches(false));
+  }
+
+  function handleRepoChange(e) {
+    const repo = e.target.value;
+    setSelectedRepo(repo);
+    setSelectedBranch('');
+    loadBranches(repo);
+  }
+
+  async function handleSave() {
+    if (!selectedRepo || !selectedBranch) return;
+    setSaving(true);
+    setSaveError(null);
+    setSaveSuccess(false);
+    try {
+      await api.setAgentSyncConfig(agent.id, {
+        repo_full_name: selectedRepo,
+        branch: selectedBranch,
+        path_template: pathTemplate || 'agents/{slug}.md',
+        format,
+        auto_sync: autoSync,
+      });
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 3000);
+    } catch (err) {
+      setSaveError(err.message || 'Failed to save configuration');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleSyncNow() {
+    setSyncing(true);
+    setSaveError(null);
+    try {
+      const result = await api.triggerAgentSync(agent.id);
+      setSyncStatus(result || { state: 'pending' });
+      // Poll for result
+      const poll = setInterval(async () => {
+        try {
+          const s = await api.getAgentSyncStatus(agent.id);
+          if (s && s.state !== 'pending') {
+            setSyncStatus(s);
+            clearInterval(poll);
+            setSyncing(false);
+          }
+        } catch {
+          clearInterval(poll);
+          setSyncing(false);
+        }
+      }, 2000);
+      setTimeout(() => { clearInterval(poll); setSyncing(false); }, 30000);
+    } catch (err) {
+      setSaveError(err.message || 'Sync failed');
+      setSyncing(false);
+    }
+  }
+
+  async function handleRemoveConfig() {
+    if (!window.confirm('Remove GitHub sync configuration for this agent?')) return;
+    setRemoving(true);
+    try {
+      await api.deleteAgentSyncConfig(agent.id);
+      setSelectedRepo('');
+      setSelectedBranch('');
+      setPathTemplate('agents/{slug}.md');
+      setFormat('markdown');
+      setAutoSync(false);
+      setSyncStatus(null);
+    } catch (err) {
+      setSaveError(err.message || 'Failed to remove configuration');
+    } finally {
+      setRemoving(false);
+    }
+  }
+
+  const previewPath = pathTemplate
+    .replace('{slug}', agentSlug)
+    .replace('{name}', agent.name || 'agent')
+    .replace('{id}', agent.id || 'id');
+
+  return (
+    <div className="modal-backdrop" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="gh-sync-modal" role="dialog" aria-modal="true" aria-label="GitHub sync configuration">
+        <div className="gh-sync-modal-header">
+          <div className="gh-sync-modal-title-row">
+            <svg viewBox="0 0 98 96" width="18" height="18" aria-hidden="true">
+              <path fillRule="evenodd" clipRule="evenodd" d="M48.854 0C21.839 0 0 22 0 49.217c0 21.756 13.993 40.172 33.405 46.69 2.427.49 3.316-1.059 3.316-2.362 0-1.141-.08-5.052-.08-9.127-13.59 2.934-16.42-5.867-16.42-5.867-2.184-5.704-5.42-7.17-5.42-7.17-4.448-3.015.324-3.015.324-3.015 4.934.326 7.523 5.052 7.523 5.052 4.367 7.496 11.404 5.378 14.235 4.074.404-3.178 1.699-5.378 3.074-6.6-10.839-1.141-22.243-5.378-22.243-24.283 0-5.378 1.94-9.778 5.014-13.2-.485-1.222-2.184-6.275.486-13.038 0 0 4.125-1.304 13.426 5.052a46.97 46.97 0 0 1 12.214-1.63c4.125 0 8.33.571 12.213 1.63 9.302-6.356 13.427-5.052 13.427-5.052 2.67 6.763.97 11.816.485 13.038 3.155 3.422 5.015 7.822 5.015 13.2 0 18.905-11.404 23.06-22.324 24.283 1.78 1.548 3.316 4.481 3.316 9.126 0 6.6-.08 11.897-.08 13.526 0 1.304.89 2.853 3.316 2.364 19.412-6.52 33.405-24.935 33.405-46.691C97.707 22 75.788 0 48.854 0z" />
+            </svg>
+            <h2 className="gh-sync-modal-title">GitHub Sync</h2>
+          </div>
+          <div className="gh-sync-modal-subtitle">
+            <strong>{agent.name || 'Untitled'}</strong>
+            {githubLogin && <span className="gh-sync-modal-account"> · {githubLogin}</span>}
+          </div>
+          <button type="button" className="gh-sync-modal-close" onClick={onClose} aria-label="Close">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        </div>
+
+        <div className="gh-sync-modal-body">
+          {/* Sync status */}
+          {!loadingStatus && syncStatus && (
+            <div className={`gh-sync-status-row gh-sync-status-row--${syncStatus.state}`}>
+              {syncStatus.state === 'ok' && (
+                <>
+                  <span className="gh-sync-dot" />
+                  <span>
+                    Synced to{' '}
+                    {syncStatus.fileUrl ? (
+                      <a href={syncStatus.fileUrl} target="_blank" rel="noopener noreferrer">
+                        {syncStatus.repo}/{syncStatus.path}
+                      </a>
+                    ) : (
+                      <>{syncStatus.repo}/{syncStatus.path}</>
+                    )}
+                    {syncStatus.syncedAt && <> · {timeAgo(syncStatus.syncedAt)}</>}
+                  </span>
+                </>
+              )}
+              {syncStatus.state === 'conflict' && (
+                <>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                    <line x1="12" y1="9" x2="12" y2="13" />
+                    <line x1="12" y1="17" x2="12.01" y2="17" />
+                  </svg>
+                  <span>
+                    Remote conflict — review before syncing.{' '}
+                    {syncStatus.fileUrl && (
+                      <a href={syncStatus.fileUrl} target="_blank" rel="noopener noreferrer">View on GitHub</a>
+                    )}
+                  </span>
+                </>
+              )}
+              {syncStatus.state === 'error' && (
+                <>
+                  <span className="gh-sync-dot" />
+                  <span>{syncStatus.errorMessage || 'Last sync failed'}</span>
+                </>
+              )}
+              {syncStatus.state === 'pending' && (
+                <>
+                  <svg className="gh-sync-spinner" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                    <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                  </svg>
+                  <span>Syncing…</span>
+                </>
+              )}
+            </div>
+          )}
+
+          {saveError && <div className="gh-error" role="alert">{saveError}</div>}
+          {saveSuccess && <div className="gh-sync-saved">Configuration saved.</div>}
+
+          {/* Repo picker */}
+          <div className="gh-sync-field">
+            <label className="gh-sync-label" htmlFor="gh-repo">Repository</label>
+            {reposError ? (
+              <p className="gh-sync-field-error">{reposError}</p>
+            ) : (
+              <select
+                id="gh-repo"
+                className="gh-sync-select"
+                value={selectedRepo}
+                onChange={handleRepoChange}
+                disabled={loadingRepos}
+              >
+                <option value="">{loadingRepos ? 'Loading repositories…' : 'Select a repository'}</option>
+                {repos.map((r) => (
+                  <option key={r.full_name} value={r.full_name}>{r.full_name}</option>
+                ))}
+              </select>
+            )}
+          </div>
+
+          {/* Branch picker */}
+          <div className="gh-sync-field">
+            <label className="gh-sync-label" htmlFor="gh-branch">Branch</label>
+            <select
+              id="gh-branch"
+              className="gh-sync-select"
+              value={selectedBranch}
+              onChange={(e) => setSelectedBranch(e.target.value)}
+              disabled={!selectedRepo || loadingBranches}
+            >
+              <option value="">
+                {!selectedRepo
+                  ? 'Select a repository first'
+                  : loadingBranches
+                  ? 'Loading branches…'
+                  : 'Select a branch'}
+              </option>
+              {branches.map((b) => (
+                <option key={b.name} value={b.name}>{b.name}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Path template */}
+          <div className="gh-sync-field">
+            <label className="gh-sync-label" htmlFor="gh-path">Path template</label>
+            <input
+              id="gh-path"
+              type="text"
+              className="gh-sync-input"
+              value={pathTemplate}
+              onChange={(e) => setPathTemplate(e.target.value)}
+              placeholder="agents/{slug}.md"
+            />
+            <p className="gh-sync-hint">
+              Placeholders: <code>{'{slug}'}</code> (URL-safe name), <code>{'{name}'}</code> (agent name),{' '}
+              <code>{'{id}'}</code> (agent ID).
+              {pathTemplate && (
+                <> Preview: <code>{previewPath}</code></>
+              )}
+            </p>
+          </div>
+
+          {/* Format */}
+          <div className="gh-sync-field">
+            <label className="gh-sync-label">Format</label>
+            <div className="gh-sync-radio-group">
+              {[['markdown', 'Markdown'], ['json', 'JSON'], ['both', 'Both']].map(([val, label]) => (
+                <label key={val} className="gh-sync-radio">
+                  <input
+                    type="radio"
+                    name="gh-format"
+                    value={val}
+                    checked={format === val}
+                    onChange={() => setFormat(val)}
+                  />
+                  {label}
+                </label>
+              ))}
+            </div>
+          </div>
+
+          {/* Auto-sync */}
+          <div className="gh-sync-field gh-sync-field--toggle">
+            <label className="gh-sync-toggle-label" htmlFor="gh-autosync">
+              <span>Auto-sync on save</span>
+              <p className="gh-sync-hint">Automatically commit to GitHub whenever you save this agent.</p>
+            </label>
+            <button
+              id="gh-autosync"
+              type="button"
+              role="switch"
+              aria-checked={autoSync}
+              className={`gh-toggle${autoSync ? ' on' : ''}`}
+              onClick={() => setAutoSync((v) => !v)}
+            >
+              <span className="gh-toggle-thumb" />
+            </button>
+          </div>
+        </div>
+
+        <div className="gh-sync-modal-footer">
+          <div className="gh-sync-modal-footer-left">
+            {selectedRepo && (
+              <button
+                type="button"
+                className="btn subtle small"
+                onClick={handleRemoveConfig}
+                disabled={removing}
+              >
+                {removing ? 'Removing…' : 'Remove config'}
+              </button>
+            )}
+          </div>
+          <div className="gh-sync-modal-footer-right">
+            {selectedRepo && selectedBranch && (
+              <button
+                type="button"
+                className="btn subtle"
+                onClick={handleSyncNow}
+                disabled={syncing || saving}
+              >
+                {syncing ? 'Syncing…' : 'Sync now'}
+              </button>
+            )}
+            <button
+              type="button"
+              className="btn primary"
+              onClick={handleSave}
+              disabled={saving || !selectedRepo || !selectedBranch}
+            >
+              {saving ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function timeAgo(dateStr) {
   const diff = Date.now() - new Date(dateStr).getTime();
@@ -31,7 +466,7 @@ function Badge({ label, color }) {
   );
 }
 
-function AgentCard({ agent, categories = [], onOpen, onDownload, onExportMcp, onExportFormat, onDelete, onSubscribe, onToggleVisibility, onAnalytics, onDuplicate, isSelected, onToggleSelect }) {
+function AgentCard({ agent, categories = [], onOpen, onDownload, onExportMcp, onExportFormat, onDelete, onSubscribe, onToggleVisibility, onAnalytics, onDuplicate, onGitHubSync, syncStatus, isSelected, onToggleSelect }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [confirmPublish, setConfirmPublish] = useState(false);
   const [duplicating, setDuplicating] = useState(false);
@@ -159,6 +594,9 @@ function AgentCard({ agent, categories = [], onOpen, onDownload, onExportMcp, on
             )}
           </div>
         )}
+        {syncStatus && (
+          <SyncStatusBadge status={syncStatus} onClick={() => onGitHubSync?.(agent)} />
+        )}
       </div>
       <div className="agent-card-footer">
         <span className="agent-card-time">
@@ -247,6 +685,18 @@ function AgentCard({ agent, categories = [], onOpen, onDownload, onExportMcp, on
               {subscribed ? 'Unsubscribe' : 'Subscribe'}
             </button>
           )}
+          {onGitHubSync && (
+            <button
+              className="btn subtle gh-sync-btn"
+              onClick={() => onGitHubSync(agent)}
+              title="Configure GitHub sync"
+            >
+              <svg viewBox="0 0 98 96" width="11" height="11" aria-hidden="true">
+                <path fillRule="evenodd" clipRule="evenodd" d="M48.854 0C21.839 0 0 22 0 49.217c0 21.756 13.993 40.172 33.405 46.69 2.427.49 3.316-1.059 3.316-2.362 0-1.141-.08-5.052-.08-9.127-13.59 2.934-16.42-5.867-16.42-5.867-2.184-5.704-5.42-7.17-5.42-7.17-4.448-3.015.324-3.015.324-3.015 4.934.326 7.523 5.052 7.523 5.052 4.367 7.496 11.404 5.378 14.235 4.074.404-3.178 1.699-5.378 3.074-6.6-10.839-1.141-22.243-5.378-22.243-24.283 0-5.378 1.94-9.778 5.014-13.2-.485-1.222-2.184-6.275.486-13.038 0 0 4.125-1.304 13.426 5.052a46.97 46.97 0 0 1 12.214-1.63c4.125 0 8.33.571 12.213 1.63 9.302-6.356 13.427-5.052 13.427-5.052 2.67 6.763.97 11.816.485 13.038 3.155 3.422 5.015 7.822 5.015 13.2 0 18.905-11.404 23.06-22.324 24.283 1.78 1.548 3.316 4.481 3.316 9.126 0 6.6-.08 11.897-.08 13.526 0 1.304.89 2.853 3.316 2.364 19.412-6.52 33.405-24.935 33.405-46.691C97.707 22 75.788 0 48.854 0z" />
+              </svg>
+              GitHub
+            </button>
+          )}
           <button className="btn primary" onClick={() => onOpen(agent.id)}>
             Open
           </button>
@@ -256,7 +706,7 @@ function AgentCard({ agent, categories = [], onOpen, onDownload, onExportMcp, on
   );
 }
 
-function AgentsList({ agents, search, toolsFilter, tagsFilter, categoryFilter, categories, onClearFilters, onOpen, onDownload, onExportMcp, onExportFormat, onDelete, canDelete, onSubscribe, onToggleVisibility, onAnalytics, onDuplicate, emptyNode, selectedIds, onToggleSelect, onToggleSelectAll }) {
+function AgentsList({ agents, search, toolsFilter, tagsFilter, categoryFilter, categories, onClearFilters, onOpen, onDownload, onExportMcp, onExportFormat, onDelete, canDelete, onSubscribe, onToggleVisibility, onAnalytics, onDuplicate, onGitHubSync, syncStatuses, emptyNode, selectedIds, onToggleSelect, onToggleSelectAll }) {
   const q = search.trim().toLowerCase();
   const filtered = agents.filter((a) => {
     if (q && !(
@@ -333,6 +783,8 @@ function AgentsList({ agents, search, toolsFilter, tagsFilter, categoryFilter, c
             onToggleVisibility={onToggleVisibility && agent.isOwned ? onToggleVisibility : null}
             onAnalytics={onAnalytics && agent.isOwned ? onAnalytics : null}
             onDuplicate={onDuplicate && agent.isOwned ? onDuplicate : null}
+            onGitHubSync={onGitHubSync && agent.isOwned ? onGitHubSync : null}
+            syncStatus={syncStatuses?.[agent.id] || null}
             isSelected={isSelectable ? selectedIds.has(agent.id) : undefined}
             onToggleSelect={isSelectable ? () => onToggleSelect(agent.id) : undefined}
           />
@@ -342,7 +794,7 @@ function AgentsList({ agents, search, toolsFilter, tagsFilter, categoryFilter, c
   );
 }
 
-function TabContent({ agents, loading, error, search, toolsFilter, tagsFilter, categoryFilter, categories, onClearFilters, onOpen, onDownload, onExportMcp, onExportFormat, onDelete, canDelete, onSubscribe, onToggleVisibility, onAnalytics, onDuplicate, emptyNode, selectedIds, onToggleSelect, onToggleSelectAll }) {
+function TabContent({ agents, loading, error, search, toolsFilter, tagsFilter, categoryFilter, categories, onClearFilters, onOpen, onDownload, onExportMcp, onExportFormat, onDelete, canDelete, onSubscribe, onToggleVisibility, onAnalytics, onDuplicate, onGitHubSync, syncStatuses, emptyNode, selectedIds, onToggleSelect, onToggleSelectAll }) {
   if (loading) {
     return <div className="agents-loading">Loading…</div>;
   }
@@ -368,6 +820,8 @@ function TabContent({ agents, loading, error, search, toolsFilter, tagsFilter, c
       onToggleVisibility={onToggleVisibility}
       onAnalytics={onAnalytics}
       onDuplicate={onDuplicate}
+      onGitHubSync={onGitHubSync}
+      syncStatuses={syncStatuses}
       emptyNode={emptyNode}
       selectedIds={selectedIds}
       onToggleSelect={onToggleSelect}
@@ -572,6 +1026,7 @@ export default function AgentsPage({
   onDuplicate,
   onBulkDelete,
   onBulkExport,
+  onNavigateSettings,
 }) {
   const [activeTab, setActiveTab] = useState('agents');
   const [search, setSearch] = useState('');
@@ -586,6 +1041,28 @@ export default function AgentsPage({
   const [tagPickerOpen, setTagPickerOpen] = useState(false);
   const toolPickerRef = useRef(null);
   const tagPickerRef = useRef(null);
+
+  // GitHub sync state
+  const [githubStatus, setGithubStatus] = useState(null); // null = not loaded
+  const [syncModalAgent, setSyncModalAgent] = useState(null);
+  const [syncStatuses, setSyncStatuses] = useState({}); // agentId → status
+
+  // Load GitHub connection status when the My Agents tab becomes active
+  useEffect(() => {
+    if (activeTab !== 'mine' || !isAuthenticated || githubStatus !== null) return;
+    api.getGitHubStatus()
+      .then((s) => setGithubStatus(s))
+      .catch(() => setGithubStatus({ connected: false }));
+  }, [activeTab, isAuthenticated, githubStatus]);
+
+  // Refresh sync status for a single agent after the modal is closed
+  const refreshSyncStatus = useCallback((agentId) => {
+    api.getAgentSyncStatus(agentId)
+      .then((s) => {
+        if (s) setSyncStatuses((prev) => ({ ...prev, [agentId]: s }));
+      })
+      .catch(() => {});
+  }, []);
 
   const isFavTab = activeTab === 'favorites';
   const isMyTab = activeTab === 'mine';
@@ -1022,6 +1499,18 @@ export default function AgentsPage({
           <button className="btn primary" onClick={() => onOpenAuth?.('login')}>Sign in</button>
         </div>
       ) : isMyTab ? (
+        <>
+        {githubStatus && !githubStatus.connected && (
+          <div className="gh-connect-nudge">
+            <svg viewBox="0 0 98 96" width="14" height="14" aria-hidden="true">
+              <path fillRule="evenodd" clipRule="evenodd" d="M48.854 0C21.839 0 0 22 0 49.217c0 21.756 13.993 40.172 33.405 46.69 2.427.49 3.316-1.059 3.316-2.362 0-1.141-.08-5.052-.08-9.127-13.59 2.934-16.42-5.867-16.42-5.867-2.184-5.704-5.42-7.17-5.42-7.17-4.448-3.015.324-3.015.324-3.015 4.934.326 7.523 5.052 7.523 5.052 4.367 7.496 11.404 5.378 14.235 4.074.404-3.178 1.699-5.378 3.074-6.6-10.839-1.141-22.243-5.378-22.243-24.283 0-5.378 1.94-9.778 5.014-13.2-.485-1.222-2.184-6.275.486-13.038 0 0 4.125-1.304 13.426 5.052a46.97 46.97 0 0 1 12.214-1.63c4.125 0 8.33.571 12.213 1.63 9.302-6.356 13.427-5.052 13.427-5.052 2.67 6.763.97 11.816.485 13.038 3.155 3.422 5.015 7.822 5.015 13.2 0 18.905-11.404 23.06-22.324 24.283 1.78 1.548 3.316 4.481 3.316 9.126 0 6.6-.08 11.897-.08 13.526 0 1.304.89 2.853 3.316 2.364 19.412-6.52 33.405-24.935 33.405-46.691C97.707 22 75.788 0 48.854 0z" />
+            </svg>
+            Connect GitHub to sync agent definitions to a repository.{' '}
+            <button className="btn-link" onClick={() => onNavigateSettings?.('settings')}>
+              Connect in Settings
+            </button>
+          </div>
+        )}
         <TabContent
           agents={myAgents}
           loading={loadingMine}
@@ -1041,6 +1530,8 @@ export default function AgentsPage({
           onToggleVisibility={onToggleVisibility}
           onAnalytics={onAnalytics}
           onDuplicate={onDuplicate}
+          onGitHubSync={githubStatus?.connected ? setSyncModalAgent : null}
+          syncStatuses={syncStatuses}
           selectedIds={selectedIds}
           onToggleSelect={toggleSelect}
           onToggleSelectAll={toggleSelectAll}
@@ -1060,6 +1551,18 @@ export default function AgentsPage({
             </div>
           }
         />
+        {syncModalAgent && githubStatus?.connected && (
+          <AgentGitHubSyncModal
+            agent={syncModalAgent}
+            githubLogin={githubStatus.githubLogin}
+            onClose={() => {
+              const agentId = syncModalAgent.id;
+              setSyncModalAgent(null);
+              refreshSyncStatus(agentId);
+            }}
+          />
+        )}
+        </>
       ) : (
         <TabContent
           agents={publicAgents}

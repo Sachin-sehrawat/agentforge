@@ -12,6 +12,7 @@ import SkillsPage from './components/SkillsPage.jsx';
 import AdminPage from './components/AdminPage.jsx';
 import WebhookSettings from './components/WebhookSettings.jsx';
 import WebhookSignaturesDoc from './components/docs/WebhookSignaturesDoc.jsx';
+import GitHubSettings from './components/GitHubSettings.jsx';
 import MarketplacePage from './components/MarketplacePage.jsx';
 import LandingPage from './components/LandingPage.jsx';
 import AuthModal from './components/AuthModal.jsx';
@@ -116,6 +117,7 @@ const VIEW_TO_PATH = {
   marketplace:              '/marketplace',
   developer:                '/developer',
   admin:                    '/admin',
+  settings:                 '/settings',
   'docs/webhook-signatures': '/docs/webhook-signatures',
 };
 const PATH_TO_VIEW = Object.fromEntries(
@@ -229,7 +231,7 @@ export default function App() {
         resolvedView = urlView;
       } else if (urlView === 'landing' || (!isAuthenticated && !hasMeaningfulAgent)) {
         resolvedView = 'landing';
-      } else if (prefs.view && ['builder', 'agents', 'skills', 'admin', 'marketplace', 'developer'].includes(prefs.view)) {
+      } else if (prefs.view && ['builder', 'agents', 'skills', 'admin', 'marketplace', 'developer', 'settings'].includes(prefs.view)) {
         resolvedView = prefs.view;
       } else {
         resolvedView = 'builder';
@@ -1128,6 +1130,7 @@ export default function App() {
             onAnalytics={(agent) => setAnalyticsAgent({ id: agent.id, name: agent.name })}
             onExportFormat={(agent) => setExportPanelAgent(agent)}
             categories={agentCategories}
+            onNavigateSettings={handleSetView}
           />
           {exportPanelAgent && (
             <ExportFormatModal
@@ -1151,6 +1154,11 @@ export default function App() {
           isAuthenticated={isAuthenticated}
           onView={onLoad}
           onFork={onFork}
+          onOpenAuth={(tab) => setAuthModal({ tab, onSuccess: null })}
+        />
+      ) : view === 'settings' ? (
+        <GitHubSettings
+          isAuthenticated={isAuthenticated}
           onOpenAuth={(tab) => setAuthModal({ tab, onSuccess: null })}
         />
       ) : view === 'docs/webhook-signatures' ? (
