@@ -295,6 +295,50 @@ export function validateCategoryInput(body) {
 }
 
 // ---------------------------------------------------------------------------
+// GitHub sync-config validation
+// ---------------------------------------------------------------------------
+
+const VALID_FORMATS = ['markdown', 'json', 'both'];
+const PATH_TEMPLATE_PLACEHOLDERS = ['{slug}', '{name}', '{id}'];
+
+/**
+ * Validates a PUT /agents/:id/github-sync-config payload.
+ */
+export function validateGitHubSyncConfig(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return { error: 'Request body must be a JSON object' };
+  }
+
+  const repoFullName = typeof body.repo_full_name === 'string' ? body.repo_full_name.trim() : '';
+  if (!repoFullName) return { error: 'repo_full_name is required' };
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repoFullName)) {
+    return { error: 'repo_full_name must match owner/repo format' };
+  }
+
+  const branch = typeof body.branch === 'string' ? body.branch.trim() : '';
+  if (!branch) return { error: 'branch is required' };
+
+  const pathTemplate = typeof body.path_template === 'string'
+    ? body.path_template.trim()
+    : 'agents/{slug}.md';
+
+  if (pathTemplate.includes('..') || /^\//.test(pathTemplate)) {
+    return { error: 'path_template must not contain ".." or start with "/"' };
+  }
+
+  const format = typeof body.format === 'string' ? body.format.trim() : 'markdown';
+  if (!VALID_FORMATS.includes(format)) {
+    return { error: `format must be one of: ${VALID_FORMATS.join(', ')}` };
+  }
+
+  const autoSync = typeof body.auto_sync === 'boolean' ? body.auto_sync : false;
+
+  return {
+    data: { repo_full_name: repoFullName, branch, path_template: pathTemplate, auto_sync: autoSync, format },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Rating validation
 // ---------------------------------------------------------------------------
 
