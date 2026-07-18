@@ -1070,6 +1070,550 @@ Removes a draft by its MongoDB `_id`.
 
 ---
 
+## Built-in Skills
+
+Built-in skills live in MongoDB (`builtin_skills` collection). They are read-only for regular users and writable by admin users (`is_admin = true`).
+
+### `GET /api/builtin-skills`
+
+Returns all built-in skills. No authentication required.
+
+**Response 200** — array of skill objects with `id`, `label`, `color`, `description`, `instruction`.
+
+---
+
+### `POST /api/builtin-skills`
+
+Creates a new built-in skill. **Requires admin authentication.**
+
+**Response 201** — created skill object.
+
+**Response 403** — not an admin user.
+
+---
+
+### `PUT /api/builtin-skills/:id`
+
+Updates a built-in skill by its `id` field. **Requires admin authentication.**
+
+**Response 200** — updated skill object.
+
+**Response 403** — not an admin user.
+
+**Response 404** — skill not found.
+
+---
+
+### `DELETE /api/builtin-skills/:id`
+
+Deletes a built-in skill. **Requires admin authentication.**
+
+**Response 204** — no body.
+
+**Response 403** — not an admin user.
+
+**Response 404** — skill not found.
+
+---
+
+## Categories
+
+Agent taxonomy categories. Public read, authenticated write.
+
+### `GET /api/categories`
+
+Returns all categories. No authentication required.
+
+**Response 200**
+
+```json
+[
+  { "id": "uuid", "slug": "research", "label": "Research", "color": "#6366f1", "createdAt": "..." }
+]
+```
+
+---
+
+### `POST /api/categories`
+
+Creates a new category. **Requires authentication.**
+
+**Request body:** `{ "slug": "my-cat", "label": "My Category", "color": "#hex" }`
+
+**Response 201** — created category.
+
+**Response 400** — invalid slug or missing required fields.
+
+---
+
+### `PUT /api/categories/:id`
+
+Updates a category. **Requires authentication.**
+
+**Response 200** — updated category.
+
+**Response 404** — category not found.
+
+---
+
+### `DELETE /api/categories/:id`
+
+Deletes a category. Agents with this `category_id` have it set to `NULL`. **Requires authentication.**
+
+**Response 204** — no body.
+
+**Response 404** — category not found.
+
+---
+
+## Persona Categories (MongoDB)
+
+Persona categories are stored in MongoDB (`persona_categories` collection). Each category contains an array of persona objects.
+
+### `GET /api/personas`
+
+Returns all persona categories with their persona arrays. No authentication required.
+
+---
+
+### `POST /api/personas`
+
+Creates a new persona category. **Requires authentication.**
+
+---
+
+### `PUT /api/personas/:categoryId`
+
+Updates a persona category. **Requires authentication.**
+
+---
+
+### `DELETE /api/personas/:categoryId`
+
+Deletes a persona category. **Requires authentication.**
+
+---
+
+### `POST /api/personas/:categoryId/personas`
+
+Adds a persona to an existing category. **Requires authentication.**
+
+---
+
+## Agent Templates (MongoDB)
+
+Templates are starter configurations stored in MongoDB (`agent_templates` collection).
+
+### `GET /api/templates`
+
+Returns all agent templates. No authentication required.
+
+**Response 200** — array of template objects with `id`, `name`, `description`, `agentData`.
+
+---
+
+## Agent Versions
+
+Immutable snapshots of agent state. One version is recorded per save or restore.
+
+### `GET /api/agents/:id/versions`
+
+Returns the version history for an agent (owner only), newest first.
+
+**Headers** — `Authorization: Bearer <token>`
+
+**Response 200**
+
+```json
+[
+  {
+    "id": 1,
+    "agentId": "uuid",
+    "versionNo": 3,
+    "changeSummary": "Updated persona",
+    "createdBy": "user-uuid",
+    "createdAt": "2026-07-01T10:00:00Z"
+  }
+]
+```
+
+**Response 403** — not the owner.
+
+**Response 404** — agent not found.
+
+---
+
+### `GET /api/agents/:id/versions/:versionNo`
+
+Returns a single version snapshot including the full `snapshot` JSONB.
+
+**Headers** — `Authorization: Bearer <token>`
+
+**Response 200** — version object with `snapshot` field.
+
+---
+
+### `POST /api/agents/:id/versions/:versionNo/restore`
+
+Restores an agent to a previous version. Creates a new version recording the restore. **Owner only.**
+
+**Headers** — `Authorization: Bearer <token>`
+
+**Response 200** — restored agent object.
+
+**Response 403** — not the owner.
+
+**Response 404** — agent or version not found.
+
+---
+
+## Agent Export
+
+### `POST /api/agents/:id/export-mcp`
+
+Generates an MCP (Model Context Protocol) bundle for the agent. Returns a ZIP file.
+
+**Headers (optional)** — `Authorization: Bearer <token>`
+
+**Response 200** — `application/zip` binary stream.
+
+**Response 403** — private agent, not the owner.
+
+**Response 404** — agent not found.
+
+---
+
+### `POST /api/agents/:id/export-format`
+
+Exports the agent definition in a specific SDK format.
+
+**Headers** — `Authorization: Bearer <token>`
+
+**Request body**
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `format` | string | Yes | `"anthropic"` or `"openai"` |
+
+**Response 200** — JSON payload formatted for the target SDK.
+
+**Response 400** — invalid format.
+
+**Response 403** — private agent, not the owner.
+
+**Response 404** — agent not found.
+
+---
+
+### `POST /api/agents/validate`
+
+Validates an agent definition without saving it. Useful for pre-save checks.
+
+**Request body** — agent object (same shape as `POST /api/agents`).
+
+**Response 200** — `{ "valid": true }` or `{ "valid": false, "errors": [...] }`.
+
+---
+
+## GitHub Sync Config
+
+### `GET /api/agents/:id/github-sync-config`
+
+Returns the GitHub sync configuration for an agent. **Owner only.**
+
+**Response 200**
+
+```json
+{
+  "owner": "myorg",
+  "repo": "agent-configs",
+  "branch": "main",
+  "path": "agent.json",
+  "autoPush": false
+}
+```
+
+**Response 404** — no sync config exists for this agent.
+
+---
+
+### `PUT /api/agents/:id/github-sync-config`
+
+Sets the GitHub sync configuration. **Owner only.** Requires a GitHub connection (`POST /api/integrations/github/connect`).
+
+**Request body** — `{ "owner", "repo", "branch", "path", "autoPush" }`
+
+**Response 200** — saved config.
+
+---
+
+### `DELETE /api/agents/:id/github-sync-config`
+
+Removes the GitHub sync configuration. **Owner only.**
+
+**Response 204** — no body.
+
+---
+
+## GitHub Integration
+
+### `POST /api/integrations/github/connect`
+
+Returns a GitHub OAuth authorization URL. The client should navigate to this URL.
+
+**Headers** — `Authorization: Bearer <token>`
+
+**Response 200** — `{ "url": "https://github.com/login/oauth/authorize?..." }`
+
+---
+
+### `GET /integrations/github/callback`
+
+OAuth callback (browser redirect — no auth token, handled by browser navigation). Verifies CSRF state, exchanges code for token, encrypts and stores it, then redirects to the frontend at `{FRONTEND_URL}/settings?tab=integrations&github=connected`.
+
+---
+
+### `GET /api/integrations/github/status`
+
+Returns the GitHub connection status for the authenticated user.
+
+**Headers** — `Authorization: Bearer <token>`
+
+**Response 200**
+
+```json
+{
+  "connected": true,
+  "githubLogin": "octocat",
+  "scopes": "repo",
+  "connectedAt": "2026-07-11T10:00:00Z"
+}
+```
+
+The encrypted access token is never returned.
+
+---
+
+### `DELETE /api/integrations/github`
+
+Disconnects GitHub — revokes the token at GitHub and deletes the row.
+
+**Headers** — `Authorization: Bearer <token>`
+
+**Response 204** — no body.
+
+---
+
+### `GET /api/integrations/github/repos`
+
+Lists repositories accessible to the connected GitHub account.
+
+**Headers** — `Authorization: Bearer <token>`
+
+**Response 200** — array of `{ owner, name, fullName, defaultBranch, private }` objects.
+
+**Response 400** — GitHub not connected.
+
+---
+
+### `GET /api/integrations/github/repos/:owner/:repo/branches`
+
+Lists branches for a specific repository.
+
+**Headers** — `Authorization: Bearer <token>`
+
+**Response 200** — array of `{ name }` objects.
+
+---
+
+## Webhooks
+
+### `GET /api/webhooks`
+
+Returns all webhooks registered by the authenticated user.
+
+**Headers** — `Authorization: Bearer <token>`
+
+**Response 200** — array of webhook objects (secret field omitted).
+
+---
+
+### `POST /api/webhooks`
+
+Registers a new webhook. The signing secret is returned **once** — store it securely.
+
+**Headers** — `Authorization: Bearer <token>`
+
+**Request body**
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `url` | string | Yes | HTTPS URL to receive deliveries |
+| `events` | string[] | Yes | Event names: `agent.subscribed`, `agent.shared`, `agent.forked` |
+
+**Response 201**
+
+```json
+{
+  "id": "webhook-uuid",
+  "url": "https://your-server.example.com/webhook",
+  "events": ["agent.subscribed", "agent.forked"],
+  "active": true,
+  "secret": "YOUR_SIGNING_SECRET_SHOWN_ONCE"
+}
+```
+
+---
+
+### `PUT /api/webhooks/:id`
+
+Updates a webhook (URL, events, active state). Does not rotate the secret.
+
+**Headers** — `Authorization: Bearer <token>`
+
+**Response 200** — updated webhook (secret omitted).
+
+---
+
+### `DELETE /api/webhooks/:id`
+
+Deletes a webhook and all delivery history.
+
+**Headers** — `Authorization: Bearer <token>`
+
+**Response 204** — no body.
+
+---
+
+### `GET /api/webhooks/:id/deliveries`
+
+Returns delivery attempts for a webhook, newest first.
+
+**Headers** — `Authorization: Bearer <token>`
+
+**Response 200** — array of delivery objects with `id`, `event`, `statusCode`, `success`, `durationMs`, `createdAt`.
+
+---
+
+### `POST /api/webhooks/:id/test`
+
+Enqueues a test delivery of a sample `agent.subscribed` event.
+
+**Headers** — `Authorization: Bearer <token>`
+
+**Response 200** — `{ "queued": true }`
+
+---
+
+## Quota
+
+### `GET /api/me/quota`
+
+Returns the authenticated user's quota usage for the current day.
+
+**Headers** — `Authorization: Bearer <token>`
+
+**Response 200**
+
+```json
+{
+  "tier": "free",
+  "usage": {
+    "export": { "used": 3, "limit": 10 },
+    "save": { "used": 12, "limit": 50 }
+  },
+  "resetsAt": "2026-07-06T00:00:00.000Z"
+}
+```
+
+---
+
+## Feature Flags
+
+### `GET /api/feature-flags`
+
+Returns current feature flag values. No authentication required.
+
+**Response 200** — `{ "easyMode": false, ... }`
+
+---
+
+## Platform Stats
+
+### `GET /api/stats`
+
+Returns platform-wide aggregate statistics. No authentication required.
+
+**Response 200**
+
+```json
+{
+  "agentsPublished": 130,
+  "forksMade": 42,
+  "skillsShared": 17,
+  "forksThisMonth": 8
+}
+```
+
+- `agentsPublished` — count of agents with `visibility = 'public'`
+- `forksMade` — sum of `fork_count` across all agents
+- `skillsShared` — count of custom skills with `visibility = 'public'`
+- `forksThisMonth` — fork events recorded in the current calendar month
+
+---
+
+## Server Metrics
+
+### `GET /api/metrics`
+
+Returns in-process performance counters and PostgreSQL pool state. No authentication required. Suitable for scraping by Prometheus, Grafana, or uptime monitors.
+
+**Response 200**
+
+```json
+{
+  "uptime_seconds": 3600,
+  "requests_total": 150000,
+  "errors_total": 12,
+  "error_rate": "0.0001",
+  "avg_duration_ms": 42,
+  "pg_pool": {
+    "total": 10,
+    "idle": 7,
+    "waiting": 0
+  },
+  "rate_limiter": {
+    "tracked_ips": 23
+  }
+}
+```
+
+---
+
+## Audit Log (Admin)
+
+### `GET /api/audit`
+
+Returns paginated audit log entries. **Requires admin authentication** (`is_admin = true`).
+
+**Headers** — `Authorization: Bearer <token>`
+
+**Query parameters**
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `entityType` | string | — | Filter by entity type (`agent`, `skill`) |
+| `entityId` | UUID | — | Filter by specific entity ID |
+| `actorId` | UUID | — | Filter by actor user ID |
+| `limit` | integer | `50` | Max entries per page |
+| `offset` | integer | `0` | Pagination offset |
+
+**Response 200** — array of audit log rows (see [audit-log.md](audit-log.md) for schema).
+
+**Response 403** — authenticated but `is_admin = false`.
+
+---
+
 ## Health Checks
 
 ### `GET /api/health`

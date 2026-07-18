@@ -348,6 +348,17 @@ export const api = {
   },
   getAnalyticsSummary: () => request('/agents/mine/analytics-summary'),
 
+  // --- Admin: user management (superuser-only) ----------------------------
+  listUsers: (params = {}) => {
+    const qs = new URLSearchParams();
+    if (params.q) qs.set('q', params.q);
+    if (params.page > 1) qs.set('page', String(params.page));
+    if (params.pageSize) qs.set('pageSize', String(params.pageSize));
+    return request(`/admin/users${qs.toString() ? `?${qs}` : ''}`);
+  },
+  updateUser: (id, data) => request(`/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  deleteUser: (id) => request(`/admin/users/${id}`, { method: 'DELETE' }),
+
   // --- Audit log (admin-only) ----------------------------------------------
   getAuditLog: (params = {}) => {
     const qs = new URLSearchParams();
@@ -544,4 +555,11 @@ export const api = {
       throw new Error(`Failed to delete draft: ${err.message}`);
     }
   },
+
+  getFeatureFlags: () => request('/feature-flags'),
+
+  updateFeatureFlags: (patch) => request('/feature-flags', {
+    method: 'PUT',
+    body: JSON.stringify(patch),
+  }),
 };

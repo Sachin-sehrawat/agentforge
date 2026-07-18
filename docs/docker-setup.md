@@ -91,7 +91,7 @@ Expected output:
 ```
 Connected to database: agentbuilder
   [insert] builtin_skill "caveman" (Caveman)
-  ... (15 skills total)
+  ... (35 skills total)
   [insert] persona_category "technology" (Technology, 5 personas)
   ... (11 categories total)
 Migration complete.
@@ -126,11 +126,20 @@ Scripts run in filename order. All are idempotent (`IF NOT EXISTS`, `ON CONFLICT
 | `05_subscriptions.sql` | Subscriptions join table |
 | `06_agent_versions.sql` | Version history table |
 | `07_marketplace.sql` | Full-text search vector, fork/favorite counters, search trigger |
-| `08_ratings.sql` | Agent rating columns |
+| `08_ratings.sql` | Agent ratings table |
 | `09_favorites.sql` | Favorites join table |
 | `10_agent_events.sql` | Analytics event log |
-| `11_tags.sql` | Tags JSONB column + GIN index |
-| `12_seed_agents.sql` | **20 public seed agents** spanning research, security, testing, efficiency, education, and more |
+| `11_tags.sql` | Tags JSONB column + GIN index on agents |
+| `12_seed_agents.sql` | **130+ public seed agents** spanning research, engineering, security, marketing, education, and more |
+| `13_jobs.sql` | Async job queue for webhook delivery |
+| `13_tier.sql` | `tier` column on users; `usage_counters` quota table |
+| `14_categories.sql` | Categories table; `category_id` FK on agents; 6 seed categories |
+| `15_audit_log.sql` | Append-only compliance audit log |
+| `16_admin_flag.sql` | `is_admin` column on users |
+| `17_webhooks.sql` | Webhook registration table |
+| `18_webhook_deliveries.sql` | Webhook delivery attempt log |
+| `19_github_connections.sql` | GitHub OAuth connections (encrypted) |
+| `20_agent_github_sync.sql` | Per-agent GitHub sync configuration |
 
 ### MongoDB (via `backend/db/mongo-init/`)
 
@@ -143,7 +152,7 @@ Scripts run in filename order. All are idempotent (`IF NOT EXISTS`, `ON CONFLICT
 
 | Command | What it does |
 |---|---|
-| `docker exec backend node scripts/migrate-skills-personas.js` | 15 built-in skills + 11 persona categories (35 personas) in MongoDB |
+| `docker compose --env-file .env.local exec backend node scripts/migrate-skills-personas.js` | 35 built-in skills + 11 persona categories in MongoDB |
 
 > **After `docker compose down -v`** (volume wipe): all auto-seeds replay on the next `up`. Re-run the exec command once for MongoDB skills/personas.
 

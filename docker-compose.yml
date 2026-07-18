@@ -65,6 +65,9 @@ services:
       QUERY_TIMEOUT_MS: ${QUERY_TIMEOUT_MS:-5000}
       SLOW_QUERY_THRESHOLD_MS: ${SLOW_QUERY_THRESHOLD_MS:-1000}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set in .env.local}
+      DOCS_DIR: /docs
+    volumes:
+      - ./docs:/docs:ro
     depends_on:
       postgres:
         condition: service_healthy

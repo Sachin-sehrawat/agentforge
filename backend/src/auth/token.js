@@ -10,8 +10,8 @@ function secret() {
   return s;
 }
 
-export function signAccessToken(userId) {
-  return jwt.sign({ userId }, secret(), { expiresIn: ACCESS_TTL });
+export function signAccessToken(userId, email) {
+  return jwt.sign({ userId, email }, secret(), { expiresIn: ACCESS_TTL });
 }
 
 export function signRefreshToken(userId) {

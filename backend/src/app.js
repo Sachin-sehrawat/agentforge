@@ -2,6 +2,9 @@ import express from 'express';
 import cors from 'cors';
 import compression from 'compression';
 import crypto from 'node:crypto';
+import path from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { ObjectId } from 'mongodb';
 import db, { pool, withClient } from './db.js';
 import { toCanonical } from './serialization/agentSchema.js';
@@ -30,6 +33,9 @@ import {
   fetchGitHubRepos,
   fetchGitHubBranches,
 } from './integrations/github.js';
+import { getFlags, setFlags, DEFAULT_FLAGS, EASY_MODE_OVERRIDES } from './featureFlags.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const app = express();
 app.use(cors());
@@ -460,7 +466,7 @@ app.get('/api/agents/marketplace', optionalAuth, async (req, res) => {
     const [{ rows }, { rows: countRows }] = await Promise.all([
       db.query(
         `SELECT
-           a.id, a.name, a.persona, a.model, a.tools, a.category_id,
+           a.id, a.name, a.persona, a.system_prompt, a.model, a.tools, a.category_id,
            a.fork_count, a.favorite_count, a.rating_sum, a.rating_count,
            CASE WHEN a.rating_count > 0
                 THEN a.rating_sum::float / a.rating_count
@@ -487,6 +493,7 @@ app.get('/api/agents/marketplace', optionalAuth, async (req, res) => {
         id: r.id,
         name: r.name,
         persona: r.persona,
+        systemPrompt: r.system_prompt ?? null,
         model: r.model,
         tools: r.tools ?? [],
         categoryId: r.category_id ?? null,
@@ -662,7 +669,7 @@ app.post('/api/agents', requireAuth, enforceQuota('save'), async (req, res) => {
       return row;
     });
     writeAudit({
-      actor: { id: owner_id },
+      actor: { id: owner_id, email: req.user.email },
       action: 'agent.create',
       entityType: 'agent',
       entityId: newRow.id,
@@ -754,7 +761,7 @@ app.put('/api/agents/:id', requireAuth, enforceQuota('save'), async (req, res) =
     });
 
     writeAudit({
-      actor: { id: req.user.userId },
+      actor: { id: req.user.userId, email: req.user.email },
       action: 'agent.update',
       entityType: 'agent',
       entityId: updatedRow.id,
@@ -792,7 +799,7 @@ app.patch('/api/agents/:id', requireAuth, async (req, res) => {
     );
     const updatedAgent = rows[0];
     writeAudit({
-      actor: { id: req.user.userId },
+      actor: { id: req.user.userId, email: req.user.email },
       action: 'agent.visibility_change',
       entityType: 'agent',
       entityId: req.params.id,
@@ -821,7 +828,7 @@ app.delete('/api/agents/:id', requireAuth, async (req, res) => {
 
     await db.query('DELETE FROM agents WHERE id = $1', [req.params.id]);
     writeAudit({
-      actor: { id: req.user.userId },
+      actor: { id: req.user.userId, email: req.user.email },
       action: 'agent.delete',
       entityType: 'agent',
       entityId: req.params.id,
@@ -1609,6 +1616,14 @@ app.post('/api/skills', requireAuth, async (req, res) => {
       'INSERT INTO custom_skills (id, label, color, description, instruction, visibility, owner_id) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *',
       [id, skill.label, skill.color, skill.description, skill.instruction, skill.visibility, owner_id]
     );
+    writeAudit({
+      actor: { id: owner_id, email: req.user.email },
+      action: 'skill.create',
+      entityType: 'skill',
+      entityId: rows[0].id,
+      after: serializeSkill(rows[0]),
+      ip: req.headers['x-forwarded-for'] || req.ip,
+    });
     res.status(201).json({ ...serializeSkill(rows[0]), isOwned: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1627,6 +1642,7 @@ app.put('/api/skills/:id', requireAuth, async (req, res) => {
     if (!existing[0]) return res.status(404).json({ error: 'Skill not found' });
     if (existing[0].owner_id !== req.user.userId) return res.status(403).json({ error: 'Forbidden' });
 
+    const { rows: before } = await db.query('SELECT * FROM custom_skills WHERE id = $1', [req.params.id]);
     const { rows } = await db.query(
       `UPDATE custom_skills
        SET label = $1, color = $2, description = $3, instruction = $4, visibility = $5, updated_at = NOW()
@@ -1634,6 +1650,15 @@ app.put('/api/skills/:id', requireAuth, async (req, res) => {
        RETURNING *`,
       [skill.label, skill.color, skill.description, skill.instruction, skill.visibility, req.params.id]
     );
+    writeAudit({
+      actor: { id: req.user.userId, email: req.user.email },
+      action: 'skill.update',
+      entityType: 'skill',
+      entityId: req.params.id,
+      before: serializeSkill(before[0]),
+      after: serializeSkill(rows[0]),
+      ip: req.headers['x-forwarded-for'] || req.ip,
+    });
     res.json({ ...serializeSkill(rows[0]), isOwned: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1652,7 +1677,7 @@ app.delete('/api/skills/:id', requireAuth, async (req, res) => {
 
     await db.query('DELETE FROM custom_skills WHERE id = $1', [req.params.id]);
     writeAudit({
-      actor: { id: req.user.userId },
+      actor: { id: req.user.userId, email: req.user.email },
       action: 'skill.delete',
       entityType: 'skill',
       entityId: req.params.id,
@@ -1985,6 +2010,125 @@ app.delete('/api/categories/:id', requireAuth, async (req, res) => {
   }
 });
 
+// --- Admin: user management (superuser-only) --------------------------------
+
+async function requireSuperuser(req, res, next) {
+  const { rows } = await db.query('SELECT is_admin FROM users WHERE id = $1', [req.user.userId]);
+  if (!rows[0]?.is_admin) return res.status(403).json({ error: 'Forbidden' });
+  next();
+}
+
+// List all users (paginated + search)
+app.get('/api/admin/users', requireAuth, requireSuperuser, async (req, res) => {
+  try {
+    const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const pageSize = Math.min(100, Math.max(1, parseInt(req.query.pageSize, 10) || 25));
+    const offset = (page - 1) * pageSize;
+
+    const params = [];
+    let where = '';
+    if (q) {
+      params.push(`%${q}%`);
+      where = `WHERE email ILIKE $1 OR display_name ILIKE $1`;
+    }
+
+    const dataParams = [...params, pageSize, offset];
+    const [{ rows }, { rows: countRows }] = await Promise.all([
+      db.query(
+        `SELECT id, email, display_name, tier, is_admin, created_at, updated_at
+         FROM users ${where}
+         ORDER BY created_at DESC
+         LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+        dataParams
+      ),
+      db.query(`SELECT COUNT(*)::int AS total FROM users ${where}`, params),
+    ]);
+
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({
+      items: rows.map((r) => ({
+        id: r.id,
+        email: r.email,
+        displayName: r.display_name,
+        tier: r.tier ?? 'free',
+        isAdmin: r.is_admin ?? false,
+        createdAt: r.created_at,
+        updatedAt: r.updated_at,
+      })),
+      total: countRows[0].total,
+      page,
+      pageSize,
+      hasMore: offset + rows.length < countRows[0].total,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Update a user's tier or admin status
+app.patch('/api/admin/users/:id', requireAuth, requireSuperuser, async (req, res) => {
+  const { tier, isAdmin } = req.body ?? {};
+  const VALID_TIERS = ['free', 'paid'];
+
+  const sets = [];
+  const params = [];
+
+  if (tier !== undefined) {
+    if (!VALID_TIERS.includes(tier)) return res.status(400).json({ error: 'tier must be "free" or "paid"' });
+    params.push(tier); sets.push(`tier = $${params.length}`);
+  }
+  if (isAdmin !== undefined) {
+    if (typeof isAdmin !== 'boolean') return res.status(400).json({ error: 'isAdmin must be a boolean' });
+    // Prevent superuser from removing their own admin status
+    if (!isAdmin && req.params.id === req.user.userId) return res.status(400).json({ error: 'Cannot remove your own superuser status' });
+    params.push(isAdmin); sets.push(`is_admin = $${params.length}`);
+  }
+
+  if (sets.length === 0) return res.status(400).json({ error: 'Nothing to update' });
+
+  params.push(req.params.id);
+  try {
+    const { rows } = await db.query(
+      `UPDATE users SET ${sets.join(', ')}, updated_at = NOW() WHERE id = $${params.length} RETURNING *`,
+      params
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'User not found' });
+    writeAudit({
+      actor: { id: req.user.userId, email: req.user.email },
+      action: 'user.update',
+      entityType: 'user',
+      entityId: req.params.id,
+      after: { tier: rows[0].tier, isAdmin: rows[0].is_admin },
+      ip: req.headers['x-forwarded-for'] || req.ip,
+    });
+    res.json({ id: rows[0].id, email: rows[0].email, displayName: rows[0].display_name, tier: rows[0].tier, isAdmin: rows[0].is_admin });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Delete a user
+app.delete('/api/admin/users/:id', requireAuth, requireSuperuser, async (req, res) => {
+  if (req.params.id === req.user.userId) return res.status(400).json({ error: 'Cannot delete your own account' });
+  try {
+    const { rows } = await db.query('SELECT email FROM users WHERE id = $1', [req.params.id]);
+    if (!rows[0]) return res.status(404).json({ error: 'User not found' });
+    writeAudit({
+      actor: { id: req.user.userId, email: req.user.email },
+      action: 'user.delete',
+      entityType: 'user',
+      entityId: req.params.id,
+      before: { email: rows[0].email },
+      ip: req.headers['x-forwarded-for'] || req.ip,
+    });
+    await db.query('DELETE FROM users WHERE id = $1', [req.params.id]);
+    res.status(204).end();
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // --- Audit log query (admin-only) -----------------------------------------
 // Supports filtering by actorId, entityType, entityId, action, from/to dates.
 // Paginated newest-first; exposes actorEmailSnapshot only to admins.
@@ -2052,6 +2196,7 @@ app.get('/api/audit', requireAuth, async (req, res) => {
     ]);
 
     const total = countRows[0].total;
+    res.setHeader('Cache-Control', 'no-store');
     res.json({
       items: rows.map((r) => ({
         id: String(r.id),
@@ -2298,6 +2443,19 @@ app.post('/api/webhooks/:id/test', requireAuth, async (req, res) => {
   }
 });
 
+// --- Documentation files ---------------------------------------------------
+
+const DOCS_DIR = process.env.DOCS_DIR || path.join(__dirname, '../../docs');
+const SAFE_DOC_RE = /^[\w-]+\.md$/;
+
+app.get('/api/docs/:filename', (req, res) => {
+  const { filename } = req.params;
+  if (!SAFE_DOC_RE.test(filename)) return res.status(400).json({ error: 'Invalid filename' });
+  const filepath = path.join(DOCS_DIR, filename);
+  if (!existsSync(filepath)) return res.status(404).json({ error: 'Not found' });
+  res.type('text/plain; charset=utf-8').send(readFileSync(filepath, 'utf8'));
+});
+
 // --- Health checks --------------------------------------------------------
 
 app.get('/api/health', async (req, res) => {
@@ -2348,15 +2506,19 @@ app.get('/api/metrics', (req, res) => {
 
 app.get('/api/stats', async (req, res) => {
   try {
-    const [agents, forks, skills] = await Promise.all([
-      query('SELECT COUNT(*) FROM agents WHERE visibility = $1', ['public']),
-      query('SELECT COALESCE(SUM(fork_count), 0) AS total FROM agents'),
-      query('SELECT COUNT(*) FROM custom_skills WHERE visibility = $1', ['public']),
+    const [agents, forks, skills, forksThisMonth] = await Promise.all([
+      db.query('SELECT COUNT(*) FROM agents WHERE visibility = $1', ['public']),
+      db.query('SELECT COALESCE(SUM(fork_count), 0) AS total FROM agents'),
+      db.query('SELECT COUNT(*) FROM custom_skills WHERE visibility = $1', ['public']),
+      db.query(
+        "SELECT COUNT(*) FROM agent_events WHERE type = 'fork' AND created_at >= date_trunc('month', NOW())"
+      ),
     ]);
     res.json({
       agentsPublished: parseInt(agents.rows[0].count, 10),
       forksMade:       parseInt(forks.rows[0].total, 10),
       skillsShared:    parseInt(skills.rows[0].count, 10),
+      forksThisMonth:  parseInt(forksThisMonth.rows[0].count, 10),
     });
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch stats' });
@@ -2807,7 +2969,7 @@ app.post('/api/auth/signup', async (req, res) => {
        RETURNING *`,
       [id, email, password_hash, display_name || null]
     );
-    const token = signAccessToken(rows[0].id);
+    const token = signAccessToken(rows[0].id, rows[0].email);
     res.status(201).json({ token, user: serializeUser(rows[0]) });
   } catch (err) {
     if (err.code === '23505') return res.status(409).json({ error: 'Email address is already registered' });
@@ -2826,7 +2988,7 @@ app.post('/api/auth/login', async (req, res) => {
     const user = rows[0];
     const valid = user && await verifyPassword(password, user.password_hash);
     if (!valid) return res.status(401).json({ error: 'Invalid email or password' });
-    const token = signAccessToken(user.id);
+    const token = signAccessToken(user.id, user.email);
     res.json({ token, user: serializeUser(user) });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -2864,6 +3026,32 @@ app.get('/api/auth/me', requireAuth, async (req, res) => {
     const { rows } = await db.query('SELECT * FROM users WHERE id = $1', [req.user.userId]);
     if (!rows[0]) return res.status(401).json({ error: 'User not found' });
     res.json(serializeUser(rows[0]));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --- Feature flags -----------------------------------------------------------
+
+app.get('/api/feature-flags', async (req, res) => {
+  try {
+    const { flags, uiMode } = await getFlags();
+    res.json({ flags, defaults: DEFAULT_FLAGS, uiMode, easyModeOverrides: EASY_MODE_OVERRIDES });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/feature-flags', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await db.query('SELECT is_admin FROM users WHERE id = $1', [req.user.userId]);
+    if (!rows[0]?.is_admin) return res.status(403).json({ error: 'Forbidden' });
+    const patch = req.body;
+    if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
+      return res.status(400).json({ error: 'Body must be a flat object of flag key → boolean (plus optional uiMode string)' });
+    }
+    const { flags, uiMode } = await setFlags(patch);
+    res.json({ flags, uiMode });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

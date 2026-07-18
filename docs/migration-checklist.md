@@ -9,9 +9,9 @@ Complete every item in order. Do **not** skip steps.
 
 ### Environment
 
-- [ ] Docker Compose stack is running: `docker-compose up -d`
-- [ ] PostgreSQL is healthy: `docker-compose ps` shows `postgres` as `healthy`
-- [ ] MongoDB is healthy: `docker-compose ps` shows `mongodb` as `healthy`
+- [ ] Docker Compose stack is running: `docker compose up -d`
+- [ ] PostgreSQL is healthy: `docker compose ps` shows `postgres` as `healthy`
+- [ ] MongoDB is healthy: `docker compose ps` shows `mongodb` as `healthy`
 - [ ] `backend/.env` exists and contains correct `POSTGRES_*` / `MONGO_URI` values
 - [ ] `backend/node_modules` is up to date: `cd backend && npm install`
 
@@ -88,7 +88,7 @@ Complete every item in order. Do **not** skip steps.
 - [ ] PostgreSQL row counts match SQLite source counts:
 
   ```bash
-  docker-compose exec postgres psql -U agentforge -d agentforge \
+  docker compose exec postgres psql -U agentforge -d agentforge \
     -c "SELECT COUNT(*) FROM agents; SELECT COUNT(*) FROM custom_skills;"
   ```
 
@@ -101,19 +101,19 @@ Complete every item in order. Do **not** skip steps.
 
 - [ ] Sample agent retrieved and data looks correct:
   ```bash
-  docker-compose exec postgres psql -U agentforge -d agentforge \
+  docker compose exec postgres psql -U agentforge -d agentforge \
     -c "SELECT id, name, model, created_at FROM agents ORDER BY created_at LIMIT 5;"
   ```
 
 - [ ] Sample skill retrieved:
   ```bash
-  docker-compose exec postgres psql -U agentforge -d agentforge \
+  docker compose exec postgres psql -U agentforge -d agentforge \
     -c "SELECT id, label, color FROM custom_skills LIMIT 5;"
   ```
 
 - [ ] JSONB fields are valid (not empty strings):
   ```bash
-  docker-compose exec postgres psql -U agentforge -d agentforge \
+  docker compose exec postgres psql -U agentforge -d agentforge \
     -c "SELECT id, jsonb_array_length(tools) AS tool_count FROM agents LIMIT 5;"
   ```
 
@@ -130,7 +130,7 @@ Complete every item in order. Do **not** skip steps.
 
 - [ ] MongoDB collections still present after migration:
   ```bash
-  docker-compose exec mongodb mongosh \
+  docker compose exec mongodb mongosh \
     -u admin -p adminpassword --authenticationDatabase admin \
     agentbuilder --eval "db.getCollectionNames()"
   ```

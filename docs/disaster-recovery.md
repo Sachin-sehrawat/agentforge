@@ -116,7 +116,7 @@ node scripts/rollback-migration.js \
   --pg-backup backend/backups/postgresql/pg-backup-<stamp>.json
 
 # 4. Verify row counts in PostgreSQL
-docker-compose exec postgres psql -U agentforge -d agentforge \
+docker compose exec postgres psql -U agentforge -d agentforge \
   -c "SELECT COUNT(*) FROM agents; SELECT COUNT(*) FROM custom_skills;"
 ```
 
@@ -190,7 +190,7 @@ node scripts/backup-sqlite.js --sqlite-path backend/agents.db
 # 1. Clone the repository and restore .env from your secret manager
 
 # 2. Start databases
-docker-compose up -d postgres mongodb
+docker compose --env-file .env.local up -d postgres mongodb
 
 # 3. Restore PostgreSQL
 node scripts/rollback-migration.js \
@@ -202,7 +202,7 @@ node scripts/rollback-migration.js \
   --mongo-only
 
 # 5. Start the backend
-docker-compose up -d backend
+docker compose up -d backend
 ```
 
 ---

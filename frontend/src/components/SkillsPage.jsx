@@ -108,10 +108,67 @@ function SkillFormModal({ initial, onSave, onClose }) {
   );
 }
 
-function SkillCard({ skill, onEdit, onDelete, onDuplicate }) {
+function SkillDetailModal({ skill, onClose, onEdit, onDuplicate }) {
+  function badgeClass() {
+    if (skill.builtin) return 'skill-badge builtin';
+    if (skill.isOwned) return 'skill-badge custom';
+    return 'skill-badge public';
+  }
+
+  function badgeLabel() {
+    if (skill.builtin) return 'Built-in';
+    if (skill.isOwned) return 'Custom';
+    return 'Public';
+  }
+
+  return (
+    <div className="modal-backdrop" onMouseDown={onClose}>
+      <div className="modal skill-detail-modal" onMouseDown={(e) => e.stopPropagation()}>
+        <div className="skill-detail-modal-strip" style={{ background: skill.color }} />
+        <div className="modal-header">
+          <div className="skill-detail-modal-title-row">
+            <h2 className="modal-title">{skill.label}</h2>
+            <span className={badgeClass()}>{badgeLabel()}</span>
+          </div>
+          <button className="modal-close" onClick={onClose} type="button">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        </div>
+        <div className="modal-body skill-detail-modal-body">
+          {skill.description && (
+            <div className="skill-detail-section">
+              <div className="skill-detail-label">Description</div>
+              <p className="skill-detail-description">{skill.description}</p>
+            </div>
+          )}
+          <div className="skill-detail-section">
+            <div className="skill-detail-label">Instruction</div>
+            <pre className="skill-detail-instruction">{skill.instruction}</pre>
+          </div>
+        </div>
+        <div className="modal-footer">
+          <button type="button" className="btn subtle" onClick={onDuplicate}>
+            Duplicate
+          </button>
+          {skill.isOwned && !skill.builtin && (
+            <button type="button" className="btn primary" onClick={onEdit}>
+              Edit
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SkillCard({ skill, onEdit, onDelete, onDuplicate, onViewDetail }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
 
-  function handleDelete() {
+  function handleDelete(e) {
+    e.stopPropagation();
     if (confirmDelete) {
       onDelete();
     } else {
@@ -133,7 +190,7 @@ function SkillCard({ skill, onEdit, onDelete, onDuplicate }) {
   }
 
   return (
-    <div className="skill-card">
+    <div className="skill-card" onClick={onViewDetail} style={{ cursor: 'pointer' }} role="button" tabIndex={0} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onViewDetail(); }}>
       <div className="skill-card-strip" style={{ background: skill.color }} />
       <div className="skill-card-body">
         <div className="skill-card-header-row">
@@ -147,7 +204,7 @@ function SkillCard({ skill, onEdit, onDelete, onDuplicate }) {
       </div>
       <div className="skill-card-footer">
         {skill.builtin ? (
-          <button className="btn subtle" onClick={onDuplicate}>
+          <button className="btn subtle" onClick={(e) => { e.stopPropagation(); onDuplicate(); }}>
             Duplicate
           </button>
         ) : skill.isOwned ? (
@@ -159,7 +216,7 @@ function SkillCard({ skill, onEdit, onDelete, onDuplicate }) {
             >
               {confirmDelete ? 'Confirm?' : 'Delete'}
             </button>
-            <button className="btn subtle" onClick={onEdit}>Edit</button>
+            <button className="btn subtle" onClick={(e) => { e.stopPropagation(); onEdit(); }}>Edit</button>
           </>
         ) : null}
       </div>
@@ -170,6 +227,7 @@ function SkillCard({ skill, onEdit, onDelete, onDuplicate }) {
 export default function SkillsPage({ allSkills, onCreateSkill, onUpdateSkill, onDeleteSkill, isAuthenticated, onOpenAuth }) {
   const [search, setSearch] = useState('');
   const [formState, setFormState] = useState(null);
+  const [detailSkill, setDetailSkill] = useState(null);
 
   const q = search.trim().toLowerCase();
   const filtered = q
@@ -199,6 +257,22 @@ export default function SkillsPage({ allSkills, onCreateSkill, onUpdateSkill, on
           initial={formState}
           onSave={handleSave}
           onClose={() => setFormState(null)}
+        />
+      )}
+      {detailSkill !== null && (
+        <SkillDetailModal
+          skill={detailSkill}
+          onClose={() => setDetailSkill(null)}
+          onEdit={() => { setDetailSkill(null); setFormState(detailSkill); }}
+          onDuplicate={() => {
+            setDetailSkill(null);
+            setFormState({
+              label: `${detailSkill.label} (copy)`,
+              color: detailSkill.color,
+              description: detailSkill.description,
+              instruction: detailSkill.instruction,
+            });
+          }}
         />
       )}
 
@@ -245,6 +319,7 @@ export default function SkillsPage({ allSkills, onCreateSkill, onUpdateSkill, on
             <SkillCard
               key={skill.id}
               skill={skill}
+              onViewDetail={() => setDetailSkill(skill)}
               onEdit={() => setFormState(skill)}
               onDelete={() => onDeleteSkill(skill.id)}
               onDuplicate={() =>

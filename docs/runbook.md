@@ -12,10 +12,10 @@ Day-to-day operational tasks, backup/restore procedures, performance tuning, and
 docker compose ps
 ```
 
-All three services should show `(healthy)`. If any shows `(unhealthy)` or `(starting)`, check logs:
+All four services should show `(healthy)` or `running`. If any shows `(unhealthy)` or `(starting)`, check logs:
 
 ```bash
-docker compose logs --tail=50 <service>   # service: postgres | mongodb | backend
+docker compose logs --tail=50 <service>   # service: postgres | mongodb | backend | frontend
 ```
 
 ### Restart a service
@@ -206,7 +206,7 @@ docker compose exec mongodb mongosh \
 docker compose exec mongodb mongosh \
   -u admin -p adminpassword --authenticationDatabase admin agentbuilder \
   --eval "
-    ['user_preferences','workspace_state','draft_agents'].forEach(c => {
+    ['builtin_skills','persona_categories','user_preferences','workspace_state','draft_agents','agent_templates'].forEach(c => {
       print(c + ': ' + db[c].countDocuments())
     })"
 ```

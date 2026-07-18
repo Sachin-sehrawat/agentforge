@@ -1,7 +1,7 @@
 ## Summary
 
 Server-side GitHub OAuth 2.0 connect flow with AES-256-GCM encrypted token storage. The GitHub access token is exchanged and stored entirely server-side — it never appears in any API response, browser storage, or log line.
-
+  
 ### Changes
 
 **`backend/db/init/19_github_connections.sql`**

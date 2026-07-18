@@ -2,33 +2,21 @@
 
 ## Token strategy
 
-AgentForge uses stateless JWT-based auth with two token types:
+AgentForge uses **stateless JWT-based auth** with a single access token type. There is no refresh token in the current implementation — users re-authenticate on page reload (see [frontend-auth.md](frontend-auth.md) for the in-memory token rationale).
 
 | Token | TTL | Purpose |
 |---|---|---|
 | Access token | 15 minutes | Carried on every API request (`Authorization: Bearer <token>`) |
-| Refresh token | 7 days | Stored in an `HttpOnly` cookie; used to mint a new access token |
 
 ### Payload
 
-Both token types carry only three fields:
+The access token carries only three fields:
 
 ```json
 { "userId": "<uuid>", "iat": 1718000000, "exp": 1718000900 }
 ```
 
-No roles, emails, or other user attributes are encoded in the token. Callers that need user details must look them up from the database using `userId`.
-
-### Refresh flow
-
-```
-Client  →  POST /api/auth/refresh  (sends HttpOnly refresh-token cookie)
-Server  →  verifyToken(refreshToken)
-           ↳ if valid: respond with new access token (JSON body)
-           ↳ if expired/tampered: 401 — client redirects to login
-```
-
-Refresh tokens are single-use by design: each `/refresh` call should invalidate the old refresh token and issue a new one (to be implemented in the route layer; the token module itself is stateless).
+No roles, emails, or other user attributes are encoded in the token. Callers that need user details must look them up from the database using `userId`. The `req.user.userId` field is used throughout route handlers (not `req.user.id`).
 
 ## Module API
 
@@ -56,7 +44,6 @@ verifyPassword(plaintext, hash)      → Promise<boolean>
 
 ```js
 signAccessToken(userId)   → string   // JWT valid for 15 min
-signRefreshToken(userId)  → string   // JWT valid for 7 days
 verifyToken(token)        → payload  // throws on invalid/expired
 ```
 
@@ -84,14 +71,14 @@ The `docker-compose.yml` backend service uses `${JWT_SECRET:?JWT_SECRET must be 
 ### Rotation
 
 1. Generate a new secret.
-2. Set the new secret alongside the old one temporarily using a `JWT_SECRETS` list (to be implemented) so in-flight tokens remain valid.
-3. After all old tokens have expired (15 min for access, 7 days for refresh), remove the old secret.
+2. Set the new secret alongside the old one temporarily (e.g. a `JWT_SECRETS` list) so in-flight tokens remain valid during the rollover.
+3. After all old tokens have expired (15-minute access token TTL), remove the old secret.
 
 ## Logout approach
 
 ### Stateless logout (current implementation)
 
-Because JWTs are self-contained and verified without a database lookup, the simplest logout is **client-side discard**: the client deletes the access token (and the refresh-token cookie). No server-side action is required.
+Because JWTs are self-contained and verified without a database lookup, the simplest logout is **client-side discard**: the client clears the in-memory access token. No server-side action is required.
 
 - **Pros:** zero server state, works across all replicas with no coordination.
 - **Cons:** a stolen access token remains valid until its 15-minute TTL expires. This window is intentionally short to limit exposure.

@@ -29,7 +29,7 @@ Use `writeAudit` from `backend/src/audit.js`:
 import { writeAudit } from '../audit.js';
 
 await writeAudit({
-  actor: { id: req.user.id, email: req.user.email },
+  actor: { id: req.user.userId, email: req.user.email },
   action: 'agent.update',
   entityType: 'agent',
   entityId: agent.id,

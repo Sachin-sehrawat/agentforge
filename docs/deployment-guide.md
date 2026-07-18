@@ -39,6 +39,17 @@ cp .env.local.example .env
 | `MONGO_ROOT_USERNAME` | `admin` | MongoDB root username |
 | `MONGO_ROOT_PASSWORD` | `adminpassword` | MongoDB root password — **change in production** |
 
+### GitHub integration variables (optional)
+
+Required only if GitHub OAuth integration is enabled. See [github-integration.md](github-integration.md) for setup steps.
+
+| Variable | Required | Description |
+|---|---|---|
+| `GITHUB_CLIENT_ID` | If using GitHub | OAuth App Client ID |
+| `GITHUB_CLIENT_SECRET` | If using GitHub | OAuth App Client Secret — never commit |
+| `GITHUB_TOKEN_ENCRYPTION_KEY` | If using GitHub | 64-character hex string (32 bytes) for AES-256-GCM token encryption |
+| `FRONTEND_URL` | No | Frontend origin for post-OAuth redirects (default: `http://localhost:5173`) |
+
 ### Optional tuning variables
 
 | Variable | Default | Description |
@@ -110,9 +121,9 @@ Built-in skills and persona categories live in MongoDB and must be seeded once a
 docker compose --env-file .env.local exec backend node scripts/migrate-skills-personas.js
 ```
 
-This inserts 15 built-in skills and 11 persona categories (35 personas). Re-running is safe — existing documents are skipped. The container already has the correct `MONGO_URI` and all dependencies; no local Node.js install required.
+This inserts 35 built-in skills and 11 persona categories. Re-running is safe — existing documents are skipped. The container already has the correct `MONGO_URI` and all dependencies; no local Node.js install required.
 
-> The 20 public seed agents (research, security, testing, efficiency, etc.) are seeded automatically into PostgreSQL by `12_seed_agents.sql` on first start — no extra step needed.
+> The 130+ public seed agents are seeded automatically into PostgreSQL by `12_seed_agents.sql` on first start — no extra step needed.
 
 ### 5. (Optional) Migrate existing SQLite data
 
@@ -140,7 +151,8 @@ All scripts in `backend/db/init/` run automatically in filename order when the D
 |---|---|
 | `01_schema.sql` | Core tables and indexes |
 | `02–11_*.sql` | Performance indexes, marketplace columns, ratings, favorites, tags |
-| `12_seed_agents.sql` | 20 public seed agents across research, security, testing, and more |
+| `12_seed_agents.sql` | 130+ public seed agents across research, engineering, security, marketing, education, and more |
+| `13–20_*.sql` | Jobs queue, tier/quota, categories, audit log, admin flag, webhooks, GitHub connections |
 
 To re-apply a specific script against a running container:
 
