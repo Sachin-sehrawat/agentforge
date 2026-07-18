@@ -24,7 +24,7 @@ The migration script handles all field conversions automatically.
 1. **PostgreSQL running** — start the Docker stack if you haven't already:
 
    ```bash
-   docker-compose up -d
+   docker compose --env-file .env.local up -d
    ```
 
 2. **Install the SQLite dependency** — the script uses `better-sqlite3` to read
@@ -108,10 +108,10 @@ The script will:
 Connect to PostgreSQL and spot-check the data:
 
 ```bash
-docker-compose exec postgres psql -U agentforge -d agentforge \
+docker compose exec postgres psql -U agentforge -d agentforge \
   -c "SELECT id, name, model, created_at FROM agents ORDER BY created_at;"
 
-docker-compose exec postgres psql -U agentforge -d agentforge \
+docker compose exec postgres psql -U agentforge -d agentforge \
   -c "SELECT id, label, color FROM custom_skills;"
 ```
 
@@ -192,7 +192,7 @@ node scripts/migrate-sqlite-to-pg.js --sqlite-path /path/to/agents.db
 
 ### `connect ECONNREFUSED`
 
-PostgreSQL is not reachable. Start it with `docker-compose up -d` and verify
+PostgreSQL is not reachable. Start it with `docker compose --env-file .env.local up -d` and verify
 your `.env` credentials.
 
 ### Duplicate ID conflicts

@@ -50,6 +50,23 @@ The `enforceQuota(action)` middleware in `backend/src/middleware/quota.js`:
    ```
 6. If the quota check itself fails (DB error), the middleware logs the error and **passes through** rather than blocking the user. Quota is best-effort; it should not become a hard availability dependency.
 
+## Quota API
+
+`GET /api/me/quota` (requires authentication) returns the current user's tier and today's usage:
+
+```json
+{
+  "tier": "free",
+  "usage": {
+    "export": { "used": 3, "limit": 10 },
+    "save": { "used": 12, "limit": 50 }
+  },
+  "resetsAt": "2026-07-06T00:00:00.000Z"
+}
+```
+
+The 429 response from `enforceQuota` includes `limit`, `used`, `resetsAt`, and `tier` so clients can display the exact overage.
+
 ## Counter Durability
 
 Counters are stored in PostgreSQL (`usage_counters` table) and survive server restarts. The `period` column is a `DATE` (UTC) so counters automatically become stale the next day without any cleanup job — old rows are inert, not incorrect. A periodic cleanup of old rows (e.g., `DELETE FROM usage_counters WHERE period < CURRENT_DATE - INTERVAL '90 days'`) is recommended but not required for correctness.

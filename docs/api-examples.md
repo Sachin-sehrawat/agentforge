@@ -518,6 +518,71 @@ console.assert(loaded.canvas_zoom === 1.5, 'zoom should persist');
 
 ---
 
+---
+
+### Workflow 5: Check platform stats and server metrics
+
+```bash
+# Platform stats (no auth required)
+curl http://localhost:4000/api/stats
+# → { "agentsPublished": 130, "forksMade": 42, "skillsShared": 17, "forksThisMonth": 8 }
+
+# Server metrics (useful for monitoring dashboards)
+curl http://localhost:4000/api/metrics | jq .
+```
+
+```js
+// JavaScript
+const stats = await fetch('http://localhost:4000/api/stats').then(r => r.json());
+console.log(`${stats.agentsPublished} public agents, ${stats.forksMade} total forks`);
+```
+
+---
+
+### Workflow 6: Check and respect quota before saving
+
+```js
+const BASE = 'http://localhost:4000';
+
+// Check quota before attempting an export
+const quota = await fetch(`${BASE}/api/me/quota`, {
+  headers: { Authorization: `Bearer ${token}` },
+}).then(r => r.json());
+
+if (quota.usage.export.used >= quota.usage.export.limit) {
+  console.warn(`Daily export limit reached. Resets at ${quota.resetsAt}`);
+} else {
+  // Proceed with export
+  await fetch(`${BASE}/api/agents/${agentId}/export-event`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+```
+
+---
+
+### Workflow 7: Register a webhook and verify delivery
+
+```bash
+# Register a webhook
+curl -X POST http://localhost:4000/api/webhooks \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"url":"https://your-server.example.com/hook","events":["agent.subscribed","agent.forked"]}'
+# → returns { id, url, events, active, secret }  — store the secret now!
+
+# Send a test delivery
+curl -X POST http://localhost:4000/api/webhooks/<webhook-id>/test \
+  -H "Authorization: Bearer <token>"
+
+# Check delivery log
+curl http://localhost:4000/api/webhooks/<webhook-id>/deliveries \
+  -H "Authorization: Bearer <token>"
+```
+
+---
+
 ## Error Handling Reference
 
 | Status | When it occurs | How to handle |
@@ -525,5 +590,6 @@ console.assert(loaded.canvas_zoom === 1.5, 'zoom should persist');
 | `400` | Missing required field or invalid value | Fix the request body; check the `error` message |
 | `404` | Agent/skill/draft ID not found | Confirm the ID is correct; it may have been deleted |
 | `429` | Rate limit exceeded on `/api/preferences`, `/api/workspace`, `/api/drafts` | Wait for `X-RateLimit-Reset`, then retry |
+| `429` | Daily quota exceeded on save or export (free tier) | Check `GET /api/me/quota`; `resetsAt` tells when the counter resets |
 | `500` | Unexpected PostgreSQL error | Check backend logs; database may need attention |
 | `503` | MongoDB unreachable | Preferences/workspace/drafts unavailable; core agent CRUD still works |

@@ -91,12 +91,18 @@ React frontend (no localStorage — all state via API)
   ▼
 Express backend (port 4000)
   ├── pg pool ──────────────► PostgreSQL 14 (port 5432)
-  │   agents, custom_skills       persistent agent data
+  │   agents, custom_skills,      persistent agent data
+  │   users, subscriptions,
+  │   categories, audit_log,
+  │   webhooks, github_connections
   │
   └── MongoClient ─────────► MongoDB 7.0 (port 27017)
+      builtin_skills              reference data (35 skills)
+      persona_categories          persona taxonomy
       user_preferences            ephemeral user/session state
       workspace_state
       draft_agents
+      agent_templates
 ```
 
 **Gains:** Concurrent reads/writes, per-collection rate limiting, independent health checks for each store, operational separation of concerns.
