@@ -1,6 +1,24 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
+
+function formatCount(n) {
+  if (n === null || n === undefined) return '—';
+  if (n >= 1000) return (n / 1000).toFixed(n % 1000 === 0 ? 0 : 1).replace(/\.0$/, '') + 'k';
+  return n.toLocaleString();
+}
 
 export default function MarketplaceBand({ onBrowseMarketplace }) {
+  const [stats, setStats] = useState(null);
+
+  useEffect(() => {
+    fetch('/api/stats')
+      .then(r => r.ok ? r.json() : Promise.reject())
+      .then(setStats)
+      .catch(() => {});
+  }, []);
+
+  const agentsPublished = stats ? formatCount(stats.agentsPublished) : '—';
+  const forksThisMonth  = stats ? formatCount(stats.forksThisMonth)  : '—';
+
   return (
     <div className="marketplace-band">
       <div className="marketplace-band__inner">
@@ -14,12 +32,12 @@ export default function MarketplaceBand({ onBrowseMarketplace }) {
         </p>
         <div className="marketplace-band__stats">
           <div className="marketplace-band__stat">
-            <span className="marketplace-band__stat-value">2,400+</span>
+            <span className="marketplace-band__stat-value">{agentsPublished}</span>
             <span className="marketplace-band__stat-label">agents published</span>
           </div>
           <div className="marketplace-band__stat-divider" />
           <div className="marketplace-band__stat">
-            <span className="marketplace-band__stat-value">18k</span>
+            <span className="marketplace-band__stat-value">{forksThisMonth}</span>
             <span className="marketplace-band__stat-label">forks this month</span>
           </div>
         </div>

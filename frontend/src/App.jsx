@@ -12,6 +12,7 @@ import SkillsPage from './components/SkillsPage.jsx';
 import AdminPage from './components/AdminPage.jsx';
 import WebhookSettings from './components/WebhookSettings.jsx';
 import WebhookSignaturesDoc from './components/docs/WebhookSignaturesDoc.jsx';
+import DocsPage from './components/docs/DocsPage.jsx';
 import GitHubSettings from './components/GitHubSettings.jsx';
 import MarketplacePage from './components/MarketplacePage.jsx';
 import LandingPage from './components/LandingPage.jsx';
@@ -25,6 +26,7 @@ import ShortcutsOverlay from './components/ShortcutsOverlay.jsx';
 import QuotaUpgradeModal from './components/QuotaUpgradeModal.jsx';
 import { api } from './api.js';
 import { useAuth } from './AuthContext.jsx';
+import { useFeatureFlag, useUiMode } from './FeatureFlagsContext.jsx';
 import { TOOL_META } from './toolMeta.jsx';
 import { validateAgentDefinition } from './serialization/agentValidation.js';
 
@@ -118,6 +120,7 @@ const VIEW_TO_PATH = {
   developer:                '/developer',
   admin:                    '/admin',
   settings:                 '/settings',
+  docs:                     '/docs',
   'docs/webhook-signatures': '/docs/webhook-signatures',
 };
 const PATH_TO_VIEW = Object.fromEntries(
@@ -130,6 +133,27 @@ function pathToView(pathname) {
 
 export default function App() {
   const { user, isAuthenticated, authReady, logout } = useAuth();
+  const uiMode   = useUiMode();
+  const easyMode = uiMode === 'easy';
+
+  // Feature flags — all default true when unknown
+  const ffBuilder          = useFeatureFlag('page.builder');
+  const ffAgents           = useFeatureFlag('page.agents');
+  const ffMarketplace      = useFeatureFlag('page.marketplace');
+  const ffSkills           = useFeatureFlag('page.skills');
+  const ffDeveloper        = useFeatureFlag('page.developer');
+  const ffSettings         = useFeatureFlag('page.settings');
+  const ffBuilderTemplates = useFeatureFlag('builder.templates');
+  const ffBuilderImport    = useFeatureFlag('builder.import');
+  const ffBuilderHistory   = useFeatureFlag('builder.versionHistory');
+  const ffBuilderExport    = useFeatureFlag('builder.export');
+  const ffBuilderTools     = useFeatureFlag('builder.tools');
+  const ffBuilderSkills    = useFeatureFlag('builder.skills');
+  const ffBuilderPersonas  = useFeatureFlag('builder.personas');
+  const ffAgentsFork       = useFeatureFlag('agents.fork');
+  const ffAgentsAnalytics  = useFeatureFlag('agents.analytics');
+  const ffAgentsExportFmt  = useFeatureFlag('agents.exportFormat');
+  const ffAuthRegister     = useFeatureFlag('auth.register');
   const [agent, setAgent] = useState(DEFAULT_AGENT);
   const [publicAgents, setPublicAgents] = useState([]);
   const [myAgents, setMyAgents] = useState([]);
@@ -252,17 +276,26 @@ export default function App() {
       }
       if (wsData.agent && typeof wsData.agent === 'object') {
         const restored = { ...DEFAULT_AGENT, ...wsData.agent };
-        // Verify the saved agent ID still exists in the DB; clear it if stale
-        // (e.g. after a DB reset) so the user can re-save cleanly.
-        if (restored.id) {
-          api.getAgent(restored.id).catch(() => {
-            setAgent((prev) => ({ ...prev, id: null }));
-          });
-        }
-        setAgent(restored);
         isRestoredRef.current = true;
         if (restored.persona || restored.systemPrompt || restored.tools?.length > 0) {
           setEmptyStateDismissed(true);
+        }
+        if (restored.id) {
+          // Strip the ID immediately — never show as "saved" while the check
+          // is in flight. Only restore the ID if the record still exists AND
+          // the user hasn't already saved a new version in the meantime.
+          setAgent({ ...restored, id: null });
+          api.getAgent(restored.id)
+            .then(() => {
+              setAgent((prev) => {
+                // Don't overwrite if user already saved (prev.id set by save)
+                if (prev.id !== null) return prev;
+                return { ...prev, id: restored.id };
+              });
+            })
+            .catch(() => {}); // ID gone — stays null, content preserved
+        } else {
+          setAgent(restored);
         }
       }
     }).finally(() => {
@@ -1013,7 +1046,7 @@ export default function App() {
         onSetView={handleSetView}
         customSkillsCount={customSkills.length}
         user={user}
-        onOpenAuth={(tab) => setAuthModal({ tab, onSuccess: null })}
+        onOpenAuth={(tab) => setAuthModal({ tab, onSuccess: view === 'landing' ? () => handleSetView('marketplace') : null })}
         onLogout={logout}
         isAuthenticated={isAuthenticated}
         theme={theme}
@@ -1021,14 +1054,14 @@ export default function App() {
         quota={quota}
       />
 
-      {importOpen && (
+      {importOpen && ffBuilderImport && (
         <ImportModal
           onClose={() => setImportOpen(false)}
           onCommit={onImportCommit}
         />
       )}
 
-      {templateGalleryOpen && (
+      {templateGalleryOpen && ffBuilderTemplates && (
         <TemplateGallery
           allSkills={allSkills}
           onSelect={onFromTemplate}
@@ -1036,7 +1069,7 @@ export default function App() {
         />
       )}
 
-      {historyOpen && agent.id && isAuthenticated && (
+      {historyOpen && agent.id && isAuthenticated && ffBuilderHistory && (
         <VersionHistoryPanel
           agentId={agent.id}
           currentAgent={agent}
@@ -1055,6 +1088,7 @@ export default function App() {
             setAuthModal(null);
             action?.();
           }}
+          allowRegister={ffAuthRegister}
         />
       )}
 
@@ -1087,21 +1121,21 @@ export default function App() {
         />
       )}
 
-      {view === null ? null : view === 'landing' ? (
+      {view === null ? null : <div key={view} className="view-transition">{view === 'landing' ? (
         <LandingPage
           onGetStarted={() => handleSetView('builder')}
           onBrowseMarketplace={() => handleSetView('marketplace')}
-          onOpenAuth={(tab) => setAuthModal({ tab, onSuccess: () => handleSetView('builder') })}
+          onOpenAuth={(tab) => setAuthModal({ tab, onSuccess: () => handleSetView('marketplace') })}
           isAuthenticated={isAuthenticated}
-          onFork={onFork}
+          onFork={ffAgentsFork ? onFork : null}
         />
-      ) : view === 'agents' && analyticsAgent ? (
+      ) : view === 'agents' && analyticsAgent && ffAgentsAnalytics ? (
         <AgentAnalytics
           agentId={analyticsAgent.id}
           agentName={analyticsAgent.name}
           onBack={() => setAnalyticsAgent(null)}
         />
-      ) : view === 'agents' ? (
+      ) : view === 'agents' && ffAgents ? (
         <>
           <AgentsPage
             publicAgents={publicAgents}
@@ -1122,17 +1156,18 @@ export default function App() {
             onOpenAuth={(tab) => setAuthModal({ tab, onSuccess: null })}
             onSubscribe={onSubscribe}
             onToggleVisibility={onToggleVisibility}
-            onFork={onFork}
+            onFork={ffAgentsFork ? onFork : null}
             onUnfavorite={onUnfavorite}
             onDuplicate={onDuplicate}
             onBulkDelete={onBulkDelete}
             onBulkExport={onBulkExport}
-            onAnalytics={(agent) => setAnalyticsAgent({ id: agent.id, name: agent.name })}
-            onExportFormat={(agent) => setExportPanelAgent(agent)}
+            onAnalytics={ffAgentsAnalytics ? (agent) => setAnalyticsAgent({ id: agent.id, name: agent.name }) : null}
+            onExportFormat={ffAgentsExportFmt ? (agent) => setExportPanelAgent(agent) : null}
             categories={agentCategories}
             onNavigateSettings={handleSetView}
+            easyMode={easyMode}
           />
-          {exportPanelAgent && (
+          {exportPanelAgent && ffAgentsExportFmt && (
             <ExportFormatModal
               agent={exportPanelAgent}
               getMarkdown={(a) => generateMarkdown(a, allSkills, personaLookup)}
@@ -1140,7 +1175,14 @@ export default function App() {
             />
           )}
         </>
-      ) : view === 'skills' ? (
+      ) : view === 'agents' ? (
+        <div className="agents-page">
+          <div className="agents-page-header">
+            <h1 className="agents-page-title">Agents</h1>
+            <p className="agents-page-sub">This page is currently disabled.</p>
+          </div>
+        </div>
+      ) : view === 'skills' && ffSkills ? (
         <SkillsPage
           allSkills={allSkills}
           onCreateSkill={onCreateSkill}
@@ -1149,27 +1191,29 @@ export default function App() {
           isAuthenticated={isAuthenticated}
           onOpenAuth={(tab) => setAuthModal({ tab, onSuccess: null })}
         />
-      ) : view === 'marketplace' ? (
+      ) : view === 'marketplace' && ffMarketplace ? (
         <MarketplacePage
           isAuthenticated={isAuthenticated}
           onView={onLoad}
-          onFork={onFork}
+          onFork={ffAgentsFork ? onFork : null}
           onOpenAuth={(tab) => setAuthModal({ tab, onSuccess: null })}
         />
-      ) : view === 'settings' ? (
+      ) : view === 'settings' && ffSettings ? (
         <GitHubSettings
           isAuthenticated={isAuthenticated}
           onOpenAuth={(tab) => setAuthModal({ tab, onSuccess: null })}
         />
+      ) : view === 'docs' ? (
+        <DocsPage onBack={() => handleSetView('landing')} onNavigate={handleSetView} />
       ) : view === 'docs/webhook-signatures' ? (
         <WebhookSignaturesDoc onBack={() => handleSetView('developer')} />
-      ) : view === 'developer' ? (
+      ) : view === 'developer' && ffDeveloper ? (
         <WebhookSettings
           isAuthenticated={isAuthenticated}
           onOpenAuth={(tab) => setAuthModal({ tab, onSuccess: null })}
           onNavigate={handleSetView}
         />
-      ) : view === 'admin' ? (
+      ) : view === 'admin' && user?.isAdmin ? (
         <AdminPage
           builtinSkills={builtinSkills}
           personaCategories={personaCategories}
@@ -1181,15 +1225,25 @@ export default function App() {
           user={user}
           onOpenAuth={(tab) => setAuthModal({ tab, onSuccess: null })}
         />
+      ) : (view === 'skills' || view === 'marketplace' || view === 'settings' || view === 'developer') ? (
+        <div className="agents-page">
+          <div className="agents-page-header">
+            <h1 className="agents-page-title" style={{ textTransform: 'capitalize' }}>{view}</h1>
+            <p className="agents-page-sub">This page is currently disabled.</p>
+          </div>
+        </div>
       ) : (
         <>
-          <SkillsBar skills={allSkills} activeSkills={agent.skills} onToggleSkill={onToggleSkill} />
+          {ffBuilderSkills && <SkillsBar skills={allSkills} activeSkills={agent.skills} onToggleSkill={onToggleSkill} />}
           {loadingWorkspace ? (
             <div className="workspace-loading">Loading workspace…</div>
           ) : (
             <ErrorBoundary message="The canvas encountered an error. Your work is safe — click Try again to reload.">
               <div className="workbench">
-                <Sidebar addedTools={agent.tools} onAddTool={onAddTool} />
+                {ffBuilderTools && <Sidebar addedTools={agent.tools} onAddTool={onAddTool} />}
+                <div className="canvas-mobile-hint">
+                  Scroll or pinch to navigate the canvas
+                </div>
                 {!emptyStateDismissed && !agent.id && !agent.persona && !agent.systemPrompt && agent.tools.length === 0 && (
                   <div className="canvas-empty-state">
                     <div className="ces-card">
@@ -1229,16 +1283,18 @@ export default function App() {
                   validationState={validationState}
                   onViewSource={onLoad}
                 />
-                <PersonaPanel
-                  activeInstructions={agent.instructions}
-                  onToggleInstruction={onToggleInstruction}
-                  categories={personaCategories}
-                />
+                {ffBuilderPersonas && (
+                  <PersonaPanel
+                    activeInstructions={agent.instructions}
+                    onToggleInstruction={onToggleInstruction}
+                    categories={personaCategories}
+                  />
+                )}
               </div>
             </ErrorBoundary>
           )}
         </>
-      )}
+      )}</div>}
       {toasts.length > 0 && (
         <div className="toast-container" aria-live="polite">
           {toasts.map((t) => (

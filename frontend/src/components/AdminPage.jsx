@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { api } from '../api.js';
+import { useFeatureFlags } from '../FeatureFlagsContext.jsx';
+import CalendarPicker from './CalendarPicker.jsx';
 
 // ── Color presets (shared between skill and category forms) ─────────────────
 const COLOR_PRESETS = [
@@ -680,6 +682,201 @@ function JsonDiff({ before, after }) {
   );
 }
 
+// ── Users tab ────────────────────────────────────────────────────────────────
+function UsersTab({ currentUser }) {
+  const [users, setUsers] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [q, setQ] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [confirmDelete, setConfirmDelete] = useState(null);
+  const [saving, setSaving] = useState(null);
+
+  const PAGE_SIZE = 25;
+
+  const load = useCallback(async (query, pg) => {
+    setLoading(true);
+    setError('');
+    try {
+      const data = await api.listUsers({ q: query, page: pg, pageSize: PAGE_SIZE });
+      setUsers(data.items);
+      setTotal(data.total);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { load('', 1); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleSearch = (e) => {
+    e.preventDefault();
+    setPage(1);
+    load(q, 1);
+  };
+
+  const patch = async (id, data) => {
+    setSaving(id);
+    try {
+      const updated = await api.updateUser(id, data);
+      setUsers((prev) => prev.map((u) => u.id === id ? { ...u, ...updated } : u));
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(null);
+    }
+  };
+
+  const handleDelete = async (id) => {
+    setConfirmDelete(null);
+    try {
+      await api.deleteUser(id);
+      setUsers((prev) => prev.filter((u) => u.id !== id));
+      setTotal((t) => t - 1);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const totalPages = Math.ceil(total / PAGE_SIZE) || 1;
+
+  return (
+    <div>
+      <div className="agents-page-header">
+        <div>
+          <h2 className="agents-page-title">Users</h2>
+          <p className="agents-page-sub">{total} registered user{total !== 1 ? 's' : ''}</p>
+        </div>
+      </div>
+
+      {/* Search */}
+      <form className="users-search-row" onSubmit={handleSearch}>
+        <div className="filter-wrap" style={{ flex: 1, maxWidth: 360 }}>
+          <svg className="filter-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+          </svg>
+          <input
+            className="filter-input"
+            type="text"
+            placeholder="Search by email or name…"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+          />
+          {q && <button type="button" className="filter-clear" onClick={() => { setQ(''); load('', 1); setPage(1); }}>✕</button>}
+        </div>
+        <button type="submit" className="btn primary" disabled={loading}>Search</button>
+      </form>
+
+      {error && <p className="field-error-msg" style={{ marginBottom: 12 }}>{error}</p>}
+
+      {loading ? (
+        <p className="filter-empty">Loading…</p>
+      ) : users.length === 0 ? (
+        <p className="filter-empty">No users found.</p>
+      ) : (
+        <>
+          <div className="users-table-wrap">
+            <table className="users-table">
+              <thead>
+                <tr>
+                  <th>Email</th>
+                  <th>Name</th>
+                  <th>Tier</th>
+                  <th>Superuser</th>
+                  <th>Joined</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {users.map((u) => {
+                  const isSelf = u.id === currentUser?.id;
+                  const isBusy = saving === u.id;
+                  return (
+                    <tr key={u.id} className={isSelf ? 'users-row--self' : ''}>
+                      <td className="users-cell--email">
+                        {u.email}
+                        {isSelf && <span className="users-self-badge">you</span>}
+                      </td>
+                      <td className="users-cell--name">{u.displayName || <span className="users-empty">—</span>}</td>
+                      <td>
+                        <select
+                          className="users-select"
+                          value={u.tier}
+                          disabled={isBusy}
+                          onChange={(e) => patch(u.id, { tier: e.target.value })}
+                        >
+                          <option value="free">Free</option>
+                          <option value="paid">Paid</option>
+                        </select>
+                      </td>
+                      <td>
+                        <label className="users-toggle" title={isSelf ? 'Cannot remove your own superuser status' : ''}>
+                          <input
+                            type="checkbox"
+                            checked={u.isAdmin}
+                            disabled={isBusy || isSelf}
+                            onChange={(e) => patch(u.id, { isAdmin: e.target.checked })}
+                          />
+                          <span className="users-toggle-track">
+                            <span className="users-toggle-thumb" />
+                          </span>
+                        </label>
+                      </td>
+                      <td className="users-cell--date">
+                        {new Date(u.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                      </td>
+                      <td>
+                        {!isSelf && (
+                          <button
+                            className="users-delete-btn"
+                            disabled={isBusy}
+                            onClick={() => setConfirmDelete(u)}
+                            title="Delete user"
+                          >
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/>
+                            </svg>
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          {totalPages > 1 && (
+            <div className="audit-pagination" style={{ marginTop: 16 }}>
+              <button className="btn" disabled={page <= 1} onClick={() => { const p = page - 1; setPage(p); load(q, p); }}>← Prev</button>
+              <span className="audit-page-info">Page {page} of {totalPages}</span>
+              <button className="btn" disabled={page >= totalPages} onClick={() => { const p = page + 1; setPage(p); load(q, p); }}>Next →</button>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* Delete confirmation modal */}
+      {confirmDelete && (
+        <div className="modal-overlay" onClick={() => setConfirmDelete(null)}>
+          <div className="modal-box" onClick={(e) => e.stopPropagation()}>
+            <h3 className="modal-title">Delete user?</h3>
+            <p className="modal-body">
+              This will permanently delete <strong>{confirmDelete.email}</strong> and all their data. This cannot be undone.
+            </p>
+            <div className="modal-actions">
+              <button className="btn" onClick={() => setConfirmDelete(null)}>Cancel</button>
+              <button className="btn danger" onClick={() => handleDelete(confirmDelete.id)}>Delete</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Audit log tab ────────────────────────────────────────────────────────────
 const ACTION_OPTIONS = [
   '', 'agent.create', 'agent.update', 'agent.delete', 'agent.visibility_change',
@@ -774,21 +971,21 @@ function AuditLogTab({ user }) {
 
           <div className="field-group audit-filter-field">
             <label className="field-label">From</label>
-            <input
-              type="date"
-              className="field-input"
+            <CalendarPicker
               value={filters.from}
-              onChange={(e) => setFilters((f) => ({ ...f, from: e.target.value }))}
+              onChange={(v) => setFilters((f) => ({ ...f, from: v }))}
+              placeholder="Start date"
+              maxDate={filters.to || undefined}
             />
           </div>
 
           <div className="field-group audit-filter-field">
             <label className="field-label">To</label>
-            <input
-              type="date"
-              className="field-input"
+            <CalendarPicker
               value={filters.to}
-              onChange={(e) => setFilters((f) => ({ ...f, to: e.target.value }))}
+              onChange={(v) => setFilters((f) => ({ ...f, to: v }))}
+              placeholder="End date"
+              minDate={filters.from || undefined}
             />
           </div>
 
@@ -878,6 +1075,222 @@ function AuditLogTab({ user }) {
   );
 }
 
+// ── Feature flag groups for display ────────────────────────────────────────
+const FLAG_GROUPS = [
+  {
+    label: 'Pages / Navigation',
+    flags: [
+      { key: 'page.builder',     label: 'Builder' },
+      { key: 'page.agents',      label: 'Agents' },
+      { key: 'page.marketplace', label: 'Marketplace' },
+      { key: 'page.skills',      label: 'Skills' },
+      { key: 'page.developer',   label: 'Developer' },
+      { key: 'page.settings',    label: 'Settings (GitHub)' },
+    ],
+  },
+  {
+    label: 'Builder',
+    flags: [
+      { key: 'builder.tools',          label: 'Tool sidebar' },
+      { key: 'builder.skills',         label: 'Skills bar' },
+      { key: 'builder.personas',       label: 'Persona panel' },
+      { key: 'builder.templates',      label: 'Templates' },
+      { key: 'builder.import',         label: 'Import' },
+      { key: 'builder.versionHistory', label: 'Version History' },
+      { key: 'builder.export',         label: 'Export MD button' },
+    ],
+  },
+  {
+    label: 'Agents Page',
+    flags: [
+      { key: 'agents.subscribe',    label: 'Subscribe / Unsubscribe' },
+      { key: 'agents.fork',         label: 'Fork' },
+      { key: 'agents.duplicate',    label: 'Duplicate' },
+      { key: 'agents.visibility',   label: 'Toggle Public / Private' },
+      { key: 'agents.analytics',    label: 'Analytics' },
+      { key: 'agents.exportFormat', label: 'Export Format modal' },
+      { key: 'agents.bulkDelete',   label: 'Bulk Delete' },
+      { key: 'agents.bulkExport',   label: 'Bulk Export' },
+      { key: 'agents.favorites',    label: 'Favorites tab' },
+    ],
+  },
+  {
+    label: 'Marketplace',
+    flags: [
+      { key: 'marketplace.fork',    label: 'Fork from marketplace' },
+      { key: 'marketplace.ratings', label: 'Star ratings' },
+    ],
+  },
+  {
+    label: 'Skills Page',
+    flags: [
+      { key: 'skills.create', label: 'Create skill' },
+      { key: 'skills.edit',   label: 'Edit skill' },
+      { key: 'skills.delete', label: 'Delete skill' },
+    ],
+  },
+  {
+    label: 'GitHub Integration',
+    flags: [
+      { key: 'github.connect', label: 'Connect / Disconnect GitHub' },
+    ],
+  },
+  {
+    label: 'Webhooks',
+    flags: [
+      { key: 'webhooks.create',      label: 'Create webhook' },
+      { key: 'webhooks.testDelivery', label: 'Test delivery' },
+    ],
+  },
+  {
+    label: 'Auth',
+    flags: [
+      { key: 'auth.register', label: 'Sign up button' },
+    ],
+  },
+];
+
+function FeatureFlagsTab({ user }) {
+  const { flags, defaults, uiMode, setFlagsAndMode, reload } = useFeatureFlags();
+  const [local, setLocal] = useState({});
+  const [localMode, setLocalMode] = useState('pro');
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    setLocal({ ...defaults, ...flags });
+    setLocalMode(uiMode);
+  }, [flags, defaults, uiMode]);
+
+  function toggle(key) {
+    setLocal((prev) => ({ ...prev, [key]: !prev[key] }));
+    setSaved(false);
+  }
+
+  async function handleSave() {
+    setSaving(true);
+    setError('');
+    try {
+      const result = await api.updateFeatureFlags({ ...local, uiMode: localMode });
+      setFlagsAndMode(result.flags, result.uiMode);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function handleReset() {
+    setLocal({ ...defaults });
+    setLocalMode('pro');
+    setSaved(false);
+  }
+
+  if (!user?.isAdmin) {
+    return <p className="filter-empty">Access restricted to administrators.</p>;
+  }
+
+  const modeChanged = localMode !== uiMode;
+  const flagsChanged = Object.keys(defaults).filter((k) => local[k] !== (flags[k] ?? defaults[k])).length;
+  const totalChanged = flagsChanged + (modeChanged ? 1 : 0);
+
+  const isEasy = localMode === 'easy';
+
+  return (
+    <div>
+      <div className="agents-page-header">
+        <div>
+          <h2 className="agents-page-title">Feature Flags</h2>
+          <p className="agents-page-sub">Control which features are visible in the UI.</p>
+        </div>
+        <div className="agents-page-header-actions">
+          <button className="btn" onClick={handleReset} disabled={saving}>Reset to defaults</button>
+          <button className="btn primary" onClick={handleSave} disabled={saving}>
+            {saving ? 'Saving…' : saved ? 'Saved!' : `Save${totalChanged > 0 ? ` (${totalChanged})` : ''}`}
+          </button>
+        </div>
+      </div>
+
+      {error && <p className="field-error-msg" style={{ marginBottom: 12 }}>{error}</p>}
+
+      {/* ── Mode selector ── */}
+      <div className="ui-mode-selector">
+        <div className="ui-mode-label">UI Mode</div>
+        <div className="ui-mode-options">
+          <button
+            type="button"
+            className={`ui-mode-btn${!isEasy ? ' active' : ''}`}
+            onClick={() => { setLocalMode('pro'); setSaved(false); }}
+          >
+            <div className="ui-mode-btn-title">Pro Mode</div>
+            <div className="ui-mode-btn-desc">All features enabled. Full developer and admin controls visible.</div>
+          </button>
+          <button
+            type="button"
+            className={`ui-mode-btn${isEasy ? ' active' : ''}`}
+            onClick={() => { setLocalMode('easy'); setSaved(false); }}
+          >
+            <div className="ui-mode-btn-title">Easy Mode</div>
+            <div className="ui-mode-btn-desc">Simplified UI. Agent page shows only View and Download. No developer, settings, or skills pages.</div>
+          </button>
+        </div>
+        {isEasy && (
+          <p className="ui-mode-note">
+            Easy Mode applies preset overrides — some flags below are locked off regardless of their toggle state.
+          </p>
+        )}
+      </div>
+
+      {/* ── Per-flag toggles ── */}
+      <div className="feature-flags-list">
+        {FLAG_GROUPS.map((group) => (
+          <div key={group.label} className="feature-flags-group">
+            <h3 className="feature-flags-group-label">{group.label}</h3>
+            <div className="feature-flags-items">
+              {group.flags.map(({ key, label }) => {
+                const enabled = local[key] ?? true;
+                // In easy mode, some flags are locked off
+                const EASY_LOCKED = isEasy && (key in {
+                  'page.developer': 1, 'page.settings': 1, 'page.skills': 1,
+                  'builder.skills': 1, 'builder.personas': 1, 'builder.import': 1,
+                  'builder.versionHistory': 1, 'agents.subscribe': 1, 'agents.fork': 1,
+                  'agents.duplicate': 1, 'agents.visibility': 1, 'agents.analytics': 1,
+                  'agents.exportFormat': 1, 'agents.bulkDelete': 1, 'agents.bulkExport': 1,
+                  'agents.favorites': 1, 'marketplace.fork': 1, 'marketplace.ratings': 1,
+                  'skills.create': 1, 'skills.edit': 1, 'skills.delete': 1,
+                  'github.connect': 1, 'webhooks.create': 1, 'webhooks.testDelivery': 1,
+                });
+                return (
+                  <label key={key} className={`feature-flag-row${EASY_LOCKED ? ' feature-flag-row--locked' : ''}`}>
+                    <span className="feature-flag-label">
+                      {label}
+                      {EASY_LOCKED && <span className="feature-flag-locked-badge">locked by Easy Mode</span>}
+                    </span>
+                    <span className="feature-flag-key">{key}</span>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={EASY_LOCKED ? false : enabled}
+                      className={`feature-flag-toggle${!EASY_LOCKED && enabled ? ' on' : ''}`}
+                      onClick={() => !EASY_LOCKED && toggle(key)}
+                      disabled={EASY_LOCKED}
+                    >
+                      <span className="feature-flag-thumb" />
+                    </button>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ── AdminPage root ───────────────────────────────────────────────────────────
 export default function AdminPage({ builtinSkills, personaCategories, templates, onBuiltinSkillsChange, onPersonaCategoriesChange, onTemplatesChange, isAuthenticated, user, onOpenAuth }) {
   const [tab, setTab] = useState('skills');
@@ -902,8 +1315,18 @@ export default function AdminPage({ builtinSkills, personaCategories, templates,
           Templates
         </button>
         {user?.isAdmin && (
+          <button className={`admin-tab${tab === 'users' ? ' active' : ''}`} onClick={() => setTab('users')}>
+            Users
+          </button>
+        )}
+        {user?.isAdmin && (
           <button className={`admin-tab${tab === 'audit' ? ' active' : ''}`} onClick={() => setTab('audit')}>
             Audit Log
+          </button>
+        )}
+        {user?.isAdmin && (
+          <button className={`admin-tab${tab === 'flags' ? ' active' : ''}`} onClick={() => setTab('flags')}>
+            Feature Flags
           </button>
         )}
       </div>
@@ -923,8 +1346,12 @@ export default function AdminPage({ builtinSkills, personaCategories, templates,
             isAuthenticated={isAuthenticated}
             onOpenAuth={onOpenAuth}
           />
+        ) : tab === 'users' ? (
+          <UsersTab currentUser={user} />
         ) : tab === 'audit' ? (
           <AuditLogTab user={user} />
+        ) : tab === 'flags' ? (
+          <FeatureFlagsTab user={user} />
         ) : (
           <TemplatesTab
             templates={templates}

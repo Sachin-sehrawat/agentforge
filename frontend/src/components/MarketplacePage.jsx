@@ -50,7 +50,204 @@ function StarRating({ value, onChange, readonly = false }) {
   );
 }
 
-function MarketplaceCard({ agent, categoriesMap = {}, isAuthenticated, onView, onSubscribe, onFavorite, onFork, onRate, onOpenAuth }) {
+function MarketplaceDetailModal({ agent, categoriesMap = {}, isAuthenticated, onClose, onView, onSubscribe, onFavorite, onFork, onRate, onOpenAuth }) {
+  const [localAgent, setLocalAgent] = useState(agent);
+  const [busySubscribe, setBusySubscribe] = useState(false);
+  const [busyFavorite, setBusyFavorite] = useState(false);
+  const [busyFork, setBusyFork] = useState(false);
+
+  const toolCount = (localAgent.tools || []).length;
+  const isOwn = Boolean(localAgent.isOwner);
+  const category = localAgent.categoryId ? categoriesMap[localAgent.categoryId] : null;
+
+  async function handleSubscribe() {
+    if (!isAuthenticated) { onOpenAuth('login'); return; }
+    const wasSubscribed = localAgent.isSubscribed;
+    setLocalAgent((p) => ({ ...p, isSubscribed: !wasSubscribed }));
+    setBusySubscribe(true);
+    try {
+      await onSubscribe(localAgent, !wasSubscribed);
+    } catch {
+      setLocalAgent((p) => ({ ...p, isSubscribed: wasSubscribed }));
+    } finally {
+      setBusySubscribe(false);
+    }
+  }
+
+  async function handleFavorite() {
+    if (!isAuthenticated) { onOpenAuth('login'); return; }
+    const wasFav = localAgent.isFavorited;
+    const delta = wasFav ? -1 : 1;
+    setLocalAgent((p) => ({ ...p, isFavorited: !wasFav, favoriteCount: (p.favoriteCount || 0) + delta }));
+    setBusyFavorite(true);
+    try {
+      await onFavorite(localAgent.id, !wasFav);
+    } catch {
+      setLocalAgent((p) => ({ ...p, isFavorited: wasFav, favoriteCount: (p.favoriteCount || 0) - delta }));
+    } finally {
+      setBusyFavorite(false);
+    }
+  }
+
+  async function handleFork() {
+    if (!isAuthenticated) { onOpenAuth('login'); return; }
+    setBusyFork(true);
+    try {
+      await onFork(localAgent.id);
+      setLocalAgent((p) => ({ ...p, forkCount: (p.forkCount || 0) + 1 }));
+    } catch {
+      // silent
+    } finally {
+      setBusyFork(false);
+    }
+  }
+
+  async function handleRate(rating) {
+    if (!isAuthenticated) { onOpenAuth('login'); return; }
+    try {
+      const result = await onRate(localAgent.id, rating);
+      if (result?.avgRating != null) {
+        setLocalAgent((p) => ({ ...p, avgRating: result.avgRating, ratingCount: result.ratingCount ?? p.ratingCount, myRating: rating }));
+      } else {
+        setLocalAgent((p) => ({ ...p, myRating: rating }));
+      }
+    } catch {
+      // silent
+    }
+  }
+
+  return (
+    <div className="modal-backdrop" onMouseDown={onClose}>
+      <div className="modal mp-detail-modal" onMouseDown={(e) => e.stopPropagation()}>
+        <div className="modal-header">
+          <div className="mp-detail-modal-title-row">
+            <div>
+              <h2 className="modal-title">{localAgent.name || 'Untitled'}</h2>
+              {localAgent.ownerDisplayName && (
+                <span className="mp-detail-owner">by {localAgent.ownerDisplayName}</span>
+              )}
+            </div>
+            <div className="mp-detail-meta-row">
+              {category && (
+                <span className="agent-card-stat" style={{ '--stat-color': category.color || '#64748b' }}>
+                  {category.label}
+                </span>
+              )}
+              <StarRating value={localAgent.avgRating} readonly />
+              {localAgent.ratingCount > 0 && (
+                <span className="mp-meta-count">({localAgent.ratingCount})</span>
+              )}
+            </div>
+          </div>
+          <button className="modal-close" onClick={onClose} type="button">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        </div>
+
+        <div className="modal-body mp-detail-modal-body">
+          {localAgent.persona && (
+            <div className="mp-detail-section">
+              <div className="mp-detail-label">Persona</div>
+              <p className="mp-detail-text">{localAgent.persona}</p>
+            </div>
+          )}
+
+          {localAgent.systemPrompt && (
+            <div className="mp-detail-section">
+              <div className="mp-detail-label">System Prompt</div>
+              <pre className="mp-detail-instruction">{localAgent.systemPrompt}</pre>
+            </div>
+          )}
+
+          {toolCount > 0 && (
+            <div className="mp-detail-section">
+              <div className="mp-detail-label">Tools</div>
+              <div className="agent-card-tools">
+                {localAgent.tools.map((id) => {
+                  const meta = TOOL_META[id];
+                  return (
+                    <span
+                      key={id}
+                      className="agent-card-tool-chip"
+                      style={{ '--tool-color': meta ? meta.color : '#999' }}
+                      title={meta ? meta.blurb : id}
+                    >
+                      {meta ? meta.label : id}
+                    </span>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          <div className="mp-detail-stats-row">
+            {localAgent.forkCount > 0 && (
+              <span className="mp-meta-item">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/>
+                  <path d="M18 9v1a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V9"/>
+                  <line x1="12" y1="12" x2="12" y2="15"/>
+                </svg>
+                {localAgent.forkCount} fork{localAgent.forkCount !== 1 ? 's' : ''}
+              </span>
+            )}
+            {localAgent.favoriteCount > 0 && (
+              <span className="mp-meta-item">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill={localAgent.isFavorited ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+                </svg>
+                {localAgent.favoriteCount} favorite{localAgent.favoriteCount !== 1 ? 's' : ''}
+              </span>
+            )}
+          </div>
+
+          {!isOwn && isAuthenticated && (
+            <div className="mp-detail-section">
+              <div className="mp-detail-label">Your Rating</div>
+              <StarRating value={localAgent.myRating || 0} onChange={handleRate} />
+            </div>
+          )}
+        </div>
+
+        <div className="modal-footer">
+          <button className="btn primary" onClick={() => { onClose(); onView(localAgent.id); }}>
+            View
+          </button>
+          {!isOwn && (
+            <button
+              className="btn subtle"
+              onClick={handleSubscribe}
+              disabled={busySubscribe}
+              title={localAgent.isSubscribed ? 'Remove from My Agents' : 'Add to My Agents'}
+            >
+              {localAgent.isSubscribed ? 'Unsubscribe' : 'Subscribe'}
+            </button>
+          )}
+          {!isOwn && (
+            <button
+              className={`btn subtle mp-btn-fav${localAgent.isFavorited ? ' active' : ''}`}
+              onClick={handleFavorite}
+              disabled={busyFavorite}
+              title={localAgent.isFavorited ? 'Remove from favorites' : 'Add to favorites'}
+            >
+              {localAgent.isFavorited ? '♥' : '♡'}
+            </button>
+          )}
+          {!isOwn && (
+            <button className="btn subtle" onClick={handleFork} disabled={busyFork} title="Fork this agent">
+              Fork
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MarketplaceCard({ agent, categoriesMap = {}, isAuthenticated, onView, onSubscribe, onFavorite, onFork, onRate, onOpenAuth, onViewDetail }) {
   const [localAgent, setLocalAgent] = useState(agent);
   const [busySubscribe, setBusySubscribe] = useState(false);
   const [busyFavorite, setBusyFavorite] = useState(false);
@@ -136,7 +333,14 @@ function MarketplaceCard({ agent, categoriesMap = {}, isAuthenticated, onView, o
 
   return (
     <div className="agent-card mp-card">
-      <div className="agent-card-body">
+      <div
+        className="agent-card-body"
+        onClick={onViewDetail}
+        style={{ cursor: 'pointer' }}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onViewDetail(); }}
+      >
         <div className="mp-card-header">
           <div className="agent-card-name">{localAgent.name || 'Untitled'}</div>
           {localAgent.ownerDisplayName && (
@@ -204,7 +408,7 @@ function MarketplaceCard({ agent, categoriesMap = {}, isAuthenticated, onView, o
         )}
 
         {!isOwn && isAuthenticated && (
-          <div className="mp-card-rate">
+          <div className="mp-card-rate" onClick={(e) => e.stopPropagation()}>
             <span className="mp-rate-label">Your rating:</span>
             <StarRating
               value={localAgent.myRating || 0}
@@ -216,13 +420,13 @@ function MarketplaceCard({ agent, categoriesMap = {}, isAuthenticated, onView, o
 
       <div className="agent-card-footer">
         <div className="agent-card-actions">
-          <button className="btn primary" onClick={() => onView(localAgent.id)}>
+          <button className="btn primary" onClick={(e) => { e.stopPropagation(); onView(localAgent.id); }}>
             View
           </button>
           {!isOwn && (
             <button
               className="btn subtle"
-              onClick={handleSubscribe}
+              onClick={(e) => { e.stopPropagation(); handleSubscribe(); }}
               disabled={busySubscribe}
               title={localAgent.isSubscribed ? 'Remove from My Agents' : 'Add to My Agents'}
             >
@@ -232,7 +436,7 @@ function MarketplaceCard({ agent, categoriesMap = {}, isAuthenticated, onView, o
           {!isOwn && (
             <button
               className={`btn subtle mp-btn-fav${localAgent.isFavorited ? ' active' : ''}`}
-              onClick={handleFavorite}
+              onClick={(e) => { e.stopPropagation(); handleFavorite(); }}
               disabled={busyFavorite}
               title={localAgent.isFavorited ? 'Remove from favorites' : 'Add to favorites'}
             >
@@ -242,7 +446,7 @@ function MarketplaceCard({ agent, categoriesMap = {}, isAuthenticated, onView, o
           {!isOwn && (
             <button
               className="btn subtle"
-              onClick={handleFork}
+              onClick={(e) => { e.stopPropagation(); handleFork(); }}
               disabled={busyFork}
               title="Fork this agent"
             >
@@ -267,6 +471,7 @@ export default function MarketplacePage({
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(false);
   const [total, setTotal] = useState(0);
+  const [detailAgent, setDetailAgent] = useState(null);
 
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -382,6 +587,20 @@ export default function MarketplacePage({
 
   return (
     <div className="agents-page mp-page">
+      {detailAgent && (
+        <MarketplaceDetailModal
+          agent={detailAgent}
+          categoriesMap={categoriesMap}
+          isAuthenticated={isAuthenticated}
+          onClose={() => setDetailAgent(null)}
+          onView={onView}
+          onSubscribe={handleSubscribe}
+          onFavorite={handleFavorite}
+          onFork={handleFork}
+          onRate={handleRate}
+          onOpenAuth={onOpenAuth}
+        />
+      )}
       <div className="agents-page-header">
         <div>
           <h1 className="agents-page-title">Marketplace</h1>
@@ -559,6 +778,7 @@ export default function MarketplacePage({
               onFork={handleFork}
               onRate={handleRate}
               onOpenAuth={onOpenAuth}
+              onViewDetail={() => setDetailAgent(agent)}
             />
           ))}
         </div>
