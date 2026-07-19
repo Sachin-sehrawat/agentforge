@@ -1,0 +1,129 @@
+{
+  "name": "agentforge-vscode",
+  "displayName": "AgentForge",
+  "description": "Browse, manage, and export your AgentForge agents without leaving VS Code.",
+  "version": "0.1.0",
+  "publisher": "agentforge",
+  "private": true,
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [],
+  "main": "./src/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "AgentForge",
+      "properties": {
+        "agentforge.apiUrl": {
+          "type": "string",
+          "default": "http://localhost:4000",
+          "description": "Base URL of the AgentForge backend API."
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "agentforge",
+          "title": "AgentForge",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "agentforge": [
+        {
+          "id": "agentforgeAgents",
+          "name": "My Agents"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "agentforgeAgents",
+        "contents": "Sign in to AgentForge to see your agents.\n[Sign In](command:agentforge.signIn)",
+        "when": "!agentforge.authenticated"
+      }
+    ],
+    "commands": [
+      {
+        "command": "agentforge.signIn",
+        "title": "AgentForge: Sign In",
+        "icon": "$(sign-in)"
+      },
+      {
+        "command": "agentforge.signOut",
+        "title": "AgentForge: Sign Out",
+        "icon": "$(sign-out)"
+      },
+      {
+        "command": "agentforge.refreshAgents",
+        "title": "AgentForge: Refresh Agents",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "agentforge.viewAgent",
+        "title": "AgentForge: View Agent"
+      },
+      {
+        "command": "agentforge.deleteAgent",
+        "title": "AgentForge: Delete Agent",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "agentforge.exportMarkdown",
+        "title": "AgentForge: Export as Markdown",
+        "icon": "$(markdown)"
+      },
+      {
+        "command": "agentforge.exportMcp",
+        "title": "AgentForge: Export as MCP Server",
+        "icon": "$(package)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "agentforge.refreshAgents",
+          "when": "view == agentforgeAgents && agentforge.authenticated",
+          "group": "navigation@1"
+        },
+        {
+          "command": "agentforge.signOut",
+          "when": "view == agentforgeAgents && agentforge.authenticated",
+          "group": "navigation@2"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "agentforge.exportMarkdown",
+          "when": "view == agentforgeAgents && viewItem == agentforgeAgent",
+          "group": "inline@1"
+        },
+        {
+          "command": "agentforge.exportMcp",
+          "when": "view == agentforgeAgents && viewItem == agentforgeAgent",
+          "group": "inline@2"
+        },
+        {
+          "command": "agentforge.exportMarkdown",
+          "when": "view == agentforgeAgents && viewItem == agentforgeAgent",
+          "group": "1_export@1"
+        },
+        {
+          "command": "agentforge.exportMcp",
+          "when": "view == agentforgeAgents && viewItem == agentforgeAgent",
+          "group": "1_export@2"
+        },
+        {
+          "command": "agentforge.deleteAgent",
+          "when": "view == agentforgeAgents && viewItem == agentforgeAgent",
+          "group": "2_manage@1"
+        }
+      ]
+    }
+  }
+}
