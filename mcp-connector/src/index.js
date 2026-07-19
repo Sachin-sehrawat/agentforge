@@ -410,6 +410,7 @@ async function runHttp() {
     if (!AUTH_TOKEN) return next();
     const header = req.headers['authorization'] || '';
     if (header === `Bearer ${AUTH_TOKEN}`) return next();
+    if (req.query.token === AUTH_TOKEN) return next();
     res.status(401).json({ error: 'Unauthorized' });
   });
 
