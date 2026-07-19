@@ -1158,6 +1158,9 @@ export default function App() {
         <MobileLandingPage
           onOpenAuth={(tab) => setAuthModal({ tab, onSuccess: () => handleSetView(authSuccessView) })}
           onBrowseMarketplace={() => handleSetView('marketplace')}
+          onGetStarted={() => handleSetView(MOBILE_DEFAULT_VIEW)}
+          isAuthenticated={isAuthenticated}
+          onFork={ffAgentsFork ? onFork : null}
         />
       ) : view === 'landing' ? (
         <LandingPage
