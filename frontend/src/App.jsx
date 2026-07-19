@@ -16,6 +16,8 @@ import DocsPage from './components/docs/DocsPage.jsx';
 import GitHubSettings from './components/GitHubSettings.jsx';
 import MarketplacePage from './components/MarketplacePage.jsx';
 import LandingPage from './components/LandingPage.jsx';
+import MobileLandingPage from './components/mobile/MobileLandingPage.jsx';
+import PersonasPage from './components/PersonasPage.jsx';
 import AuthModal from './components/AuthModal.jsx';
 import ImportModal from './components/ImportModal.jsx';
 import TemplateGallery from './components/TemplateGallery.jsx';
@@ -26,6 +28,7 @@ import ShortcutsOverlay from './components/ShortcutsOverlay.jsx';
 import QuotaUpgradeModal from './components/QuotaUpgradeModal.jsx';
 import { api } from './api.js';
 import { useAuth } from './AuthContext.jsx';
+import { useIsMobile } from './useIsMobile.jsx';
 import { useFeatureFlag, useUiMode } from './FeatureFlagsContext.jsx';
 import { TOOL_META } from './toolMeta.jsx';
 import { validateAgentDefinition } from './serialization/agentValidation.js';
@@ -116,6 +119,7 @@ const VIEW_TO_PATH = {
   builder:                  '/builder',
   agents:                   '/agents',
   skills:                   '/skills',
+  personas:                 '/personas',
   marketplace:              '/marketplace',
   developer:                '/developer',
   admin:                    '/admin',
@@ -131,10 +135,16 @@ function pathToView(pathname) {
   return PATH_TO_VIEW[pathname] || null;
 }
 
+// On mobile, signed-in users are restricted to this subset of views —
+// the builder canvas and admin/developer/settings tooling aren't mobile-friendly.
+const MOBILE_ALLOWED_VIEWS = ['landing', 'agents', 'marketplace', 'skills', 'personas', 'docs', 'docs/webhook-signatures'];
+const MOBILE_DEFAULT_VIEW = 'agents';
+
 export default function App() {
   const { user, isAuthenticated, authReady, logout } = useAuth();
   const uiMode   = useUiMode();
   const easyMode = uiMode === 'easy';
+  const isMobile = useIsMobile();
 
   // Feature flags — all default true when unknown
   const ffBuilder          = useFeatureFlag('page.builder');
@@ -255,10 +265,15 @@ export default function App() {
         resolvedView = urlView;
       } else if (urlView === 'landing' || (!isAuthenticated && !hasMeaningfulAgent)) {
         resolvedView = 'landing';
-      } else if (prefs.view && ['builder', 'agents', 'skills', 'admin', 'marketplace', 'developer', 'settings'].includes(prefs.view)) {
+      } else if (prefs.view && ['builder', 'agents', 'skills', 'personas', 'admin', 'marketplace', 'developer', 'settings'].includes(prefs.view)) {
         resolvedView = prefs.view;
       } else {
         resolvedView = 'builder';
+      }
+
+      // Mobile signed-in users never land in the builder or admin tooling.
+      if (isMobile && isAuthenticated && !MOBILE_ALLOWED_VIEWS.includes(resolvedView)) {
+        resolvedView = MOBILE_DEFAULT_VIEW;
       }
 
       setView(resolvedView);
@@ -326,7 +341,10 @@ export default function App() {
     });
   }, []);
 
-  const handleSetView = useCallback((nextView) => {
+  const handleSetView = useCallback((requestedView) => {
+    const nextView = (isMobile && isAuthenticated && !MOBILE_ALLOWED_VIEWS.includes(requestedView))
+      ? MOBILE_DEFAULT_VIEW
+      : requestedView;
     setView(nextView);
     setAnalyticsAgent(null);
     const path = VIEW_TO_PATH[nextView] || '/';
@@ -336,18 +354,29 @@ export default function App() {
     if (nextView !== 'landing') {
       api.saveUserPreferences(USER_ID, { view: nextView });
     }
-  }, []);
+  }, [isMobile, isAuthenticated]);
 
   // Sync view when browser back/forward is used.
   useEffect(() => {
     const onPop = (e) => {
-      const v = (e.state && e.state.view) || pathToView(window.location.pathname) || 'landing';
+      let v = (e.state && e.state.view) || pathToView(window.location.pathname) || 'landing';
+      if (isMobile && isAuthenticated && !MOBILE_ALLOWED_VIEWS.includes(v)) {
+        v = MOBILE_DEFAULT_VIEW;
+      }
       setView(v);
       setAnalyticsAgent(null);
     };
     window.addEventListener('popstate', onPop);
     return () => window.removeEventListener('popstate', onPop);
-  }, []);
+  }, [isMobile, isAuthenticated]);
+
+  // Guard against a signed-in mobile user ending up on a desktop-only view —
+  // e.g. logging in while an anonymous draft was open in the builder.
+  useEffect(() => {
+    if (isMobile && isAuthenticated && view && !MOBILE_ALLOWED_VIEWS.includes(view)) {
+      handleSetView(MOBILE_DEFAULT_VIEW);
+    }
+  }, [isMobile, isAuthenticated, view, handleSetView]);
 
   const handleThemeChange = useCallback((newTheme) => {
     setTheme(newTheme);
@@ -1027,9 +1056,12 @@ export default function App() {
     }
   };
 
+  const authSuccessView = isMobile ? MOBILE_DEFAULT_VIEW : 'marketplace';
+  const isMobileLanding = isMobile && view === 'landing';
+
   return (
     <div className="app">
-      <Topbar
+      {!isMobileLanding && <Topbar
         agent={agent}
         onChangeName={(name) => onChangeAgentField('name', name)}
         onNew={onNew}
@@ -1046,13 +1078,14 @@ export default function App() {
         onSetView={handleSetView}
         customSkillsCount={customSkills.length}
         user={user}
-        onOpenAuth={(tab) => setAuthModal({ tab, onSuccess: view === 'landing' ? () => handleSetView('marketplace') : null })}
+        onOpenAuth={(tab) => setAuthModal({ tab, onSuccess: view === 'landing' ? () => handleSetView(authSuccessView) : null })}
         onLogout={logout}
         isAuthenticated={isAuthenticated}
+        isMobile={isMobile}
         theme={theme}
         onThemeChange={handleThemeChange}
         quota={quota}
-      />
+      />}
 
       {importOpen && ffBuilderImport && (
         <ImportModal
@@ -1121,7 +1154,12 @@ export default function App() {
         />
       )}
 
-      {view === null ? null : <div key={view} className="view-transition">{view === 'landing' ? (
+      {view === null ? null : <div key={view} className="view-transition">{view === 'landing' && isMobile ? (
+        <MobileLandingPage
+          onOpenAuth={(tab) => setAuthModal({ tab, onSuccess: () => handleSetView(authSuccessView) })}
+          onBrowseMarketplace={() => handleSetView('marketplace')}
+        />
+      ) : view === 'landing' ? (
         <LandingPage
           onGetStarted={() => handleSetView('builder')}
           onBrowseMarketplace={() => handleSetView('marketplace')}
@@ -1129,6 +1167,8 @@ export default function App() {
           isAuthenticated={isAuthenticated}
           onFork={ffAgentsFork ? onFork : null}
         />
+      ) : view === 'personas' ? (
+        <PersonasPage categories={personaCategories} />
       ) : view === 'agents' && analyticsAgent && ffAgentsAnalytics ? (
         <AgentAnalytics
           agentId={analyticsAgent.id}

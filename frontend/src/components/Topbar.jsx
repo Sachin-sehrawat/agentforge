@@ -53,6 +53,7 @@ export default function Topbar({
   theme = 'system',
   onThemeChange,
   quota,
+  isMobile = false,
 }) {
   const uiMode        = useUiMode();
   const isEasyMode    = uiMode === 'easy';
@@ -153,7 +154,8 @@ export default function Topbar({
       )}
 
       <nav className="topbar-nav">
-        {ffBuilder && (
+        {/* On mobile, signed-in users only get Agents, Marketplace, Skills, Personas, Docs. */}
+        {!isMobile && ffBuilder && (
           <button
             className={`topbar-nav-item${view === 'builder' ? ' active' : ''}`}
             onClick={() => onSetView('builder')}
@@ -188,7 +190,15 @@ export default function Topbar({
             )}
           </button>
         )}
-        {isAuthenticated && ffDeveloper && (
+        {isMobile && (
+          <button
+            className={`topbar-nav-item${view === 'personas' ? ' active' : ''}`}
+            onClick={() => onSetView('personas')}
+          >
+            Personas
+          </button>
+        )}
+        {!isMobile && isAuthenticated && ffDeveloper && (
           <button
             className={`topbar-nav-item${view === 'developer' ? ' active' : ''}`}
             onClick={() => onSetView('developer')}
@@ -196,7 +206,7 @@ export default function Topbar({
             Developer
           </button>
         )}
-        {isAuthenticated && ffSettings && (
+        {!isMobile && isAuthenticated && ffSettings && (
           <button
             className={`topbar-nav-item${view === 'settings' ? ' active' : ''}`}
             onClick={() => onSetView('settings')}
@@ -204,7 +214,7 @@ export default function Topbar({
             Settings
           </button>
         )}
-        {isAuthenticated && user?.isAdmin && (
+        {!isMobile && isAuthenticated && user?.isAdmin && (
           <button
             className={`topbar-nav-item${view === 'admin' ? ' active' : ''}`}
             onClick={() => onSetView('admin')}
