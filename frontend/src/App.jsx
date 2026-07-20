@@ -1074,6 +1074,7 @@ export default function App() {
         onOpenImport={() => setImportOpen(true)}
         onOpenTemplates={() => setTemplateGalleryOpen(true)}
         onOpenHistory={() => setHistoryOpen(true)}
+        onForkCurrent={() => onFork(agent.id)}
         view={view}
         onSetView={handleSetView}
         customSkillsCount={customSkills.length}

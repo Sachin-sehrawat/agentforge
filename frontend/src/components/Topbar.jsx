@@ -43,6 +43,7 @@ export default function Topbar({
   onOpenImport,
   onOpenTemplates,
   onOpenHistory,
+  onForkCurrent,
   view,
   onSetView,
   customSkillsCount,
@@ -69,6 +70,19 @@ export default function Topbar({
   const ffHistory     = useFeatureFlag('builder.versionHistory');
   const ffExport      = useFeatureFlag('builder.export');
   const ffAuthReg     = useFeatureFlag('auth.register');
+  const ffAgentsFork  = useFeatureFlag('agents.fork');
+
+  const [forking, setForking] = useState(false);
+  const isReadOnly = agent.id && agent.isOwned === false;
+
+  async function handleForkCurrent() {
+    setForking(true);
+    try {
+      await onForkCurrent();
+    } finally {
+      setForking(false);
+    }
+  }
 
   const isFree = user?.tier === 'free';
   const exportUsage = isFree && quota?.usage?.export;
@@ -297,7 +311,7 @@ export default function Topbar({
 
       {view === 'builder' && (
         <div className="topbar-actions">
-          {isAuthenticated && agent.id && ffHistory && (
+          {isAuthenticated && agent.id && agent.isOwned !== false && ffHistory && (
             <button className="btn subtle" onClick={onOpenHistory} title="Browse version history">
               History
             </button>
@@ -352,14 +366,29 @@ export default function Topbar({
             </button>
           )}
           <button className="btn" onClick={onNew}>New</button>
-          <button className="btn primary" onClick={onSave} disabled={saving}>
-            {saving ? 'Saving…' : 'Save agent'}
-            {!saving && saveRemaining !== null && (
-              <span className={`quota-badge${saveRemaining <= 5 ? ' quota-badge-warn' : ''}`}>
-                {saveRemaining} left
-              </span>
-            )}
-          </button>
+          {isReadOnly && isAuthenticated && ffAgentsFork ? (
+            <button
+              className="btn primary"
+              onClick={handleForkCurrent}
+              disabled={forking}
+              title="You don't own this agent — fork it to make changes"
+            >
+              {forking ? 'Forking…' : 'Fork to Edit'}
+            </button>
+          ) : isReadOnly ? (
+            <button className="btn" disabled title="You don't own this agent">
+              Read-only
+            </button>
+          ) : (
+            <button className="btn primary" onClick={onSave} disabled={saving}>
+              {saving ? 'Saving…' : 'Save agent'}
+              {!saving && saveRemaining !== null && (
+                <span className={`quota-badge${saveRemaining <= 5 ? ' quota-badge-warn' : ''}`}>
+                  {saveRemaining} left
+                </span>
+              )}
+            </button>
+          )}
         </div>
       )}
 
