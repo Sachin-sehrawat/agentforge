@@ -1,0 +1,28 @@
+name: Auto PR for bot branches
+
+on:
+  push:
+    branches:
+      - 'bot/generated-agents-*'
+
+jobs:
+  open-pr:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Create pull request
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const branch = context.ref.replace('refs/heads/', '');
+            const timestamp = branch.replace('bot/generated-agents-', '');
+            await github.rest.pulls.create({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              title: `feat: add 20 auto-generated seed agents [${timestamp}]`,
+              head:  branch,
+              base:  'main',
+              body:  `Automated PR from AgentForge seed bot.\n\nAdds 20 new diverse public agents to the seed file.\n\nReview and merge to include these agents in the next fresh deployment.`,
+            });
