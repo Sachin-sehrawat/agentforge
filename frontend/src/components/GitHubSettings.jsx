@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import GitHubConnectPanel from './GitHubConnectPanel.jsx';
+import McpConnectPanel from './McpConnectPanel.jsx';
 
 export default function GitHubSettings({ isAuthenticated, onOpenAuth }) {
   const [activeTab, setActiveTab] = useState(() => {
@@ -40,6 +41,14 @@ export default function GitHubSettings({ isAuthenticated, onOpenAuth }) {
         >
           Integrations
         </button>
+        <button
+          role="tab"
+          aria-selected={activeTab === 'mcp'}
+          className={`settings-tab${activeTab === 'mcp' ? ' active' : ''}`}
+          onClick={() => setActiveTab('mcp')}
+        >
+          Claude (MCP)
+        </button>
       </div>
 
       {activeTab === 'integrations' && (
@@ -79,6 +88,43 @@ export default function GitHubSettings({ isAuthenticated, onOpenAuth }) {
               </div>
             </div>
             <GitHubConnectPanel />
+          </section>
+        </div>
+      )}
+
+      {activeTab === 'mcp' && (
+        <div className="settings-content">
+          <section className="settings-section">
+            <div className="settings-section-intro">
+              <div className="settings-section-icon">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M12 8V4H8" />
+                  <rect x="4" y="8" width="16" height="12" rx="2" />
+                  <path d="M2 14h2M20 14h2M9 12v2M15 12v2" />
+                </svg>
+              </div>
+              <div>
+                <h2 className="settings-section-title">Claude (MCP)</h2>
+                <p className="settings-section-desc">
+                  AgentForge speaks the Model Context Protocol, so Claude can list, create, edit,
+                  fork, and version your agents, skills, personas, and templates directly from a
+                  conversation — no copy-pasting JSON back and forth. Set it up once, locally or
+                  behind your own HTTPS endpoint.
+                </p>
+                <div className="settings-scope-callout">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <circle cx="12" cy="12" r="10" />
+                    <line x1="12" y1="8" x2="12" y2="12" />
+                    <line x1="12" y1="16" x2="12.01" y2="16" />
+                  </svg>
+                  <span>
+                    The connector authenticates as your AgentForge account, so it can only see and
+                    change agents you already have access to.
+                  </span>
+                </div>
+              </div>
+            </div>
+            <McpConnectPanel />
           </section>
         </div>
       )}

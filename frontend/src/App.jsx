@@ -1162,6 +1162,7 @@ export default function App() {
           onGetStarted={() => handleSetView(MOBILE_DEFAULT_VIEW)}
           isAuthenticated={isAuthenticated}
           onFork={ffAgentsFork ? onFork : null}
+          onOpenSettings={ffSettings ? () => handleSetView('settings') : null}
         />
       ) : view === 'landing' ? (
         <LandingPage
@@ -1170,6 +1171,7 @@ export default function App() {
           onOpenAuth={(tab) => setAuthModal({ tab, onSuccess: () => handleSetView('marketplace') })}
           isAuthenticated={isAuthenticated}
           onFork={ffAgentsFork ? onFork : null}
+          onOpenSettings={ffSettings ? () => handleSetView('settings') : null}
         />
       ) : view === 'personas' ? (
         <PersonasPage categories={personaCategories} />

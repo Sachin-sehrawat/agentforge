@@ -2,6 +2,7 @@ import React from 'react';
 import { AGENT_ICON } from '../../toolMeta.jsx';
 import MobileHero3D from './MobileHero3D.jsx';
 import FeatureGrid from '../landing/FeatureGrid.jsx';
+import IntegrationsSection from '../landing/IntegrationsSection.jsx';
 import HowItWorks from '../landing/HowItWorks.jsx';
 import StatsBar from '../landing/StatsBar.jsx';
 import Testimonials from '../landing/Testimonials.jsx';
@@ -13,7 +14,7 @@ import MarketplaceStrip from '../landing/MarketplaceStrip.jsx';
 // styling) around a bespoke compact header and an animated 3D hero, so
 // mobile visitors get the same depth of context as desktop without the
 // builder-only calls to action.
-export default function MobileLandingPage({ onOpenAuth, onBrowseMarketplace, onGetStarted, isAuthenticated, onFork }) {
+export default function MobileLandingPage({ onOpenAuth, onBrowseMarketplace, onGetStarted, isAuthenticated, onFork, onOpenSettings }) {
   return (
     <main className="mobile-landing">
       <header className="mobile-landing-header">
@@ -65,6 +66,10 @@ export default function MobileLandingPage({ onOpenAuth, onBrowseMarketplace, onG
 
       <section className="landing-section landing-section--bg mobile-landing-section">
         <HowItWorks />
+      </section>
+
+      <section className="landing-section landing-section--panel mobile-landing-section">
+        <IntegrationsSection onOpenIntegrations={onOpenSettings} />
       </section>
 
       <MarketplaceBand onBrowseMarketplace={onBrowseMarketplace} />
