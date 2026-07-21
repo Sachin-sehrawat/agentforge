@@ -585,7 +585,7 @@ app.get('/api/agents/:id', optionalAuth, async (req, res) => {
     if (agent.visibility !== 'public' && agent.owner_id !== req.user?.userId) {
       return res.status(403).json({ error: 'Forbidden' });
     }
-    res.json(serializeAgent(agent));
+    res.json({ ...serializeAgent(agent), isOwned: agent.owner_id === req.user?.userId });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

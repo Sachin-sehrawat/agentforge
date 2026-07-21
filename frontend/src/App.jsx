@@ -1074,6 +1074,7 @@ export default function App() {
         onOpenImport={() => setImportOpen(true)}
         onOpenTemplates={() => setTemplateGalleryOpen(true)}
         onOpenHistory={() => setHistoryOpen(true)}
+        onForkCurrent={() => onFork(agent.id)}
         view={view}
         onSetView={handleSetView}
         customSkillsCount={customSkills.length}
@@ -1161,6 +1162,7 @@ export default function App() {
           onGetStarted={() => handleSetView(MOBILE_DEFAULT_VIEW)}
           isAuthenticated={isAuthenticated}
           onFork={ffAgentsFork ? onFork : null}
+          onOpenSettings={ffSettings ? () => handleSetView('settings') : null}
         />
       ) : view === 'landing' ? (
         <LandingPage
@@ -1169,6 +1171,7 @@ export default function App() {
           onOpenAuth={(tab) => setAuthModal({ tab, onSuccess: () => handleSetView('marketplace') })}
           isAuthenticated={isAuthenticated}
           onFork={ffAgentsFork ? onFork : null}
+          onOpenSettings={ffSettings ? () => handleSetView('settings') : null}
         />
       ) : view === 'personas' ? (
         <PersonasPage categories={personaCategories} />

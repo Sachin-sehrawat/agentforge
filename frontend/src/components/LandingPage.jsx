@@ -1,6 +1,7 @@
 import React from 'react';
 import Hero from './landing/Hero.jsx';
 import FeatureGrid from './landing/FeatureGrid.jsx';
+import IntegrationsSection from './landing/IntegrationsSection.jsx';
 import TemplateGallerySection from './landing/TemplateGallerySection.jsx';
 import MarketplaceBand from './landing/MarketplaceBand.jsx';
 import MarketplaceStrip from './landing/MarketplaceStrip.jsx';
@@ -10,7 +11,7 @@ import Testimonials from './landing/Testimonials.jsx';
 import FinalCta from './landing/FinalCta.jsx';
 import LandingFooter from './landing/LandingFooter.jsx';
 
-export default function LandingPage({ onGetStarted, onOpenAuth, onBrowseMarketplace, isAuthenticated, onFork }) {
+export default function LandingPage({ onGetStarted, onOpenAuth, onBrowseMarketplace, isAuthenticated, onFork, onOpenSettings }) {
   return (
     <main className="landing-page">
       <Hero
@@ -21,6 +22,11 @@ export default function LandingPage({ onGetStarted, onOpenAuth, onBrowseMarketpl
       {/* Features */}
       <section className="landing-section landing-section--panel">
         <FeatureGrid />
+      </section>
+
+      {/* Integrations */}
+      <section className="landing-section landing-section--bg">
+        <IntegrationsSection onOpenIntegrations={onOpenSettings} />
       </section>
 
       {/* Template gallery */}
