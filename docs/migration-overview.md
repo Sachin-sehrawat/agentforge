@@ -398,6 +398,76 @@ WHERE tablename = 'agents' AND indexname = 'idx_agents_category';
 
 ---
 
+## Adding GitHub Sync Status Columns to an Existing Deployment
+
+`backend/db/init/21_agent_github_sync_status.sql` runs automatically on a **fresh** volume. For existing deployments apply the DDL manually:
+
+```sql
+-- Run against your PostgreSQL instance (psql, DBeaver, etc.)
+ALTER TABLE agent_github_sync ADD COLUMN IF NOT EXISTS last_synced_commit_sha TEXT;
+ALTER TABLE agent_github_sync ADD COLUMN IF NOT EXISTS last_synced_version_no INT;
+ALTER TABLE agent_github_sync ADD COLUMN IF NOT EXISTS last_sync_status TEXT
+  NOT NULL DEFAULT 'pending'
+  CHECK (last_sync_status IN ('pending', 'ok', 'error'));
+ALTER TABLE agent_github_sync ADD COLUMN IF NOT EXISTS last_sync_error TEXT;
+ALTER TABLE agent_github_sync ADD COLUMN IF NOT EXISTS last_synced_at TIMESTAMPTZ;
+```
+
+**Notes:**
+
+- These columns back the actual GitHub push logic (`backend/src/githubSync.js`, `POST /api/agents/:id/github-sync`) added on top of the pre-existing `agent_github_sync` config table (`20_agent_github_sync.sql`), which previously only stored *where* to sync — no sync had ever run.
+- `last_sync_status` defaults to `'pending'` — existing sync configs that predate this migration read as not-yet-synced, which is accurate (no sync logic existed before).
+- The git-tracked file is always the canonical JSON envelope (`toCanonical()`), regardless of the `format` column's `markdown`/`json`/`both` setting, so incoming changes can always be parsed back losslessly via `parseJson()`.
+
+**Verify after applying:**
+
+```sql
+SELECT column_name FROM information_schema.columns
+WHERE table_name = 'agent_github_sync'
+  AND column_name IN ('last_synced_commit_sha','last_synced_version_no','last_sync_status','last_sync_error','last_synced_at');
+```
+
+---
+
+## Adding Bidirectional GitHub Sync Support to an Existing Deployment
+
+`backend/db/init/22_github_repo_webhooks.sql` and `23_agent_github_sync_conflict_status.sql` run automatically on a **fresh** volume. For existing deployments apply the DDL manually:
+
+```sql
+-- Run against your PostgreSQL instance (psql, DBeaver, etc.)
+CREATE TABLE IF NOT EXISTS github_repo_webhooks (
+  repo_full_name   TEXT        PRIMARY KEY,
+  secret_encrypted BYTEA       NOT NULL,
+  hook_id          BIGINT      NOT NULL,
+  created_by       UUID        REFERENCES users(id) ON DELETE SET NULL,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE agent_github_sync DROP CONSTRAINT IF EXISTS agent_github_sync_last_sync_status_check;
+ALTER TABLE agent_github_sync ADD CONSTRAINT agent_github_sync_last_sync_status_check
+  CHECK (last_sync_status IN ('pending', 'ok', 'error', 'conflict'));
+```
+
+**Notes:**
+
+- `github_repo_webhooks` is keyed per-repo, not per-agent — multiple agents pointed at the same repo share one webhook registration, avoiding duplicate GitHub hooks.
+- Webhook auto-registration only activates when the `APP_BASE_URL` env var is set (see [GitHub Integration](github-integration.md#bidirectional-sync-github--agentforge)); without it, existing one-way (Phase 1) sync continues to work unaffected.
+- The `DROP CONSTRAINT IF EXISTS` + re-`ADD CONSTRAINT` pattern is required because PostgreSQL has no `ALTER CHECK CONSTRAINT` — this is the standard way to widen an existing enum-style check.
+
+**Verify after applying:**
+
+```sql
+-- Confirm the new table exists
+SELECT table_name FROM information_schema.tables
+WHERE table_schema = 'public' AND table_name = 'github_repo_webhooks';
+
+-- Confirm 'conflict' is now an allowed value
+SELECT conname, pg_get_constraintdef(oid) FROM pg_constraint
+WHERE conname = 'agent_github_sync_last_sync_status_check';
+```
+
+---
+
 ## Related Documents
 
 - [Database Schema](database-schema.md) — PostgreSQL tables and MongoDB collections

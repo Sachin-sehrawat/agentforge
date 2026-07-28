@@ -40,6 +40,22 @@ describe('parseJson()', () => {
     expect(result.agent.positions).toEqual({ 'web_search': { x: 100, y: 200 } });
   });
 
+  it('round-trips tags', () => {
+    const result = parseJson(JSON.stringify({ name: 'X', tags: ['research', 'coding'] }));
+    expect(result.agent.tags).toEqual(['research', 'coding']);
+  });
+
+  it('warns and leaves tags empty when tags is not an array', () => {
+    const result = parseJson(JSON.stringify({ name: 'X', tags: 'not-an-array' }));
+    expect(result.agent.tags).toEqual([]);
+    expect(result.warnings).toContain('Field "tags" is not an array; skipped');
+  });
+
+  it('defaults tags to an empty array when absent', () => {
+    const result = parseJson(JSON.stringify({ name: 'X' }));
+    expect(result.agent.tags).toEqual([]);
+  });
+
   it('sets schemaVersion from agentSchema, not from input', () => {
     const result = parseJson(JSON.stringify({ schemaVersion: 99, name: 'X' }));
     expect(result.agent.schemaVersion).toBe(AGENT_SCHEMA_VERSION);

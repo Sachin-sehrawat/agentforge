@@ -5,6 +5,8 @@ import { connect as mongoConnect } from './mongo.js';
 import { setup as mongoSetup } from './mongo-init.js';
 import { startWorker } from './worker.js';
 import { registerWebhookDeliveryHandler } from './webhookDelivery.js';
+import { registerGitHubSyncHandler } from './githubSync.js';
+import { registerGitHubReconcileHandler } from './githubReconcile.js';
 
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, async () => {
@@ -25,5 +27,7 @@ app.listen(PORT, async () => {
     console.error('[mongo] Preferences, workspace, and draft endpoints will return 503 until MongoDB is available.');
   }
   registerWebhookDeliveryHandler();
+  registerGitHubSyncHandler();
+  registerGitHubReconcileHandler();
   startWorker();
 });
