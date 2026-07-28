@@ -138,6 +138,106 @@ Calls [GitHub's token revocation endpoint](https://docs.github.com/en/rest/apps/
 
 ---
 
+## Per-Agent Sync
+
+Once an account is connected, individual agents can be configured to sync their canonical JSON spec to a file in a GitHub repo.
+
+### Configure sync for an agent
+
+```
+GET/PUT/DELETE /api/agents/:id/github-sync-config
+Authorization: Bearer <jwt>   (owner only)
+```
+
+`PUT` body:
+
+```json
+{
+  "repo_full_name": "acme/agents-repo",
+  "branch": "main",
+  "path_template": "agents/{slug}.json",
+  "auto_sync": true,
+  "format": "json"
+}
+```
+
+`path_template` supports a `{slug}` placeholder, rendered from the agent's name (lowercased, non-alphanumeric runs collapsed to `-`; falls back to the agent's id if the name has no alphanumeric characters).
+
+### Trigger a sync
+
+```
+POST /api/agents/:id/github-sync
+Authorization: Bearer <jwt>   (owner only)
+```
+
+Synchronously pushes the agent's current canonical JSON (via `toCanonical()`) to the configured repo/branch/path using the GitHub Contents API, creating the file if it doesn't exist or updating it (using its current blob `sha`) if it does. Returns the shaped status on success or a `502` with an error message on failure. If `auto_sync` is enabled on the config, the same push also happens automatically as a background job every time the agent is saved (`PUT /api/agents/:id`) — this path never blocks or fails the save itself.
+
+### Check sync status
+
+```
+GET /api/agents/:id/github-sync-status
+Authorization: Bearer <jwt>   (owner only)
+```
+
+Response (or `null` if no sync config exists yet):
+
+```json
+{
+  "state": "ok",
+  "repo": "acme/agents-repo",
+  "path": "agents/my-agent.json",
+  "fileUrl": "https://github.com/acme/agents-repo/blob/main/agents/my-agent.json",
+  "syncedAt": "2026-07-11T10:00:00Z",
+  "errorMessage": null
+}
+```
+
+`state` is one of `pending` (never synced yet), `ok`, `error`, or `conflict` (see Bidirectional Sync below).
+
+**Why JSON, not the repo's Markdown export:** the git-tracked source-of-truth file is always the canonical JSON envelope, regardless of the `format` column's `markdown`/`json`/`both` setting (that setting only controls whether a human-readable `.md` companion is also written). AgentForge's Markdown parser (`parseMarkdown()`) cannot recover `skills`/`instructions` IDs from a Markdown file, so round-tripping through Markdown would silently lose data — JSON round-trips losslessly via `parseJson()`.
+
+Implementation: [backend/src/githubSync.js](../backend/src/githubSync.js), [backend/src/integrations/github.js](../backend/src/integrations/github.js) (`getFileContents`/`putFileContents`).
+
+Schema: [backend/db/init/20_agent_github_sync.sql](../backend/db/init/20_agent_github_sync.sql) (base config table), [backend/db/init/21_agent_github_sync_status.sql](../backend/db/init/21_agent_github_sync_status.sql) (sync status columns — see [Migration Overview](migration-overview.md) for applying to an existing deployment).
+
+---
+
+## Bidirectional Sync (GitHub → AgentForge)
+
+When a human edits the tracked JSON file directly on GitHub (or merges a PR that changes it), AgentForge reconciles that change back into the agent automatically — no PR is opened by AgentForge itself; it only reacts to `push` events on the tracked branch (which is what fires once a PR merges).
+
+### How the webhook gets created
+
+The first time a sync config is saved for a repo (`PUT /api/agents/:id/github-sync-config`), AgentForge automatically registers a push-event webhook on that repo via the GitHub API, pointed at:
+
+```
+POST {APP_BASE_URL}/api/integrations/github/webhook
+```
+
+This requires the **`APP_BASE_URL`** environment variable to be set to a publicly reachable URL (e.g. a deployed domain, or an `ngrok`/`smee.io` tunnel in local dev — GitHub's servers cannot reach `localhost` directly). If `APP_BASE_URL` is unset, webhook registration is skipped entirely and sync stays one-way (push only); the config save still succeeds. Registration is idempotent — saving sync config for a second agent pointed at the same repo reuses the existing webhook rather than creating a duplicate. A per-repo secret is generated on first registration, encrypted, and stored in `github_repo_webhooks`; it's used to verify the `X-Hub-Signature-256` HMAC on every inbound delivery.
+
+### What happens on an incoming push
+
+1. GitHub POSTs the push payload to the webhook route. The signature is verified before anything else runs; an invalid or missing signature gets a `401` and nothing is processed.
+2. For each file changed in the push, AgentForge checks whether it matches a configured agent's rendered path (`path_template` with `{slug}` resolved). Only matching files enqueue work — the webhook handler itself just acks fast (`200`) and does no GitHub API calls or DB writes beyond the match check.
+3. A background `github_reconcile` job does the actual work: fetches the file at the pushed commit, parses it, and compares it against the agent's current state.
+
+### Loop prevention
+
+Every push AgentForge itself makes (Phase 1's `github_sync` job) records the resulting commit sha on `agent_github_sync.last_synced_commit_sha`. If an incoming webhook's commit sha matches that value, it's recognized as AgentForge's own echo and skipped — this is what stops a sync loop.
+
+### Conflict handling
+
+If the agent was also edited in AgentForge since the last clean sync (tracked via `last_synced_version_no`) **and** the incoming GitHub content differs, this is a conflict: AgentForge does **not** overwrite either side. Instead it inserts the incoming content as a new `agent_versions` row (`change_summary: 'GitHub conflict — review required'`) and sets `last_sync_status: 'conflict'`. Resolution is manual, via the existing version-history diff UI (`VersionHistoryPanel.jsx`) — there is no automatic merge.
+
+If there's no local divergence, the incoming change applies cleanly: the `agents` row is updated and a new version is recorded with `change_summary: 'Synced from GitHub commit <sha> by <pusher>'`, attributed to the AgentForge user whose connected GitHub login matches the pusher, if any.
+
+Implementation: [backend/src/githubReconcile.js](../backend/src/githubReconcile.js) (reconciliation job), [backend/src/integrations/github.js](../backend/src/integrations/github.js) (`ensureRepoWebhook`, `verifyWebhookSignature`).
+
+Schema: [backend/db/init/22_github_repo_webhooks.sql](../backend/db/init/22_github_repo_webhooks.sql) (per-repo webhook registration), [backend/db/init/23_agent_github_sync_conflict_status.sql](../backend/db/init/23_agent_github_sync_conflict_status.sql) (adds `conflict` to the sync-status check constraint).
+
+---
+
 ## Database Table
 
 ```sql

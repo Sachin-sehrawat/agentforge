@@ -24,6 +24,7 @@ import { enforceQuota, nextMidnightUTC } from './middleware/quota.js';
 import { QUOTA } from './quotaConfig.js';
 import { writeAudit } from './audit.js';
 import { enqueueJob } from './jobs.js';
+import { handleGithubSync, renderPath } from './githubSync.js';
 import {
   encryptToken,
   decryptToken,
@@ -32,6 +33,8 @@ import {
   revokeGitHubToken,
   fetchGitHubRepos,
   fetchGitHubBranches,
+  ensureRepoWebhook,
+  verifyWebhookSignature,
 } from './integrations/github.js';
 import { getFlags, setFlags, DEFAULT_FLAGS, EASY_MODE_OVERRIDES } from './featureFlags.js';
 
@@ -41,7 +44,13 @@ const app = express();
 app.use(cors());
 // Compress responses > 1kb — reduces payload size by ~70% for JSON arrays
 app.use(compression({ threshold: 1024 }));
-app.use(express.json({ limit: '1mb' }));
+// `verify` stashes the raw body bytes on req.rawBody for routes that need to
+// authenticate an HMAC signature over the exact bytes received (e.g. the
+// GitHub webhook receiver) — re-serializing req.body would not reproduce them.
+app.use(express.json({
+  limit: '1mb',
+  verify: (req, res, buf) => { req.rawBody = buf; },
+}));
 
 // --- Request/response logging and metrics -----------------------------------
 
@@ -769,6 +778,19 @@ app.put('/api/agents/:id', requireAuth, enforceQuota('save'), async (req, res) =
       after: serializeAgent(updatedRow),
       ip: req.headers['x-forwarded-for'] || req.ip,
     });
+    // Fire-and-forget: push to GitHub in the background if auto-sync is on.
+    // Never let a GitHub outage affect the save response.
+    db.query('SELECT auto_sync FROM agent_github_sync WHERE agent_id = $1', [updatedRow.id])
+      .then(({ rows }) => {
+        if (rows[0]?.auto_sync) {
+          enqueueJob('github_sync', { agentId: updatedRow.id }).catch((err) => {
+            console.error(`[githubSync] Failed to enqueue sync for agent ${updatedRow.id}:`, err.message);
+          });
+        }
+      })
+      .catch((err) => {
+        console.error(`[githubSync] Failed to check auto-sync config for agent ${updatedRow.id}:`, err.message);
+      });
     res.json({ ...serializeAgent(updatedRow), warnings });
   } catch (err) {
     if (err.statusCode === 404) return res.status(404).json({ error: err.message });
@@ -1691,7 +1713,7 @@ app.delete('/api/skills/:id', requireAuth, async (req, res) => {
 });
 
 // --- Agent Templates (MongoDB) --------------------------------------------
-// Read-only public endpoint; templates are admin-managed via the DB directly.
+// Reads are public; writes are restricted to admins via requireSuperuser.
 
 app.get('/api/templates', async (req, res) => {
   try {
@@ -1718,7 +1740,7 @@ app.get('/api/templates/:id', async (req, res) => {
   }
 });
 
-app.post('/api/templates', requireAuth, async (req, res) => {
+app.post('/api/templates', requireAuth, requireSuperuser, async (req, res) => {
   const validation = validateTemplateInput(req.body);
   if (validation.error) return res.status(400).json({ error: validation.error });
 
@@ -1733,7 +1755,7 @@ app.post('/api/templates', requireAuth, async (req, res) => {
   }
 });
 
-app.put('/api/templates/:id', requireAuth, async (req, res) => {
+app.put('/api/templates/:id', requireAuth, requireSuperuser, async (req, res) => {
   const validation = validateTemplateInput(req.body);
   if (validation.error) return res.status(400).json({ error: validation.error });
 
@@ -1752,7 +1774,7 @@ app.put('/api/templates/:id', requireAuth, async (req, res) => {
   }
 });
 
-app.delete('/api/templates/:id', requireAuth, async (req, res) => {
+app.delete('/api/templates/:id', requireAuth, requireSuperuser, async (req, res) => {
   try {
     const { deletedCount } = await getDb()
       .collection('agent_templates')
@@ -2879,6 +2901,65 @@ app.get('/api/integrations/github/repos/:owner/:repo/branches', requireAuth, asy
   }
 });
 
+// Inbound webhook receiver — GitHub calls this unauthenticated; the
+// X-Hub-Signature-256 HMAC (verified against the per-repo secret) is the
+// only authentication. Reacts to `push` events on a tracked branch: for each
+// changed file that matches a configured agent's rendered path, enqueues a
+// github_reconcile job (the actual GitHub fetch + DB reconciliation happens
+// in the background worker, not in this handler — GitHub expects a fast ack).
+app.post('/api/integrations/github/webhook', async (req, res) => {
+  if (req.headers['x-github-event'] !== 'push') {
+    return res.status(200).json({ ok: true });
+  }
+
+  const payload = req.body;
+  const repoFullName = payload?.repository?.full_name;
+  if (!repoFullName) return res.status(400).json({ error: 'Missing repository.full_name in payload' });
+
+  try {
+    const { rows: hookRows } = await db.query(
+      'SELECT secret_encrypted FROM github_repo_webhooks WHERE repo_full_name = $1',
+      [repoFullName]
+    );
+    if (!hookRows[0]) return res.status(404).json({ error: 'No webhook registered for this repo' });
+
+    const secret = decryptToken(hookRows[0].secret_encrypted);
+    if (!verifyWebhookSignature(req.rawBody, req.headers['x-hub-signature-256'], secret)) {
+      return res.status(401).json({ error: 'Invalid signature' });
+    }
+
+    const branch = (payload.ref || '').replace('refs/heads/', '');
+    const commitSha = payload.after;
+    const pusherLogin = payload.pusher?.name || payload.sender?.login || null;
+
+    const changedPaths = new Set();
+    for (const commit of payload.commits || []) {
+      for (const p of [...(commit.added || []), ...(commit.modified || [])]) changedPaths.add(p);
+    }
+
+    const { rows: syncRows } = await db.query(
+      `SELECT ags.agent_id, ags.path_template, a.name
+       FROM agent_github_sync ags
+       JOIN agents a ON a.id = ags.agent_id
+       WHERE ags.repo_full_name = $1 AND ags.branch = $2`,
+      [repoFullName, branch]
+    );
+
+    for (const sync of syncRows) {
+      const renderedPath = renderPath(sync.path_template, { id: sync.agent_id, name: sync.name });
+      if (!changedPaths.has(renderedPath)) continue;
+      enqueueJob('github_reconcile', { agentId: sync.agent_id, commitSha, pusherLogin }).catch((err) => {
+        console.error(`[github webhook] Failed to enqueue reconcile for agent ${sync.agent_id}:`, err.message);
+      });
+    }
+
+    res.status(200).json({ ok: true });
+  } catch (err) {
+    console.error('[github webhook] Failed to process push event:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // --- Agent GitHub sync config ------------------------------------------------
 
 // GET — return the current sync config for an agent (owner only).
@@ -2929,11 +3010,53 @@ app.put('/api/agents/:id/github-sync-config', requireAuth, async (req, res) => {
        RETURNING *`,
       [req.params.id, repo_full_name, branch, path_template, auto_sync, format]
     );
-    res.json(rows[0]);
+
+    let webhookWarning = null;
+    if (process.env.APP_BASE_URL) {
+      try {
+        await ensureWebhookForRepo(repo_full_name, req.user.userId);
+      } catch (err) {
+        webhookWarning = `Sync config saved, but registering the GitHub webhook failed: ${err.message}. Changes made directly on GitHub won't sync back automatically.`;
+        console.error(`[github] Failed to ensure webhook for ${repo_full_name}:`, err.message);
+      }
+    }
+    res.json({ ...rows[0], ...(webhookWarning ? { webhookWarning } : {}) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
+
+// Idempotently ensures a push webhook exists on repoFullName, pointed at this
+// server's inbound GitHub webhook receiver. Requires APP_BASE_URL to be set
+// (skipped entirely otherwise, e.g. in local dev without a public URL).
+async function ensureWebhookForRepo(repoFullName, userId) {
+  const { rows: existingHook } = await db.query(
+    'SELECT hook_id FROM github_repo_webhooks WHERE repo_full_name = $1',
+    [repoFullName]
+  );
+  if (existingHook[0]) return; // already registered
+
+  const { rows: connRows } = await db.query(
+    'SELECT access_token_encrypted FROM github_connections WHERE user_id = $1',
+    [userId]
+  );
+  if (!connRows[0]) throw new Error('GitHub is not connected');
+  const accessToken = decryptToken(connRows[0].access_token_encrypted);
+
+  const [owner, repo] = repoFullName.split('/');
+  const secret = crypto.randomBytes(32).toString('hex');
+  const callbackUrl = `${process.env.APP_BASE_URL}/api/integrations/github/webhook`;
+  const hookId = await ensureRepoWebhook(accessToken, owner, repo, secret, callbackUrl);
+
+  await db.query(
+    `INSERT INTO github_repo_webhooks (repo_full_name, secret_encrypted, hook_id, created_by)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (repo_full_name) DO UPDATE SET
+       secret_encrypted = EXCLUDED.secret_encrypted,
+       hook_id          = EXCLUDED.hook_id`,
+    [repoFullName, encryptToken(secret), hookId, userId]
+  );
+}
 
 // DELETE — remove the sync config for an agent (owner only).
 app.delete('/api/agents/:id/github-sync-config', requireAuth, async (req, res) => {
@@ -2949,6 +3072,71 @@ app.delete('/api/agents/:id/github-sync-config', requireAuth, async (req, res) =
     res.status(204).end();
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// Shapes an agent_github_sync row into the { state, repo, path, fileUrl, syncedAt,
+// errorMessage } contract the frontend's sync status UI expects.
+function serializeGithubSyncStatus(syncRow, agent) {
+  if (!syncRow) return null;
+  const path = renderPath(syncRow.path_template, agent);
+  return {
+    state: syncRow.last_sync_status,
+    repo: syncRow.repo_full_name,
+    path,
+    fileUrl: `https://github.com/${syncRow.repo_full_name}/blob/${syncRow.branch}/${path}`,
+    syncedAt: syncRow.last_synced_at,
+    errorMessage: syncRow.last_sync_error,
+  };
+}
+
+// GET — current sync status for an agent (owner only). Returns null if no config exists.
+app.get('/api/agents/:id/github-sync-status', requireAuth, async (req, res) => {
+  try {
+    const { rows: agentRows } = await db.query(
+      'SELECT id, name, owner_id FROM agents WHERE id = $1',
+      [req.params.id]
+    );
+    if (!agentRows[0]) return res.status(404).json({ error: 'Agent not found' });
+    if (agentRows[0].owner_id !== req.user.userId) return res.status(403).json({ error: 'Forbidden' });
+
+    const { rows: syncRows } = await db.query(
+      `SELECT repo_full_name, branch, path_template, last_sync_status, last_sync_error, last_synced_at
+       FROM agent_github_sync WHERE agent_id = $1`,
+      [req.params.id]
+    );
+    res.json(serializeGithubSyncStatus(syncRows[0], agentRows[0]));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST — push the agent's current canonical JSON to GitHub immediately (owner only).
+app.post('/api/agents/:id/github-sync', requireAuth, async (req, res) => {
+  try {
+    const { rows: agentRows } = await db.query(
+      'SELECT id, name, owner_id FROM agents WHERE id = $1',
+      [req.params.id]
+    );
+    if (!agentRows[0]) return res.status(404).json({ error: 'Agent not found' });
+    if (agentRows[0].owner_id !== req.user.userId) return res.status(403).json({ error: 'Forbidden' });
+
+    const { rows: syncRows } = await db.query(
+      'SELECT agent_id FROM agent_github_sync WHERE agent_id = $1',
+      [req.params.id]
+    );
+    if (!syncRows[0]) return res.status(400).json({ error: 'No GitHub sync config for this agent' });
+
+    await handleGithubSync({ agentId: req.params.id }, { attemptNo: 1, maxAttempts: 1 });
+
+    const { rows } = await db.query(
+      `SELECT repo_full_name, branch, path_template, last_sync_status, last_sync_error, last_synced_at
+       FROM agent_github_sync WHERE agent_id = $1`,
+      [req.params.id]
+    );
+    res.json(serializeGithubSyncStatus(rows[0], agentRows[0]));
+  } catch (err) {
+    res.status(502).json({ error: `GitHub sync failed: ${err.message}` });
   }
 });
 

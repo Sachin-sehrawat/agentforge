@@ -1355,6 +1355,39 @@ Removes the GitHub sync configuration. **Owner only.**
 
 ---
 
+### `POST /api/agents/:id/github-sync`
+
+Pushes the agent's current canonical JSON spec to the configured repo/branch/path immediately, creating or updating the file via the GitHub Contents API. **Owner only.** Requires a sync config to already exist (`PUT /api/agents/:id/github-sync-config`).
+
+**Response 200** — shaped sync status, see `GET /api/agents/:id/github-sync-status` below.
+
+**Response 400** — no sync config exists for this agent.
+
+**Response 502** — the push to GitHub failed (auth revoked, repo/branch not found, etc.); `{ "error": "GitHub sync failed: <reason>" }`.
+
+---
+
+### `GET /api/agents/:id/github-sync-status`
+
+Returns the current sync status for an agent, or `null` if no sync config exists. **Owner only.**
+
+**Response 200**
+
+```json
+{
+  "state": "ok",
+  "repo": "myorg/agent-configs",
+  "path": "agents/my-agent.json",
+  "fileUrl": "https://github.com/myorg/agent-configs/blob/main/agents/my-agent.json",
+  "syncedAt": "2026-07-11T10:00:00Z",
+  "errorMessage": null
+}
+```
+
+`state` is one of `pending`, `ok`, or `error` (`conflict` is reserved for future bidirectional sync).
+
+---
+
 ## GitHub Integration
 
 ### `POST /api/integrations/github/connect`
@@ -1422,7 +1455,23 @@ Lists branches for a specific repository.
 
 **Headers** — `Authorization: Bearer <token>`
 
-**Response 200** — array of `{ name }` objects.
+**Response 200** — array of branch name strings, e.g. `["main", "develop"]`.
+
+---
+
+### `POST /api/integrations/github/webhook`
+
+Inbound receiver for GitHub push events — used for bidirectional sync. **No `Authorization` header** — GitHub calls this unauthenticated; the request is instead authenticated via the `X-Hub-Signature-256` HMAC header, verified against the per-repo secret stored in `github_repo_webhooks`. Not called directly by clients.
+
+Ignores any event other than `push` (`200` ack, no-op). For a `push` event, matches changed file paths against configured agents' rendered sync paths and enqueues a `github_reconcile` background job per match — the actual fetch/reconcile work happens there, not in this handler.
+
+**Response 200** — `{ "ok": true }`
+
+**Response 400** — payload missing `repository.full_name`.
+
+**Response 401** — signature missing or invalid.
+
+**Response 404** — no webhook registered for this repo (`github_repo_webhooks` has no matching row).
 
 ---
 

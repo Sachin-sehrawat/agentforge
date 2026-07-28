@@ -66,6 +66,14 @@ services:
       SLOW_QUERY_THRESHOLD_MS: ${SLOW_QUERY_THRESHOLD_MS:-1000}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set in .env.local}
       DOCS_DIR: /docs
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+      GITHUB_TOKEN_ENCRYPTION_KEY: ${GITHUB_TOKEN_ENCRYPTION_KEY:-}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:5173}
+      # Public URL GitHub can reach to deliver webhooks (e.g. an ngrok/smee tunnel
+      # in local dev). Auto-webhook-registration for bidirectional sync is skipped
+      # entirely when unset.
+      APP_BASE_URL: ${APP_BASE_URL:-}
     volumes:
       - ./docs:/docs:ro
     depends_on:

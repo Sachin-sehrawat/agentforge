@@ -8,6 +8,8 @@
  */
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
 import http from 'node:http';
+import crypto from 'node:crypto';
+import { encryptToken } from '../src/integrations/github.js';
 
 // ---------------------------------------------------------------------------
 // pg mock — must be declared before app.js is imported
@@ -79,6 +81,22 @@ vi.mock('../src/auth/token.js', () => ({
   signRefreshToken: vi.fn(),
   verifyToken: mockVerifyToken,
 }));
+
+const mockHandleGithubSync = vi.fn();
+function testRenderPath(pathTemplate, agent) {
+  const slug = agent.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || agent.id;
+  return pathTemplate.replace('{slug}', slug);
+}
+vi.mock('../src/githubSync.js', () => ({
+  handleGithubSync: (...args) => mockHandleGithubSync(...args),
+  registerGitHubSyncHandler: vi.fn(),
+  renderPath: (...args) => testRenderPath(...args),
+}));
+
+// github.js is NOT mocked — encryptToken/decryptToken run for real against this
+// test-only key so the GitHub webhook signature tests can encrypt/decrypt a
+// real per-repo secret the same way the app does.
+process.env.GITHUB_TOKEN_ENCRYPTION_KEY = 'a'.repeat(64);
 
 // ---------------------------------------------------------------------------
 // Import app AFTER mocks are registered
@@ -1275,6 +1293,72 @@ describe('GET /api/templates/:id', () => {
 });
 
 // ---------------------------------------------------------------------------
+// POST/PUT/DELETE /api/templates (admin-only)
+// ---------------------------------------------------------------------------
+
+describe('POST /api/templates', () => {
+  const validBody = { name: 'Researcher', definition: { schemaVersion: 1 } };
+
+  it('returns 401 without a token', async () => {
+    const res = await req('POST', '/api/templates', validBody);
+    expect(res.status).toBe(401);
+  });
+
+  it('returns 403 for an authenticated non-admin user', async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [{ is_admin: false }] });
+    const res = await authReq('POST', '/api/templates', validBody);
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.error).toBe('Forbidden');
+    expect(mockInsertOne).not.toHaveBeenCalled();
+  });
+
+  it('creates a template for an admin user', async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [{ is_admin: true }] });
+    mockInsertOne.mockResolvedValueOnce({ insertedId: 'mongo-id-1' });
+    mockFindOne.mockResolvedValueOnce(templateDoc());
+    const res = await authReq('POST', '/api/templates', validBody);
+    expect(res.status).toBe(201);
+    expect(mockInsertOne).toHaveBeenCalled();
+  });
+});
+
+describe('PUT /api/templates/:id', () => {
+  const validBody = { name: 'Researcher', definition: { schemaVersion: 1 } };
+
+  it('returns 403 for an authenticated non-admin user', async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [{ is_admin: false }] });
+    const res = await authReq('PUT', '/api/templates/tpl-001', validBody);
+    expect(res.status).toBe(403);
+    expect(mockFindOneAndUpdate).not.toHaveBeenCalled();
+  });
+
+  it('updates a template for an admin user', async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [{ is_admin: true }] });
+    mockFindOneAndUpdate.mockResolvedValueOnce(templateDoc());
+    const res = await authReq('PUT', '/api/templates/tpl-001', validBody);
+    expect(res.status).toBe(200);
+    expect(mockFindOneAndUpdate).toHaveBeenCalled();
+  });
+});
+
+describe('DELETE /api/templates/:id', () => {
+  it('returns 403 for an authenticated non-admin user', async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [{ is_admin: false }] });
+    const res = await authReq('DELETE', '/api/templates/tpl-001');
+    expect(res.status).toBe(403);
+    expect(mockDeleteOne).not.toHaveBeenCalled();
+  });
+
+  it('deletes a template for an admin user', async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [{ is_admin: true }] });
+    mockDeleteOne.mockResolvedValueOnce({ deletedCount: 1 });
+    const res = await authReq('DELETE', '/api/templates/tpl-001');
+    expect(res.status).toBe(204);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // GET /api/skills (legacy — public only)
 // ---------------------------------------------------------------------------
 
@@ -2326,5 +2410,223 @@ describe('POST /api/agents/validate', () => {
     });
     // express.json strict mode rejects non-object/array JSON before the handler runs
     expect(res.status).toBe(400);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/integrations/github/webhook
+// ---------------------------------------------------------------------------
+
+describe('POST /api/integrations/github/webhook', () => {
+  function signedReq(payload, secret) {
+    const body = JSON.stringify(payload);
+    const signature = secret
+      ? `sha256=${crypto.createHmac('sha256', secret).update(body).digest('hex')}`
+      : undefined;
+    const headers = { 'Content-Type': 'application/json', 'X-GitHub-Event': 'push' };
+    if (signature) headers['X-Hub-Signature-256'] = signature;
+    return fetch(`${baseUrl}/api/integrations/github/webhook`, { method: 'POST', headers, body });
+  }
+
+  it('acks non-push events without touching the database', async () => {
+    const res = await fetch(`${baseUrl}/api/integrations/github/webhook`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-GitHub-Event': 'ping' },
+      body: JSON.stringify({}),
+    });
+    expect(res.status).toBe(200);
+    expect(mockPoolQuery).not.toHaveBeenCalled();
+  });
+
+  it('returns 400 when repository.full_name is missing', async () => {
+    const res = await signedReq({ ref: 'refs/heads/main' }, 'whatever');
+    expect(res.status).toBe(400);
+  });
+
+  it('returns 404 when no webhook is registered for the repo', async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [] });
+    const res = await signedReq({ repository: { full_name: 'acme/repo' }, ref: 'refs/heads/main' }, 'whatever');
+    expect(res.status).toBe(404);
+  });
+
+  it('returns 401 when the signature is invalid', async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [{ secret_encrypted: encryptToken('correct-secret') }] });
+    const res = await signedReq({ repository: { full_name: 'acme/repo' }, ref: 'refs/heads/main' }, 'wrong-secret');
+    expect(res.status).toBe(401);
+  });
+
+  it('returns 401 when the signature header is missing entirely', async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [{ secret_encrypted: encryptToken('correct-secret') }] });
+    const res = await signedReq({ repository: { full_name: 'acme/repo' }, ref: 'refs/heads/main' }, undefined);
+    expect(res.status).toBe(401);
+  });
+
+  it('enqueues a reconcile job for each agent whose rendered path changed, and 200s', async () => {
+    mockPoolQuery
+      .mockResolvedValueOnce({ rows: [{ secret_encrypted: encryptToken('correct-secret') }] })
+      .mockResolvedValueOnce({ rows: [{ agent_id: 'agent-1', path_template: 'agents/{slug}.json', name: 'Test Agent' }] })
+      .mockResolvedValueOnce({ rows: [{ id: 'job-1' }] }); // enqueueJob's INSERT INTO jobs
+
+    const res = await signedReq({
+      repository: { full_name: 'acme/repo' },
+      ref: 'refs/heads/main',
+      after: 'commit-sha-123',
+      pusher: { name: 'octocat' },
+      commits: [{ added: [], modified: ['agents/test-agent.json'] }],
+    }, 'correct-secret');
+
+    expect(res.status).toBe(200);
+    await new Promise((r) => setTimeout(r, 0)); // let the fire-and-forget enqueue settle
+    expect(mockPoolQuery.mock.calls.some(([sql]) => sql.includes('INSERT INTO jobs'))).toBe(true);
+  });
+
+  it('does not enqueue when no changed file matches a configured agent path', async () => {
+    mockPoolQuery
+      .mockResolvedValueOnce({ rows: [{ secret_encrypted: encryptToken('correct-secret') }] })
+      .mockResolvedValueOnce({ rows: [{ agent_id: 'agent-1', path_template: 'agents/{slug}.json', name: 'Test Agent' }] });
+
+    const res = await signedReq({
+      repository: { full_name: 'acme/repo' },
+      ref: 'refs/heads/main',
+      after: 'commit-sha-123',
+      commits: [{ added: [], modified: ['README.md'] }],
+    }, 'correct-secret');
+
+    expect(res.status).toBe(200);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(mockPoolQuery.mock.calls.some(([sql]) => sql.includes('INSERT INTO jobs'))).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/agents/:id/github-sync-status
+// ---------------------------------------------------------------------------
+
+describe('GET /api/agents/:id/github-sync-status', () => {
+  it('returns 401 without a token', async () => {
+    const res = await req('GET', '/api/agents/some-id/github-sync-status');
+    expect(res.status).toBe(401);
+  });
+
+  it('returns 404 when the agent does not exist', async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [] });
+    const res = await authReq('GET', '/api/agents/nonexistent/github-sync-status');
+    expect(res.status).toBe(404);
+  });
+
+  it('returns 403 when caller is not the owner', async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [{ id: 'some-id', name: 'Bot', owner_id: OTHER_USER_ID }] });
+    const res = await authReq('GET', '/api/agents/some-id/github-sync-status');
+    expect(res.status).toBe(403);
+  });
+
+  it('returns null when no sync config exists', async () => {
+    mockPoolQuery
+      .mockResolvedValueOnce({ rows: [{ id: 'some-id', name: 'Bot', owner_id: TEST_USER_ID }] })
+      .mockResolvedValueOnce({ rows: [] });
+    const res = await authReq('GET', '/api/agents/some-id/github-sync-status');
+    expect(res.status).toBe(200);
+    expect(await res.json()).toBeNull();
+  });
+
+  it('returns the shaped status when a config exists', async () => {
+    mockPoolQuery
+      .mockResolvedValueOnce({ rows: [{ id: 'some-id', name: 'My Agent', owner_id: TEST_USER_ID }] })
+      .mockResolvedValueOnce({
+        rows: [{
+          repo_full_name: 'acme/agents-repo',
+          branch: 'main',
+          path_template: 'agents/{slug}.json',
+          last_sync_status: 'error',
+          last_sync_error: 'network down',
+          last_synced_at: null,
+        }],
+      });
+    const res = await authReq('GET', '/api/agents/some-id/github-sync-status');
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toEqual({
+      state: 'error',
+      repo: 'acme/agents-repo',
+      path: 'agents/my-agent.json',
+      fileUrl: 'https://github.com/acme/agents-repo/blob/main/agents/my-agent.json',
+      syncedAt: null,
+      errorMessage: 'network down',
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/agents/:id/github-sync
+// ---------------------------------------------------------------------------
+
+describe('POST /api/agents/:id/github-sync', () => {
+  it('returns 401 without a token', async () => {
+    const res = await req('POST', '/api/agents/some-id/github-sync');
+    expect(res.status).toBe(401);
+  });
+
+  it('returns 404 when the agent does not exist', async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [] });
+    const res = await authReq('POST', '/api/agents/nonexistent/github-sync');
+    expect(res.status).toBe(404);
+    expect(mockHandleGithubSync).not.toHaveBeenCalled();
+  });
+
+  it('returns 403 when caller is not the owner', async () => {
+    mockPoolQuery.mockResolvedValueOnce({ rows: [{ id: 'some-id', name: 'Bot', owner_id: OTHER_USER_ID }] });
+    const res = await authReq('POST', '/api/agents/some-id/github-sync');
+    expect(res.status).toBe(403);
+    expect(mockHandleGithubSync).not.toHaveBeenCalled();
+  });
+
+  it('returns 400 when no sync config exists for the agent', async () => {
+    mockPoolQuery
+      .mockResolvedValueOnce({ rows: [{ id: 'some-id', name: 'Bot', owner_id: TEST_USER_ID }] })
+      .mockResolvedValueOnce({ rows: [] }); // agent_github_sync lookup
+    const res = await authReq('POST', '/api/agents/some-id/github-sync');
+    expect(res.status).toBe(400);
+    expect(mockHandleGithubSync).not.toHaveBeenCalled();
+  });
+
+  it('runs the sync and returns the shaped status on success', async () => {
+    mockPoolQuery
+      .mockResolvedValueOnce({ rows: [{ id: 'some-id', name: 'Bot', owner_id: TEST_USER_ID }] })
+      .mockResolvedValueOnce({ rows: [{ agent_id: 'some-id' }] })
+      .mockResolvedValueOnce({
+        rows: [{
+          repo_full_name: 'acme/agents-repo',
+          branch: 'main',
+          path_template: 'agents/{slug}.json',
+          last_sync_status: 'ok',
+          last_sync_error: null,
+          last_synced_at: '2026-01-01T00:00:00Z',
+        }],
+      });
+    mockHandleGithubSync.mockResolvedValueOnce(undefined);
+
+    const res = await authReq('POST', '/api/agents/some-id/github-sync');
+    expect(res.status).toBe(200);
+    expect(mockHandleGithubSync).toHaveBeenCalledWith(
+      { agentId: 'some-id' },
+      { attemptNo: 1, maxAttempts: 1 }
+    );
+    const body = await res.json();
+    expect(body.state).toBe('ok');
+    expect(body.repo).toBe('acme/agents-repo');
+    expect(body.path).toBe('agents/bot.json');
+    expect(body.fileUrl).toBe('https://github.com/acme/agents-repo/blob/main/agents/bot.json');
+  });
+
+  it('returns 502 when the sync fails', async () => {
+    mockPoolQuery
+      .mockResolvedValueOnce({ rows: [{ id: 'some-id', name: 'Bot', owner_id: TEST_USER_ID }] })
+      .mockResolvedValueOnce({ rows: [{ agent_id: 'some-id' }] });
+    mockHandleGithubSync.mockRejectedValueOnce(new Error('GitHub is not connected'));
+
+    const res = await authReq('POST', '/api/agents/some-id/github-sync');
+    expect(res.status).toBe(502);
+    const body = await res.json();
+    expect(body.error).toContain('GitHub is not connected');
   });
 });

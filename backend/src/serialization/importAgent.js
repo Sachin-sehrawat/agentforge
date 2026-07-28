@@ -16,6 +16,7 @@ function emptyAgent() {
     tools: [],
     skills: [],
     instructions: [],
+    tags: [],
     positions: {},
   };
 }
@@ -86,6 +87,12 @@ export function parseJson(text) {
     agent.instructions = parsed.instructions;
   } else if (parsed.instructions !== undefined) {
     warnings.push('Field "instructions" is not an array; skipped');
+  }
+
+  if (Array.isArray(parsed.tags)) {
+    agent.tags = parsed.tags;
+  } else if (parsed.tags !== undefined) {
+    warnings.push('Field "tags" is not an array; skipped');
   }
 
   if (parsed.positions !== undefined) {

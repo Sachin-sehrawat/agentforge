@@ -111,6 +111,117 @@ export async function fetchGitHubBranches(accessToken, owner, repo) {
   return results;
 }
 
+// Path segments must be encoded individually — encoding the whole path would
+// turn the "/" separators into "%2F".
+function encodePath(path) {
+  return path.split('/').map(encodeURIComponent).join('/');
+}
+
+// Fetches a file's current contents + blob sha from a repo, or null if it
+// doesn't exist yet (so callers can distinguish create vs. update).
+export async function getFileContents(accessToken, owner, repo, path, ref) {
+  const url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${encodePath(path)}${ref ? `?ref=${encodeURIComponent(ref)}` : ''}`;
+  const resp = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: 'application/vnd.github+json',
+      'User-Agent': 'AgentForge',
+    },
+  });
+  if (resp.status === 404) return null;
+  if (!resp.ok) throw new Error(`GitHub file fetch HTTP error: ${resp.status}`);
+  const data = await resp.json();
+  return {
+    sha: data.sha,
+    content: Buffer.from(data.content, data.encoding || 'base64').toString('utf8'),
+  };
+}
+
+// Creates or updates a file via the Contents API. Pass the existing file's
+// `sha` (from getFileContents) to update it; omit it to create a new file.
+export async function putFileContents(accessToken, owner, repo, path, content, message, sha, branch) {
+  const url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${encodePath(path)}`;
+  const resp = await fetch(url, {
+    method: 'PUT',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: 'application/vnd.github+json',
+      'Content-Type': 'application/json',
+      'User-Agent': 'AgentForge',
+    },
+    body: JSON.stringify({
+      message,
+      content: Buffer.from(content, 'utf8').toString('base64'),
+      branch,
+      ...(sha ? { sha } : {}),
+    }),
+  });
+  if (!resp.ok) {
+    const detail = await resp.text().catch(() => '');
+    throw new Error(`GitHub file write HTTP error: ${resp.status}${detail ? ` — ${detail}` : ''}`);
+  }
+  const data = await resp.json();
+  return { commitSha: data.commit?.sha, contentSha: data.content?.sha };
+}
+
+// Ensures a push-event webhook exists on the repo pointed at callbackUrl.
+// Idempotent — lists existing hooks first and reuses one whose config.url
+// already matches, so saving sync config for multiple agents on the same
+// repo doesn't create duplicate hooks.
+export async function ensureRepoWebhook(accessToken, owner, repo, secret, callbackUrl) {
+  const listResp = await fetch(
+    `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/hooks?per_page=100`,
+    {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: 'application/vnd.github+json',
+        'User-Agent': 'AgentForge',
+      },
+    }
+  );
+  if (!listResp.ok) throw new Error(`GitHub hooks list HTTP error: ${listResp.status}`);
+  const existing = await listResp.json();
+  const match = existing.find((h) => h.config?.url === callbackUrl);
+  if (match) return match.id;
+
+  const createResp = await fetch(
+    `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/hooks`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: 'application/vnd.github+json',
+        'Content-Type': 'application/json',
+        'User-Agent': 'AgentForge',
+      },
+      body: JSON.stringify({
+        name: 'web',
+        active: true,
+        events: ['push'],
+        config: { url: callbackUrl, content_type: 'json', secret, insecure_ssl: '0' },
+      }),
+    }
+  );
+  if (!createResp.ok) {
+    const detail = await createResp.text().catch(() => '');
+    throw new Error(`GitHub hook create HTTP error: ${createResp.status}${detail ? ` — ${detail}` : ''}`);
+  }
+  const created = await createResp.json();
+  return created.id;
+}
+
+// Verifies GitHub's X-Hub-Signature-256 header (HMAC-SHA256 over the raw
+// request body) using a timing-safe comparison.
+export function verifyWebhookSignature(rawBody, signatureHeader, secret) {
+  if (!signatureHeader || !signatureHeader.startsWith('sha256=')) return false;
+  const expected = crypto.createHmac('sha256', secret).update(rawBody).digest('hex');
+  const provided = signatureHeader.slice('sha256='.length);
+  const expectedBuf = Buffer.from(expected, 'hex');
+  const providedBuf = Buffer.from(provided, 'hex');
+  if (expectedBuf.length !== providedBuf.length) return false;
+  return crypto.timingSafeEqual(expectedBuf, providedBuf);
+}
+
 export async function revokeGitHubToken(accessToken) {
   const clientId = process.env.GITHUB_CLIENT_ID;
   const clientSecret = process.env.GITHUB_CLIENT_SECRET;

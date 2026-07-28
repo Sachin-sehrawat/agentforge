@@ -311,7 +311,7 @@ function AgentGitHubSyncModal({ agent, githubLogin, onClose }) {
               >
                 <option value="">{loadingRepos ? 'Loading repositories…' : 'Select a repository'}</option>
                 {repos.map((r) => (
-                  <option key={r.full_name} value={r.full_name}>{r.full_name}</option>
+                  <option key={r.fullName} value={r.fullName}>{r.fullName}</option>
                 ))}
               </select>
             )}
@@ -335,7 +335,7 @@ function AgentGitHubSyncModal({ agent, githubLogin, onClose }) {
                   : 'Select a branch'}
               </option>
               {branches.map((b) => (
-                <option key={b.name} value={b.name}>{b.name}</option>
+                <option key={b} value={b}>{b}</option>
               ))}
             </select>
           </div>
